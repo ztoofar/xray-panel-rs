@@ -865,6 +865,11 @@
 - 发布前验证：`cargo fmt --check`、`cargo test` 97/97、clippy 零警告、
   `cargo build` 成功；`tmp/install-skip-test/run.sh` 10/10；
   `tmp/e2e-update-hint/e2e.py` 全部通过。
-- 发布方式：推送 `main` 与 tag `v0.2.19`，由 GitHub Actions `release.yml`
-  构建 musl 包并创建 Release；本地不打包。
-- Release 资产大小与 digest：待 Actions 完成后补充。
+- 发布方式：推送 `main`（提交 `bd2faf7`）与 tag `v0.2.19`，由 GitHub Actions
+  `release.yml` run `41673502413` 构建 musl 包并创建 Release；本地不打包。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.19>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,424,758 字节，
+  GitHub asset digest
+  `sha256:ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`。
+- 0.2.19 起安装脚本可通过 `LUMEN_VERSION` marker 零下载跳过重装；0.2.18 及更早
+  仍走下载+哈希路径。

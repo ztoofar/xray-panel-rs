@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 00:15
+> 最后更新：2026-11-04 00:27
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -16,33 +16,31 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` **97/97**；clippy 零警告；Cargo 版本 `0.2.18`；migrations 到
+   期望：`cargo test` **97/97**；clippy 零警告；Cargo 版本 `0.2.19`；migrations 到
    `0009_outbound_subscriptions.sql`；`web/dist` 不比前端源码旧。
-   GitHub Release v0.2.18 已发布；**本地还有未发布改动**（安装幂等跳过、
-   `--version` marker、更新代理报错提示、README 重写，见 CURRENT-STATUS §2.26），
-   未打包、未 bump 版本；
+   GitHub Release v0.2.19 已发布（tag → `bd2faf7`），当前源码与发布包一致
+   （CURRENT-STATUS §2.27）；
 3. 如果用户说“继续开发”但没有指定任务：先汇报核对结果，再从 `TODO.md` 的
    P1 中给出建议，等用户选择。**不要自动打包，不要自动 bump 版本。**
 
 ## 第 1 步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 当前已发布 **0.2.18**（协议补全、节点地址、在线更新、一键安装/更新、
-   安装与更新代理；Release 只保留 tar.gz）。本地未发布改动见 §2.26；打包时
-   递增版本（下一版预计 0.2.19），同步 `Cargo.toml` 与 tag，推送 `v*` 标签由
-   `.github/workflows/release.yml` 构建发布。注意：`LUMEN_VERSION` marker 只有
-   新版本包含，0.2.18 及更早仍走下载+哈希跳过路径。
+1. 当前已发布 **0.2.19**（安装幂等跳过、`--version`/`LUMEN_VERSION`、更新代理
+   报错提示、README 重写；Release 只保留 tar.gz）。发下一版时递增 `Cargo.toml`
+   版本，同步文档与 tag，推送 `v*` 标签由 `.github/workflows/release.yml`
+   构建发布。
 2. 本地只改代码并自测：前端构建、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。**不需要本地 musl 打包。**
 3. 修改 `Cargo.toml` 的 `version`，更新文档，提交并推送 `main`。
 4. 等 main 的 CI 通过后推送 tag（tag 必须等于 `v${Cargo.toml version}`）：
    ```sh
-   git tag v0.2.18 && git push origin v0.2.18
+   git tag v0.2.19 && git push origin v0.2.19
    ```
-5. `.github/workflows/release.yml` 自动构建 musl、打包 tar.gz/原始二进制/
-   SHA256SUMS 并创建 Release；到 Releases 页面核对资产与哈希。
-6. 更新 `PROGRESS.md`、`memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`
-   记录 Release 哈希。
+5. `.github/workflows/release.yml` 自动构建 musl、打包 tar.gz 并创建 Release；
+   到 Releases 页面核对资产大小与 asset digest。
+6. 更新 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md` 记录 Release
+   哈希；必要时追加 `PROGRESS.md`。
 7. 仅当用户明确要求本地备用包或 Actions 不可用时，才在本机执行
    `cargo zigbuild --release --target x86_64-unknown-linux-musl` 并手工组装
    `dist/`；正常发布不要做这一步。
@@ -96,8 +94,9 @@
 - **P1-T9**：v0.2.7 统计修复 + Xray 设置修复的真机回归（清单见 `TODO.md` /
   `KNOWN-ISSUES.md` G6）。
 - **P1-T16**：出站订阅真实 Linux + 真实 Xray 回归（含 socks5 代理认证）。
-- **已完成（2026-11-04）**：安装脚本按版本幂等跳过（`PANEL_FORCE=1` 强制）、
-  面板更新/下载的代理报错提示、README 重写（CURRENT-STATUS §2.26）。未打包。
+- **已随 0.2.19 发布（2026-11-04）**：安装脚本按版本幂等跳过
+  （`PANEL_FORCE=1` 强制）、面板更新/下载的代理报错提示、README 重写
+  （CURRENT-STATUS §2.26–§2.27）。
 - **P1-T24**：真实 Linux 验证安装幂等（版本/哈希跳过、`PANEL_FORCE`）与
   `updateProxy=127.0.0.1` 的报错提示。
 - **P1-T2**：面板路径的 HTTP 层自动化测试。
@@ -108,9 +107,10 @@
 - **P2-T18**：出站订阅重定向的逐跳 SSRF 校验。
 - **P2-T20**：清理活动页面中的 Hosts/Nodes 残留数据 plumbing（无对应管理页）。
 - **P2-T13**：`subSortIndex`/`excludeFromSub` 已保存但订阅服务器未实现。
-- 当前源码/发布版：**0.2.18**；GitHub `ztoofar/xray-panel-rs`，Releases 由 Actions 构建。
-- GitHub Release `v0.2.18`：唯一资产 tar.gz 5,425,000 字节，GitHub asset
-digest `sha256:ba59a2a2...8496`；面板在线更新下载它、按 digest 校验并解压。
+- 当前源码/发布版：**0.2.19**；GitHub `ztoofar/xray-panel-rs`，Releases 由 Actions 构建。
+- GitHub Release `v0.2.19`：唯一资产 tar.gz 5,424,758 字节，GitHub asset
+digest `sha256:ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`；
+面板在线更新下载它、按 digest 校验并解压。
 - 上一版归档：`dist/xray-panel-rs-linux-amd64-lumen-0.2.15.tar.gz`
   （5,398,823 字节，SHA256 `40b4b245...fb13a`）；更早 `...-0.2.14.tar.gz` 等。
 - 本地源码包：`dist/xray-panel-rs-0.2.16-src.tar.gz`（4,224,342 字节，

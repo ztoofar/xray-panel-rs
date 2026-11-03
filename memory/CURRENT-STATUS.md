@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 00:21（本地时间）
+> 最后更新：2026-11-04 00:27（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -9,10 +9,10 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.19` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.19`（发布中，Actions 完成后填入资产大小与 digest） |
-| 当前源码 | `0.2.19` 已推送 GitHub（tag `v0.2.19`，提交见 §2.27） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.19`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,424,758 字节，SHA256 `ab81a7c7...35c6`（GitHub asset digest） |
+| 当前源码 | `0.2.19` 已推送 GitHub（tag `v0.2.19` → `bd2faf7`） |
 | 上一版 | GitHub Release `v0.2.18`：tar 5,425,000 字节，asset digest `sha256:ba59a2a2...8496`；更早 `v0.2.17` 等 |
-| 0.2.19 SHA256 | 待 Actions 完成后填写（tar.gz，GitHub asset digest） |
+| 0.2.19 SHA256 | `ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
 | 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建（0.2.19 无前端改动） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
@@ -713,19 +713,25 @@
 - **未验证**：真实 Linux / musl 二进制；真实 systemd 下重跑脚本；代理可达但
   目标不可达时的提示归因；0.2.18 及更早版本没有 marker，首次重跑仍需下载
   5.4 MB 后按哈希跳过。
-- **未打包、未 bump 版本**（仍 0.2.18）。
+- 已随 0.2.19 发布（§2.27）；发布前状态为未打包、未 bump 版本。
 
-## 2.27 0.2.19 发布（2026-11-04）—— 发布进行中
+## 2.27 0.2.19 发布（2026-11-04）—— 已验证
 
 - 版本：`Cargo.toml` / `Cargo.lock` = `0.2.19`（0.2.18 的补丁递增）。
 - 内容：§2.26 的安装幂等跳过、`--version`/`LUMEN_VERSION` marker、更新/下载
   代理报错提示、README 重写；无前端改动。
-- 发布路径：commit + push `main` → tag `v0.2.19` → GitHub Actions
-  `release.yml` 自动构建 musl 并创建 Release；本地不打包。
+- 发布路径：commit `bd2faf7` + push `main` → tag `v0.2.19` → GitHub Actions
+  `release.yml` run `41673502413` 成功并创建 Release；本地不打包。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.19>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,424,758 字节**，
+  GitHub asset digest
+  `sha256:ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`。
 - 验证（发布前）：`cargo fmt --check` 通过、`cargo test` **97/97**、clippy
   零警告、`cargo build` 成功；`install.sh` 离线桩 10/10；面板更新报错 e2e
   全部通过。
-- Release 资产与 digest：待 Actions 完成后填写。
+- 0.2.19 起：面板二进制支持 `--version`/`LUMEN_VERSION`，重跑一键脚本可零下载
+  跳过；0.2.18 及更早仍走下载+哈希跳过（KNOWN-ISSUES N5）。
+- 未验证：真实 Linux/musl 运行、真实 systemd 重跑（TODO T24）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
