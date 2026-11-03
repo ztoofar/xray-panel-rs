@@ -104,6 +104,8 @@ fn rate(previous: u64, current: u64, seconds: f64) -> f64 {
 }
 
 #[cfg(unix)]
+// statvfs field widths differ across unix targets; keep the explicit casts.
+#[allow(clippy::unnecessary_cast)]
 fn disk_usage(path: &str) -> (u64, u64) {
     use std::ffi::CString;
 

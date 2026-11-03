@@ -47,6 +47,7 @@ export default function PanelUpdateSection() {
   }, [messageApi, t]);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect
     void check();
   }, [check]);
 

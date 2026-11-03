@@ -105,7 +105,14 @@ cargo zigbuild --release --target x86_64-unknown-linux-musl
 ```
 
 GitHub Actions 在推送 `v*` 标签时自动构建并发布以上文件
-（`.github/workflows/release.yml`）。
+（`.github/workflows/release.yml`）。发布前先同步 `Cargo.toml` 版本，然后：
+
+```sh
+git tag v0.2.16
+git push origin v0.2.16
+```
+
+标签必须与 `Cargo.toml` 的版本一致，否则 release workflow 会失败。
 
 ## 手动安装（无安装脚本）
 
