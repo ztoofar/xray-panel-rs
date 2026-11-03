@@ -740,3 +740,28 @@
 - 验证：`gzip -t`、包内 `sha256sum -c`、`cmp`、`file` 静态 ELF/stripped；
   二进制内含 `0.2.15`、`nodeAddress`、`节点地址`、`wireguard`。
 - 未验证：真实 Linux 运行 musl 二进制；官方 Xray `-test`（T21）；真实客户端连接。
+
+## 2026-11-03 22:50 — GitHub 发布、一键安装与面板在线更新
+
+- 新增 `src/panel_update.rs`：查询 `PANEL_GITHUB_REPO` 的 latest release，下载
+  `xray-panel-rs` + `SHA256SUMS`，校验后原子替换当前可执行文件；systemd 下
+  退出由 `Restart=on-failure` 拉起，非 systemd 返回 `restartRequired`。
+  新增接口 `GET /panel/api/server/panelUpdateCheck`、
+  `POST /panel/api/server/panelUpdate`。
+- 设置页新增「面板更新」区块（检查更新/立即更新/当前与最新版本/Release 链接），
+  14 个 locale 补齐文案。
+- 新增根目录 `install.sh`：下载最新 Release、校验 SHA256、可选安装官方 Xray，
+  再调用 `deploy/install.sh`；后者现在会先停止运行中的 xray-panel 服务再替换
+  二进制，避免 Text file busy。
+- 新增 `.github/workflows/ci.yml`（main/PR：前端构建 + fmt/test/clippy）与
+  `release.yml`（`v*` 标签：Node 26 构建前端、cargo-zigbuild musl、打包
+  tar.gz/原始二进制/SHA256SUMS、自动创建 Release）。编译时注入
+  `PANEL_GITHUB_REPO=${{ github.repository }}`。
+- 仓库初始化为 `ztoofar/xray-panel-rs`（public），main 已推送。
+- 版本 0.2.15 → 0.2.16；`cargo test` 90/90、clippy 零警告、fmt 通过；
+  musl release 构建成功（49.54s）。
+- 本地打包：`dist/xray-panel-rs-linux-amd64-lumen.tar.gz` 5,411,231 字节
+  SHA256 `a39f2923...94a3`；二进制 12,728,480 字节 SHA256 `ea183fb1...049f`；
+  源码包 4,224,342 字节 SHA256 `2091acf5...7628`。0.2.15 归档保留。
+- 未验证：真实 Linux systemd 下的在线更新全流程（N2）；GitHub Actions Release
+  产物以下载页为准。

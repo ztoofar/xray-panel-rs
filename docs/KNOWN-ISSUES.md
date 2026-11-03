@@ -309,3 +309,19 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   `subLinks` 对 wireguard/hysteria/masque 静默跳过。列表页/二维码的前端
   链接生成不受影响。后续可按前端 `inbound-link.ts` 的格式补 hysteria2 与
   wireguard 链接。
+
+## N. GitHub 发布与面板在线更新（2026-11-03）
+
+### N1 在线更新依赖 GitHub 可达与 systemd —— 设计限制
+- 面板通过 GitHub API/Release 下载新二进制；无法访问 GitHub 时需在设置页配置
+  `updateProxy`（HTTP/SOCKS5），或离线替换二进制。
+- 自动重启依赖 systemd `Restart=on-failure`（安装脚本/示例单元已配置）。非
+  systemd 启动时更新接口返回 `restartRequired:true`，需要手动重启。
+- 仅支持 Linux；Windows/macOS 返回明确错误。
+
+### N2 尚未在真实 Linux 上验证在线更新 —— 未验证
+- 现状：模块单测覆盖版本比较；完整下载/替换/重启流程需在 GitHub Release
+  发布后用真实 Linux + systemd 验证。首次发布 `v0.2.16` 后应执行：
+  旧版本安装 → 检查更新 → 更新 → 面板自动重启 → 版本号变化 → DB/入站保留。
+- 影响：若 `current_exe` 路径或 systemd 权限与预期不同，更新可能失败并保留
+  `.bak` 二进制；安装脚本部署路径为 `/usr/local/bin/xray-panel-rs`。

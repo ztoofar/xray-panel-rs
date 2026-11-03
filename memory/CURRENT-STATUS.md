@@ -576,6 +576,29 @@
 - 未验证：真实 Linux 运行 musl 二进制；官方 Xray `run -test`（T21）；真实客户端
   用生成的分享链接/二维码连接。
 
+## 2.22 GitHub 发布、一键安装与面板在线更新（2026-11-03）—— 已实现，本地验证；发布验证进行中
+
+- 仓库：`ztoofar/xray-panel-rs`（public），main 已推送。
+- 面板在线更新：
+  - `src/panel_update.rs` + `GET /panel/api/server/panelUpdateCheck` /
+    `POST /panel/api/server/panelUpdate`。
+  - latest release 的原始二进制 `xray-panel-rs` + `SHA256SUMS`，校验后原子替换；
+    systemd 下 1.5s 后退出，由 `Restart=on-failure` 拉起；非 systemd 返回
+    `restartRequired:true`。
+  - 设置页「面板更新」区块：当前/最新版本、检查更新、立即更新、Release 链接；
+    14 个 locale 文案已补齐。
+- 一键安装：根目录 `install.sh` 下载最新 Release、校验 SHA256、可选安装官方
+  Xray，再调用 `deploy/install.sh`；支持 `PANEL_VERSION`、`PANEL_REPO`、
+  `SKIP_XRAY`、`XRAY_VERSION`。
+- GitHub Actions：
+  - `ci.yml`：main/PR 前端构建 + `cargo fmt/test/clippy`。
+  - `release.yml`：`v*` 标签触发，Node 26 + cargo-zigbuild musl 构建，
+    发布 tar.gz、原始二进制、SHA256SUMS；编译时注入当前仓库名。
+- 本地验证：`cargo test` 90/90、clippy 零警告、fmt 通过、前端构建成功、
+  musl release 成功；包内 `sha256sum -c`/`gzip -t`/`file` 通过。
+- 未验证：GitHub Actions 首次发布、真实 Linux systemd 在线更新全流程（N2）。
+  详见 `KNOWN-ISSUES.md` N1/N2。
+
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
 以下能力在 `PROGRESS.md` / README 中有实现与历史验证记录，本次只做了编译与

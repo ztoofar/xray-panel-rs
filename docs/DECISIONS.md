@@ -406,3 +406,27 @@
   域名，无法表达独立节点地址）。
 - 后果：未配置 `nodeAddress` 时行为与之前一致（回退旧设置/Host/浏览器地址）。
   客户端 QR 对 wireguard/hysteria/masque 仍为空链接（`link.rs` 未实现，见 M3）。
+
+## D031 GitHub 发布、一键安装与面板在线更新
+- 日期：2026-11-03
+- 背景：用户要求把项目放到 GitHub，提供一键安装脚本、GitHub Actions 编译、
+  Releases 下载打包产物，并让面板支持在线更新。
+- 决策：
+  1. 仓库 `ztoofar/xray-panel-rs`（public）；源码提交，`dist/`、`tmp/`、
+     `target/`、`web/dist*`、`node_modules` 不入库。
+  2. GitHub Actions：`ci.yml` 在 main/PR 构建前端并跑 fmt/test/clippy；
+     `release.yml` 在推送 `v*` 标签时用 Node 26 + cargo-zigbuild（musl）构建，
+     生成 tar.gz、原始二进制与 SHA256SUMS，并用 `softprops/action-gh-release`
+     发布。
+  3. 面板自更新使用 Release 中的**原始二进制** `xray-panel-rs` 与 `SHA256SUMS`，
+     不引入解压依赖；校验通过后写同目录临时文件、备份旧二进制为 `.bak`、
+     原子 rename 覆盖，再由 systemd 重启。非 systemd 只提示手动重启。
+  4. `PANEL_GITHUB_REPO` 编译时注入（CI 为 `${{ github.repository }}`），
+     本地默认为 `ztoofar/xray-panel-rs`，方便 fork 后自更新。
+  5. 一键安装 `install.sh`：下载最新 Release、校验包内 SHA256SUMS、可选安装
+     官方 Xray 核心，然后调用包内 `deploy/install.sh`；`PANEL_VERSION` 可固定
+     版本，`SKIP_XRAY=1` 跳过 Xray。
+- 被否方案：把二进制提交进仓库（体积/历史膨胀）；在线更新时下载 tar.gz
+  （需要新增 tar/gzip 依赖，且不如原始二进制 + SHA256SUMS 简单）。
+- 后果：在线更新依赖 GitHub 可达或设置页 `updateProxy`；仅支持 Linux；
+  非 systemd 运行方式需要手动重启。

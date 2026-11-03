@@ -66,6 +66,7 @@
 | `src/xray/subscription.rs` | 订阅正文解析、分享链接→出站、标签稳定分配 |
 | `src/xray/router.rs` | RoutingService gRPC：balancer 实时状态与手动切换 |
 | `src/updates.rs` | Xray Release 列表/安装、Geofiles 下载、更新代理、GEOdata 标准源 |
+| `src/panel_update.rs` | 面板 GitHub Releases 检查、SHA-256 校验、二进制原子替换与 systemd 重启 |
 | `src/outbound_subs.rs` | 出站订阅 CRUD/拉取/SSRF/代理、运行时合并、定时刷新 |
 | `src/web/` | 静态资源服务、HTML 注入、面板路径中间件、独立设置页 |
 | `src/sys.rs` | Linux `/proc` / `statvfs` 指标（CPU/内存/网络/磁盘/RSS/线程等） |
@@ -76,6 +77,12 @@
 后端 `public_address` 旧设置 → 请求 Host。前端 `preferPublicHost` 在 `nodeAddress`
 非空时始终使用它（即使浏览器打开的是局域网地址）；每个入站自己的
 `shareAddrStrategy`/`shareAddr` 仍然优先。
+
+面板在线更新：`panel_update` 从 `PANEL_GITHUB_REPO`（CI 编译时注入为当前仓库，
+本地默认 `ztoofar/xray-panel-rs`）的 latest release 下载 `xray-panel-rs` 与
+`SHA256SUMS`，校验后写入同目录临时文件并原子替换当前可执行文件；在 systemd
+（`INVOCATION_ID`）下 1.5s 后 `exit(1)`，由 `Restart=on-failure` 拉起新版本，
+否则返回 `restartRequired:true`。
 
 ## 4. HTTP 请求流程
 

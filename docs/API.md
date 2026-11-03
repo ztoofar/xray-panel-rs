@@ -156,6 +156,8 @@
 | POST | `/panel/api/server/logs/{rows}` | 已实现：`source=panel` 返回面板 tracing 环形缓冲（最多 500 行）；`source=xray&file=error\|access` 返回 `log.error`/`log.access` 文件末尾（error 未配置时回退到面板捕获的 Xray 进程输出）；不带参数保持旧行为（进程日志） |
 | POST | `/panel/api/server/restartXrayService` | 已实现 |
 | POST | `/panel/api/server/stopXrayService` | 已实现（只停 Xray 子进程） |
+| GET | `/panel/api/server/panelUpdateCheck` | 已实现：查询 GitHub Releases 最新版本，返回 `current/latest/updateAvailable/releaseUrl` |
+| POST | `/panel/api/server/panelUpdate` | 已实现：下载并校验最新面板二进制，原子替换后退出（systemd `Restart=on-failure` 拉起）；非 systemd 返回 `restartRequired:true` |
 | GET | `/panel/api/server/getNewUUID` | 已实现 |
 | GET | `/panel/api/server/getNewX25519Cert` | 已实现 |
 | GET | `/panel/api/server/getNewVlessEnc` | 已实现（调用 `xray vlessenc`） |
