@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 00:27（本地时间）
+> 最后更新：2026-11-04 00:36（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,15 +8,15 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.19` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.19`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,424,758 字节，SHA256 `ab81a7c7...35c6`（GitHub asset digest） |
-| 当前源码 | `0.2.19` 已推送 GitHub（tag `v0.2.19` → `bd2faf7`） |
-| 上一版 | GitHub Release `v0.2.18`：tar 5,425,000 字节，asset digest `sha256:ba59a2a2...8496`；更早 `v0.2.17` 等 |
-| 0.2.19 SHA256 | `ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
+| `Cargo.toml` 版本 | `0.2.20` |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.20`（发布中，Actions 完成后填入资产大小与 digest） |
+| 当前源码 | `0.2.20` 已推送 GitHub（tag `v0.2.20`，提交见 §2.29） |
+| 上一版 | GitHub Release `v0.2.19`：tar 5,424,758 字节，asset digest `sha256:ab81a7c7...35c6` |
+| 0.2.20 SHA256 | 待 Actions 完成后填写（tar.gz，GitHub asset digest） |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建（0.2.19 无前端改动） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建（0.2.20 无前端改动） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.19 Release tar 内含静态 ELF 二进制；本地不生成备用二进制 |
+| musl 产物 | 0.2.20 Release tar 内含静态 ELF 二进制；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -732,6 +732,43 @@
 - 0.2.19 起：面板二进制支持 `--version`/`LUMEN_VERSION`，重跑一键脚本可零下载
   跳过；0.2.18 及更早仍走下载+哈希跳过（KNOWN-ISSUES N5）。
 - 未验证：真实 Linux/musl 运行、真实 systemd 重跑（TODO T24）。
+
+## 2.28 代理/网络类报错改为中文（2026-11-04）—— 已实现并 e2e 验证；随 0.2.20 发布
+
+用户要求：代理导致的报错直接提示“代理不可用”，全局改为中文，不再把
+`io`/`ureq` 原生错误返回给前端。
+
+- `src/updates.rs`：
+  - `network_hint` 返回中文用户消息：有代理 → `代理不可用：无法连接 <proxy>...`；
+    无代理 → `无法连接 GitHub：...`。
+  - `with_network_hint` 用中文消息**替换**整个错误链；原生错误链
+    （URL、`io: Connection refused (os error ...)`）只写入 `tracing::warn`。
+  - 覆盖面板更新 check/install、Xray 版本/安装、Geofiles。
+- `src/outbound_subs.rs`：订阅拉取的传输失败同样映射为中文
+  （有代理 → `代理不可用`；无代理 → `无法连接订阅地址`）；订阅响应、代理校验
+  文案改为中文。
+- `src/api/compat.rs`：更新/下载类接口的失败前缀改为中文
+  （检查面板更新失败、更新面板失败、获取 Xray 版本失败、安装 Xray 失败、
+  更新 Geofiles 失败）；保存 `updateProxy` 的校验错误改为
+  `更新代理设置无效：...`。
+- 验证：
+  - `cargo test` **99/99**（新增 `network_hint_hides_the_native_error`、
+    `subscription_proxy_errors_are_chinese`）；clippy 零警告；fmt 通过。
+  - `tmp/e2e-update-hint/e2e.py` 全通过：`panelUpdateCheck` 返回
+    `检查面板更新失败：代理不可用：...`，包含代理地址与“面板服务器自身”，
+    且不含 `api.github.com`、`os error`；非法 `updateProxy` 返回中文校验错误。
+- **范围说明**：非网络类错误仍可能包含英文原始信息（如 GitHub 返回非 200、
+  Release 缺资产）。见 `KNOWN-ISSUES.md` N7。
+
+## 2.29 0.2.20 发布（2026-11-04）—— 发布进行中
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.20`。
+- 内容：§2.28 的代理/网络错误中文化；无前端改动。
+- 发布路径：commit + push `main` → tag `v0.2.20` → GitHub Actions
+  `release.yml` 构建并创建 Release；本地不打包。
+- 发布前验证：`cargo fmt --check`、`cargo test` 99/99、clippy 零警告、
+  `cargo build` 成功；更新报错 e2e 全通过。
+- Release 资产与 digest：待 Actions 完成后填写。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

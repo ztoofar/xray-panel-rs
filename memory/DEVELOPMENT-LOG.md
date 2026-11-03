@@ -873,3 +873,19 @@
   `sha256:ab81a7c79507211afe8798576bbb057ba8c1015461700db4c91847cbf18435c6`。
 - 0.2.19 起安装脚本可通过 `LUMEN_VERSION` marker 零下载跳过重装；0.2.18 及更早
   仍走下载+哈希路径。
+
+## 2026-11-04 00:36 — 代理/网络错误中文化并发布 0.2.20
+
+- `src/updates.rs`：`network_hint` 输出中文消息（“代理不可用”“无法连接
+  GitHub”）；`with_network_hint` 用中文消息替换错误链，原生链仅
+  `tracing::warn`。覆盖面板更新、Xray 版本/安装、Geofiles。
+- `src/outbound_subs.rs`：订阅拉取传输失败映射为中文；代理校验与 HTTP/读取
+  错误文案中文化；新增 `subscription_proxy_errors_are_chinese` 单测。
+- `src/api/compat.rs`：更新/下载类接口失败前缀与 `updateProxy` 校验错误改为中文。
+- 验证：`cargo fmt --check`、`cargo test` 99/99、clippy 零警告、`cargo build`
+  成功；`tmp/e2e-update-hint/e2e.py` 全通过（中文消息、无 `api.github.com`
+  与 `os error`）。
+- 文档：新增 `DECISIONS.md` D037、`KNOWN-ISSUES.md` N7；
+  `CURRENT-STATUS.md` §2.28–§2.29。
+- 版本 0.2.19 → `0.2.20`；推送 `main` 与 tag `v0.2.20` 由 Actions 构建。
+- Release 资产大小/digest：待 Actions 完成后补充。

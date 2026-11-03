@@ -317,7 +317,7 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
     }
     if let Some(url) = params.get("updateProxy") {
         if let Err(err) = crate::outbound_subs::validate_proxy(url) {
-            return Ok(fail(format!("updateProxy: {err}")));
+            return Ok(fail(format!("更新代理设置无效：{err}")));
         }
     }
     if let Some(raw) = params.get("nodeAddress").cloned() {
@@ -608,7 +608,7 @@ pub async fn server_config_json(State(state): State<AppState>) -> AppResult<Json
 pub async fn server_xray_versions(State(state): State<AppState>) -> Json<Value> {
     match crate::updates::xray_versions(&state).await {
         Ok(versions) => ok(json!(versions)),
-        Err(err) => fail(format!("fetch Xray versions: {err:#}")),
+        Err(err) => fail(format!("获取 Xray 版本失败：{err:#}")),
     }
 }
 
@@ -617,32 +617,32 @@ pub async fn server_install_xray(
     Path(version): Path<String>,
 ) -> Json<Value> {
     if version.trim().is_empty() {
-        return fail("version is required");
+        return fail("缺少 Xray 版本参数");
     }
     match crate::updates::install_xray(&state, version.trim()).await {
         Ok(()) => ok(Value::Null),
-        Err(err) => fail(format!("install Xray {version}: {err:#}")),
+        Err(err) => fail(format!("安装 Xray {version} 失败：{err:#}")),
     }
 }
 
 pub async fn panel_update_check(State(state): State<AppState>) -> Json<Value> {
     match crate::panel_update::check(&state).await {
         Ok(info) => ok(info),
-        Err(err) => fail(format!("check panel update: {err:#}")),
+        Err(err) => fail(format!("检查面板更新失败：{err:#}")),
     }
 }
 
 pub async fn panel_update_run(State(state): State<AppState>) -> Json<Value> {
     match crate::panel_update::install(&state).await {
         Ok(info) => ok(info),
-        Err(err) => fail(format!("update panel: {err:#}")),
+        Err(err) => fail(format!("更新面板失败：{err:#}")),
     }
 }
 
 pub async fn server_update_geofile_all(State(state): State<AppState>) -> Json<Value> {
     match crate::updates::update_geofile(&state, None).await {
         Ok(count) => ok(json!({ "installed": count })),
-        Err(err) => fail(format!("update geofiles: {err:#}")),
+        Err(err) => fail(format!("更新 Geofiles 失败：{err:#}")),
     }
 }
 
@@ -652,7 +652,7 @@ pub async fn server_update_geofile_one(
 ) -> Json<Value> {
     match crate::updates::update_geofile(&state, Some(file.trim())).await {
         Ok(count) => ok(json!({ "installed": count })),
-        Err(err) => fail(format!("update geofile: {err:#}")),
+        Err(err) => fail(format!("更新 Geofile 失败：{err:#}")),
     }
 }
 

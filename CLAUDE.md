@@ -60,12 +60,12 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.19`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+- **当前源码版本**：`0.2.20`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+  0.2.20 将代理/网络类失败统一为中文提示（“代理不可用”），原生错误只写日志。
   0.2.19 增加一键脚本按版本幂等跳过（`PANEL_FORCE` 强制）、二进制
-  `--version`/`LUMEN_VERSION` marker、更新/下载代理失败的可操作提示。0.2.18
-  增加一键脚本安装/更新与 `PANEL_PROXY`；0.2.17 起 Release 只保留 tar.gz，
-  更新使用 GitHub 资产 digest 校验并解压。见 `memory/CURRENT-STATUS.md`
-  §2.14–§2.27。
+  `--version`/`LUMEN_VERSION` marker；0.2.18 增加一键脚本安装/更新与
+  `PANEL_PROXY`；0.2.17 起 Release 只保留 tar.gz，更新使用 GitHub 资产 digest
+  校验并解压。见 `memory/CURRENT-STATUS.md` §2.14–§2.29。
 - **当前生效前端**：`frontend-3xui/`（3x-ui 前端的裁剪版），构建输出到 `web/dist/`。
   只暴露七个路由：系统状态 `/`、入站、客户端、出站、路由、Xray、设置。
 - **非生效目录**：`frontend/`（早期自研表单源码）和 `web/dist-custom-v2/` 保留备查，

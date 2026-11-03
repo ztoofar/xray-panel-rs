@@ -115,7 +115,7 @@ fn io_kind_is_transport(kind: std::io::ErrorKind) -> bool {
     )
 }
 
-fn is_transport_failure(err: &anyhow::Error) -> bool {
+pub(crate) fn is_transport_failure(err: &anyhow::Error) -> bool {
     let typed = err.chain().any(|cause| {
         if let Some(io) = cause.downcast_ref::<std::io::Error>() {
             return io_kind_is_transport(io.kind());
@@ -154,28 +154,34 @@ fn is_transport_failure(err: &anyhow::Error) -> bool {
     .any(|needle| text.contains(needle))
 }
 
-/// Actionable hint for transport failures. When an update proxy is configured
-/// the panel can only reach the internet through it, so refused connections
-/// and timeouts almost always mean the proxy is down or unreachable.
+pub(crate) fn proxy_unavailable_message(proxy: &str) -> String {
+    format!(
+        "代理不可用：无法连接 {proxy}。请确认代理已启动、端口正确，且允许面板服务器访问；\
+         127.0.0.1 指面板服务器自身，不是你的电脑。可在面板设置中修改或清空代理。"
+    )
+}
+
+/// Chinese, user-facing message for transport failures. When a proxy is
+/// configured the panel can only reach the internet through it, so refused
+/// connections and timeouts almost always mean the proxy is down.
 pub(crate) fn network_hint(err: &anyhow::Error, proxy: Option<&str>) -> Option<String> {
     if !is_transport_failure(err) {
         return None;
     }
     Some(match proxy {
-        Some(proxy) => format!(
-            "cannot reach update proxy {proxy}: ensure the proxy is running and reachable \
-             from the panel host; 127.0.0.1 is the panel server itself, not your computer. \
-             Fix or clear the update proxy in panel settings"
-        ),
-        None => "cannot reach GitHub directly: check the panel host's network and DNS, \
-                 or configure an update proxy in panel settings"
-            .to_string(),
+        Some(proxy) => proxy_unavailable_message(proxy),
+        None => "无法连接 GitHub：请检查面板服务器的网络和 DNS，或配置更新代理后重试。".to_string(),
     })
 }
 
+/// Replaces a transport error with a Chinese message for the UI. The original
+/// error chain (including the native io/ureq detail) goes to the log only.
 pub(crate) fn with_network_hint(err: anyhow::Error, proxy: Option<&str>) -> anyhow::Error {
     match network_hint(&err, proxy) {
-        Some(hint) => err.context(hint),
+        Some(message) => {
+            tracing::warn!(error = %format!("{err:#}"), "network request failed");
+            anyhow::anyhow!(message)
+        }
         None => err,
     }
 }
@@ -508,16 +514,31 @@ mod tests {
     }
 
     #[test]
-    fn transport_errors_explain_the_update_proxy() {
+    fn transport_errors_use_chinese_proxy_messages() {
         let err = anyhow::anyhow!(
             "fetch https://api.github.com/repos/x/releases/latest: io: Connection refused (os error 111)"
         );
         let hint = network_hint(&err, Some("http://127.0.0.1:10813")).unwrap();
+        assert!(hint.contains("代理不可用"));
         assert!(hint.contains("http://127.0.0.1:10813"));
-        assert!(hint.contains("127.0.0.1 is the panel server itself"));
+        assert!(hint.contains("面板服务器自身"));
 
         let direct = network_hint(&err, None).unwrap();
-        assert!(direct.contains("configure an update proxy"));
+        assert!(direct.contains("无法连接 GitHub"));
+    }
+
+    #[test]
+    fn network_hint_hides_the_native_error() {
+        let err = anyhow::anyhow!(
+            "fetch https://api.github.com/repos/x/releases/latest: io: Connection refused (os error 111)"
+        );
+        let message = format!(
+            "{:#}",
+            with_network_hint(err, Some("http://127.0.0.1:10813"))
+        );
+        assert!(message.contains("代理不可用"));
+        assert!(!message.contains("Connection refused"));
+        assert!(!message.contains("os error"));
     }
 
     #[test]
@@ -531,7 +552,7 @@ mod tests {
         let io = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         let err = anyhow::Error::new(ureq::Error::Io(io));
         let hint = network_hint(&err, Some("http://127.0.0.1:10813")).unwrap();
-        assert!(hint.contains("cannot reach update proxy"));
+        assert!(hint.contains("代理不可用"));
     }
 
     #[test]

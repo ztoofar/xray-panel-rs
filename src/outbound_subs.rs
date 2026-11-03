@@ -233,7 +233,9 @@ async fn fetch_body(
     proxy_url: String,
     allow_insecure: bool,
 ) -> Result<Vec<u8>> {
-    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+    let via_proxy = !proxy_url.trim().is_empty();
+    let proxy_hint = proxy_url.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
         let user_agent = if user_agent.trim().is_empty() {
             DEFAULT_USER_AGENT.to_string()
         } else {
@@ -250,7 +252,7 @@ async fn fetch_body(
             .http_status_as_error(false);
         if !proxy_url.trim().is_empty() {
             let proxy = ureq::Proxy::new(&proxy_url)
-                .with_context(|| format!("invalid proxy URL: {proxy_url}"))?;
+                .with_context(|| format!("代理地址无效：{proxy_url}"))?;
             builder = builder.proxy(Some(proxy));
         }
         let config = builder.build();
@@ -258,21 +260,34 @@ async fn fetch_body(
         let mut response = agent
             .get(&url)
             .call()
-            .with_context(|| format!("fetch {url}"))?;
+            .with_context(|| format!("请求 {url} 失败"))?;
         let status = response.status().as_u16();
         if status != 200 {
-            bail!("subscription returned http {status}");
+            bail!("订阅地址返回 HTTP {status}");
         }
         let body = response
             .body_mut()
             .with_config()
             .limit(MAX_BODY_BYTES)
             .read_to_vec()
-            .context("read subscription body")?;
+            .context("读取订阅响应失败")?;
         Ok(body)
     })
     .await
-    .context("subscription fetch task failed")?
+    .context("订阅请求任务失败")?;
+    result.map_err(|err| subscription_fetch_error(err, &proxy_hint, via_proxy))
+}
+
+fn subscription_fetch_error(err: anyhow::Error, proxy: &str, via_proxy: bool) -> anyhow::Error {
+    if !crate::updates::is_transport_failure(&err) {
+        return err;
+    }
+    tracing::warn!(error = %format!("{err:#}"), "subscription fetch failed");
+    if via_proxy {
+        anyhow::anyhow!(crate::updates::proxy_unavailable_message(proxy))
+    } else {
+        anyhow::anyhow!("无法连接订阅地址：请检查面板服务器的网络和 DNS，或为该订阅配置可用代理。")
+    }
 }
 
 pub async fn sanitize_public_url(
@@ -330,15 +345,15 @@ pub fn validate_proxy(raw: &str) -> Result<String> {
     if raw.is_empty() {
         return Ok(String::new());
     }
-    let url = Url::parse(raw).with_context(|| format!("invalid proxy URL: {raw}"))?;
+    let url = Url::parse(raw).with_context(|| format!("代理地址无效：{raw}"))?;
     match url.scheme() {
         "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h" | "socks" => {}
-        other => bail!("unsupported proxy URL scheme \"{other}\""),
+        other => bail!("不支持的代理协议：{other}（仅支持 http/https/socks4/socks5）"),
     }
     if url.host_str().is_none_or(str::is_empty) {
-        bail!("proxy URL host is required");
+        bail!("代理地址缺少主机名");
     }
-    ureq::Proxy::new(raw).with_context(|| format!("invalid proxy URL: {raw}"))?;
+    ureq::Proxy::new(raw).with_context(|| format!("代理地址无效：{raw}"))?;
     Ok(raw.to_string())
 }
 
@@ -700,6 +715,26 @@ mod tests {
         assert!(sanitize_http_url("ftp://example.com/sub").is_err());
         assert!(sanitize_http_url("").is_err());
         assert!(sanitize_http_url("https://").is_err());
+    }
+
+    #[test]
+    fn subscription_proxy_errors_are_chinese() {
+        let io = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let err = anyhow::Error::new(ureq::Error::Io(io)).context("请求 https://example.com 失败");
+        let message = format!(
+            "{:#}",
+            subscription_fetch_error(err, "http://127.0.0.1:10813", true)
+        );
+        assert!(message.contains("代理不可用"));
+        assert!(!message.contains("Connection refused"));
+        assert!(!message.contains("os error"));
+
+        let io = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let direct = format!(
+            "{:#}",
+            subscription_fetch_error(anyhow::Error::new(ureq::Error::Io(io)), "", false)
+        );
+        assert!(direct.contains("无法连接订阅地址"));
     }
 
     #[test]
