@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-03 22:45
+> 最后更新：2026-11-03 23:05
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -16,17 +16,18 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` **89/89**；clippy 零警告；Cargo 版本 `0.2.15`；migrations 到
+   期望：`cargo test` **90/90**；clippy 零警告；Cargo 版本 `0.2.16`；migrations 到
    `0009_outbound_subscriptions.sql`；`web/dist` 不比前端源码旧。
-   当前源码与 0.2.15 发布包一致（CURRENT-STATUS §2.21），无未打包改动。
+   当前源码与 GitHub v0.2.16 发布包一致（CURRENT-STATUS §2.22/§2.23）；
 3. 如果用户说“继续开发”但没有指定任务：先汇报核对结果，再从 `TODO.md` 的
    P1 中给出建议，等用户选择。**不要自动打包，不要自动 bump 版本。**
 
 ## 第 1 步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 当前已发布 **0.2.15**（含协议补全 §2.19、节点地址 §2.20）；当前源码与发布包
-   一致，无未打包改动。下一次版本号由用户确认（不要自动决定）。
+1. 当前已发布 **0.2.16**（协议补全、节点地址、在线更新、一键安装、GitHub
+   Actions）。打新版本时同步 `Cargo.toml` 与 tag，推送 `v*` 标签由
+   `.github/workflows/release.yml` 构建发布。
 2. 修改 `Cargo.toml` 的 `version`（先改再做前端/后端构建）。
 3. 构建：
    ```sh
@@ -69,12 +70,14 @@
 
 ## 当前悬而未决（下次可直接接手的候选）
 
-- **已随 0.2.15 打包（2026-11-03）**：协议补全（CURRENT-STATUS §2.19）。
+- **已随 0.2.16 发布（2026-11-03）**：协议补全（CURRENT-STATUS §2.19）。
   11 种原生入站/13 种原生出站已打通；fake xray 端到端 + 无头 Chrome 通过。
   仍缺官方 `xray run -test`/真实连接（T21），服务端订阅链接对新协议为空（T22）。
-- **已随 0.2.15 打包（2026-11-03）**：节点地址设置（CURRENT-STATUS §2.20）。
+- **已随 0.2.16 发布（2026-11-03）**：节点地址设置（CURRENT-STATUS §2.20）。
   设置页新增 `nodeAddress`，分享链接/二维码优先使用它；API + 无头 Chrome 验证
   通过。仍缺真实客户端连接与反代 Host 场景验证。
+- **已随 0.2.16 发布（2026-11-03）**：面板在线更新、一键安装 `install.sh`、
+  GitHub Actions `ci.yml`/`release.yml`；仓库 `ztoofar/xray-panel-rs`。
 - **已完成（2026-11-02 00:42）**：功能整改（见 CURRENT-STATUS §2.14）已随
   **0.2.13** 打包（§2.15）：负载均衡状态/override、ECH/ML-DSA-65/ML-KEM、
   证书哈希、Xray 版本/Geofiles/GEOdata/更新代理，及一批入口/协议/假接口清理。
@@ -99,11 +102,12 @@
 - **P2-T18**：出站订阅重定向的逐跳 SSRF 校验。
 - **P2-T20**：清理活动页面中的 Hosts/Nodes 残留数据 plumbing（无对应管理页）。
 - **P2-T13**：`subSortIndex`/`excludeFromSub` 已保存但订阅服务器未实现。
-- 当前源码/发布版：**0.2.15** 已打包（§2.21），无未打包源码改动。
-- 发布包：`dist/xray-panel-rs-linux-amd64-lumen.tar.gz`
-  （5,398,823 字节，SHA256 `40b4b245...fb13a`）；二进制 12,691,200 字节，
-  SHA256 `105a28a9...b06f2`。
-- 上一版归档：`dist/xray-panel-rs-linux-amd64-lumen-0.2.14.tar.gz`
-  （5,354,579 字节，SHA256 `3efcf828...06068`）；更早 `...-0.2.13.tar.gz` 等。
-- 源码包：`dist/xray-panel-rs-0.2.15-src.tar.gz`（4,207,649 字节，
-  SHA256 `d6e7c21e...5cac3`）。
+- 当前源码/发布版：**0.2.16**；GitHub `ztoofar/xray-panel-rs`，Releases 由 Actions 构建。
+- 本地备用包：`dist/xray-panel-rs-linux-amd64-lumen.tar.gz`
+  （5,411,231 字节，SHA256 `a39f2923...94a3`）；二进制 12,728,480 字节，
+  SHA256 `ea183fb1...049f`。GitHub Release 由 Actions 构建，资产哈希以
+  Releases 页面 / `SHA256SUMS` 为准。
+- 上一版归档：`dist/xray-panel-rs-linux-amd64-lumen-0.2.15.tar.gz`
+  （5,398,823 字节，SHA256 `40b4b245...fb13a`）；更早 `...-0.2.14.tar.gz` 等。
+- 源码包：`dist/xray-panel-rs-0.2.16-src.tar.gz`（4,224,342 字节，
+  SHA256 `2091acf5...7628`）。
