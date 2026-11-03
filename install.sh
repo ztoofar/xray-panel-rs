@@ -73,7 +73,7 @@ log "downloading Lumen release from ${REPO} (${MODE})"
 download "${BASE}/xray-panel-rs-linux-amd64-lumen.tar.gz" "$TMP/package.tar.gz"
 tar -xzf "$TMP/package.tar.gz" -C "$TMP"
 PKG="$TMP/xray-panel-rs-linux-amd64-lumen"
-[ -x "$PKG/install.sh" ] || die "release package is missing install.sh"
+[ -f "$PKG/install.sh" ] || die "release package is missing install.sh"
 [ -f "$PKG/SHA256SUMS" ] || die "release package is missing SHA256SUMS"
 
 log "verifying package checksum"
@@ -134,4 +134,4 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 log "installing Lumen"
-"$PKG/install.sh"
+bash "$PKG/install.sh"

@@ -55,6 +55,7 @@ jobs:
           mkdir -p dist/xray-panel-rs-linux-amd64-lumen
           cp "$bin" dist/xray-panel-rs-linux-amd64-lumen/xray-panel-rs
           cp README.md deploy/install.sh deploy/xray-panel.service deploy/xray-panel.env.example dist/xray-panel-rs-linux-amd64-lumen/
+          chmod +x dist/xray-panel-rs-linux-amd64-lumen/install.sh
           (cd dist/xray-panel-rs-linux-amd64-lumen && sha256sum xray-panel-rs > SHA256SUMS)
           tar -czf dist/xray-panel-rs-linux-amd64-lumen.tar.gz -C dist xray-panel-rs-linux-amd64-lumen
           file "$bin"
