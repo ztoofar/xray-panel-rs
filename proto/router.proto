@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package xray.app.router.command;
+
+message OverrideInfo {
+  string target = 2;
+}
+
+message PrincipleTargetInfo {
+  repeated string tag = 1;
+}
+
+message BalancerMsg {
+  OverrideInfo override = 5;
+  PrincipleTargetInfo principle_target = 6;
+}
+
+message GetBalancerInfoRequest {
+  string tag = 1;
+}
+
+message GetBalancerInfoResponse {
+  BalancerMsg balancer = 1;
+}
+
+message OverrideBalancerTargetRequest {
+  string balancerTag = 1;
+  string target = 2;
+}
+
+message OverrideBalancerTargetResponse {}
+
+service RoutingService {
+  rpc GetBalancerInfo(GetBalancerInfoRequest) returns (GetBalancerInfoResponse);
+  rpc OverrideBalancerTarget(OverrideBalancerTargetRequest)
+      returns (OverrideBalancerTargetResponse);
+}

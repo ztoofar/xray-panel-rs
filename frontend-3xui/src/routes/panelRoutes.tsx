@@ -1,0 +1,42 @@
+import { lazy } from 'react';
+import type { ComponentType } from 'react';
+import {
+  DashboardOutlined,
+  ExportOutlined,
+  ImportOutlined,
+  SettingOutlined,
+  SwapOutlined,
+  TeamOutlined,
+  ToolOutlined,
+} from '@ant-design/icons';
+
+const IndexPage = lazy(() => import('@/pages/index/IndexPage'));
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const InboundsPage = lazy(() => import('@/pages/inbounds/InboundsPage'));
+const ClientsPage = lazy(() => import('@/pages/clients/ClientsPage'));
+const XrayPage = lazy(() => import('@/pages/xray/XrayPage'));
+
+export interface PanelRoute {
+  path: string;
+  titleKey: string;
+  icon: ComponentType;
+  component: ComponentType;
+}
+
+// The router, the sidebar, the page titles and the command palette all read this list, so a
+// page cannot go missing from one of them.
+export const PANEL_ROUTES: PanelRoute[] = [
+  { path: '/', titleKey: 'menu.dashboard', icon: DashboardOutlined, component: IndexPage },
+  { path: '/inbounds', titleKey: 'menu.inbounds', icon: ImportOutlined, component: InboundsPage },
+  { path: '/clients', titleKey: 'menu.clients', icon: TeamOutlined, component: ClientsPage },
+  { path: '/outbound', titleKey: 'menu.outbounds', icon: ExportOutlined, component: XrayPage },
+  { path: '/routing', titleKey: 'menu.routing', icon: SwapOutlined, component: XrayPage },
+  { path: '/xray', titleKey: 'menu.xray', icon: ToolOutlined, component: XrayPage },
+  { path: '/settings', titleKey: 'menu.settings', icon: SettingOutlined, component: SettingsPage },
+];
+
+export const PANEL_ROUTE_PATHS = PANEL_ROUTES.map((route) => route.path);
+
+export const PANEL_TITLE_KEYS: Record<string, string> = Object.fromEntries(
+  PANEL_ROUTES.map((route) => [route.path, route.titleKey]),
+);

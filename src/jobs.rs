@@ -1,0 +1,991 @@
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
+
+use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
+
+use crate::{
+    db::{
+        self,
+        client_traffic::{AttachmentSample, ClientSamples},
+        models::{Client, Inbound},
+    },
+    service,
+    state::{AppState, TrafficPoint},
+    traffic::counter_delta,
+    xray::identity::{stat_email, traffic_pattern},
+};
+
+const MAX_HISTORY: usize = 240;
+// 3x-ui runs a 5s traffic poll with a 20s online grace (onlineGracePeriodMs).
+// Scale the same window with our configurable poll so a client stays listed
+// between polls, then drops once it has really gone quiet. The cap matters
+// when a slow poll was configured: a 10-minute grace made disconnected
+// clients look online long after they were gone.
+const MIN_ONLINE_GRACE_SECS: i64 = 20;
+const MAX_ONLINE_GRACE_SECS: i64 = 60;
+
+pub fn spawn(state: AppState) {
+    tokio::spawn(async move {
+        // `None` forces the first tick to initialise every counter baseline
+        // from the current Xray process, even if the panel missed the start
+        // event. Xray is our child, so its counters restart with the panel.
+        let mut generation: Option<u64> = None;
+        // Epoch of the process whose counters the stored baselines belong to.
+        // The generation also moves on stop, so it cannot tell "a new process
+        // started" from "the old one is going away"; this only moves on start.
+        let mut stats_epoch: Option<u64> = None;
+        loop {
+            // Xray restarts (manual, config apply, crash) drop every live
+            // connection. 3x-ui keeps its online map inside the Xray process;
+            // ours lives in the panel, so clear it here instead of showing
+            // ghosts until the grace expires.
+            let current = state.xray.generation();
+            if generation != Some(current) {
+                clear_online_state(&state).await;
+                state.stats.invalidate_online_api_probe();
+                generation = Some(current);
+            }
+
+            // A new process starts with zero counters, so every stored
+            // baseline belongs to a dead process and must be zeroed
+            // (accumulated up/down stay untouched). Epoch 0 means no child
+            // has started in this panel run yet: keep the baselines, which
+            // still match a surviving process if one was left behind.
+            let epoch = state.xray.start_epoch();
+            if epoch > 0 && stats_epoch != Some(epoch) {
+                match db::client_traffic::reset_all_baselines(&state.db).await {
+                    Ok(()) => {
+                        stats_epoch = Some(epoch);
+                        tracing::info!(epoch, "xray started; traffic baselines reset");
+                    }
+                    Err(err) => {
+                        // Do not sample counters against baselines that
+                        // belong to the previous process: retry instead.
+                        tracing::warn!(error = %err, "reset traffic baselines failed");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+            }
+            let secs = poll_seconds(&state).await;
+            // Tick before sleeping so a freshly started panel knows who is
+            // online without waiting a full interval first.
+            let started = std::time::Instant::now();
+            if let Err(err) = tick(&state, secs).await {
+                tracing::warn!(error = %err, "traffic tick failed");
+            }
+            // Keep the configured cadence when a tick ran slow (e.g. an
+            // unreachable stats API): sleep only the remainder of the period.
+            // A setting change wakes us early so a shorter interval applies
+            // without waiting out the old sleep.
+            let elapsed = started.elapsed();
+            let wait = Duration::from_secs(secs).saturating_sub(elapsed);
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = state.refresh_notify.notified() => {}
+            }
+        }
+    });
+}
+
+async fn poll_seconds(state: &AppState) -> u64 {
+    db::settings::get(&state.db, "traffic_poll_secs")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(5)
+        .clamp(2, 300)
+}
+
+fn online_grace_secs(poll_secs: u64) -> i64 {
+    (poll_secs as i64 * 2).clamp(MIN_ONLINE_GRACE_SECS, MAX_ONLINE_GRACE_SECS)
+}
+
+async fn clear_online_state(state: &AppState) {
+    state.online_clients.lock().await.clear();
+    state.online_last_seen.lock().await.clear();
+    state.active_inbounds.lock().await.clear();
+    state.active_inbound_last_seen.lock().await.clear();
+}
+
+async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
+    let now = db::models::now();
+    let grace = online_grace_secs(poll_secs);
+
+    // Per-attachment identities are what let us attribute an online email to
+    // the inbound it is connected through. They have to exist before the
+    // online API result can be decoded.
+    let clients = db::clients::list_all(&state.db).await?;
+    let associations = db::client_inbounds::all(&state.db).await?;
+    let inbounds = db::inbounds::list(&state.db).await?;
+    let client_emails: HashSet<String> =
+        clients.iter().map(|client| client.email.clone()).collect();
+    let (email_by_identity, tag_by_identity) = identity_maps(&clients, &inbounds, &associations);
+
+    // Connection-based onlines are the primary signal (3x-ui GetUsersStats):
+    // they catch idle-but-connected clients that move no bytes this poll.
+    let api_snapshot = match state.stats.online_users().await {
+        Ok(users) => users.as_deref().map(|users| {
+            decode_online_users(users, &email_by_identity, &tag_by_identity, &client_emails)
+        }),
+        Err(err) => {
+            tracing::debug!(error = %err, "xray online users unavailable");
+            None
+        }
+    };
+    let online_ip_counts = api_snapshot
+        .as_ref()
+        .map(|snapshot| {
+            snapshot
+                .ips
+                .iter()
+                .map(|(email, ips)| (email.clone(), ips.len() as i64))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+
+    let stats = match state.stats.query("", false).await {
+        Ok(stats) => stats,
+        Err(err) => {
+            tracing::debug!(error = %err, "xray stats unavailable");
+            // No traffic deltas this round, but the online API may still work;
+            // either way let both windows age out instead of pinning clients.
+            let online_emails =
+                refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
+            refresh_active_inbounds(state, now, grace, &[]).await;
+            persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
+            return Ok(());
+        }
+    };
+    let restart_on_client_disable = db::settings::ui_settings(&state.db)
+        .await
+        .ok()
+        .and_then(|settings| {
+            settings
+                .get("restartXrayOnClientDisable")
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(true);
+
+    let user_stats = parse_user_stats(&stats);
+    let mut inbound_up: HashMap<String, i64> = HashMap::new();
+    let mut inbound_down: HashMap<String, i64> = HashMap::new();
+    let mut outbound_up: HashMap<String, i64> = HashMap::new();
+    let mut outbound_down: HashMap<String, i64> = HashMap::new();
+
+    for stat in &stats {
+        if let Some((tag, uplink)) = parse_stat(&stat.name, "inbound") {
+            if uplink {
+                inbound_up.insert(tag.to_string(), stat.value);
+            } else {
+                inbound_down.insert(tag.to_string(), stat.value);
+            }
+        } else if let Some((tag, uplink)) = parse_stat(&stat.name, "outbound") {
+            if uplink {
+                outbound_up.insert(tag.to_string(), stat.value);
+            } else {
+                outbound_down.insert(tag.to_string(), stat.value);
+            }
+        }
+    }
+
+    // Split every client's counters per attachment. The old code summed all
+    // attachments into one baseline, so a single reset attachment corrupted
+    // the deltas of the others. Samples are applied in one transaction that
+    // also advances the per-attachment baselines.
+    let mut plans: Vec<ClientSamples> = Vec::with_capacity(clients.len());
+    let mut legacy_deltas: HashMap<i64, (i64, i64)> = HashMap::new();
+    for client in &clients {
+        let ids = associations
+            .get(&client.id)
+            .cloned()
+            .unwrap_or_else(|| vec![client.inbound_id]);
+        let mut samples = Vec::with_capacity(ids.len());
+        for inbound_id in ids {
+            let identity = stat_email(inbound_id, &client.email);
+            if let Some(&(up, down)) = user_stats.get(&identity) {
+                samples.push(AttachmentSample {
+                    inbound_id,
+                    up,
+                    down,
+                });
+            }
+        }
+        if !samples.is_empty() {
+            plans.push(ClientSamples {
+                client_id: client.id,
+                samples,
+            });
+            continue;
+        }
+
+        // Configs written outside the panel may meter the bare email. Keep
+        // that path on the legacy aggregate columns.
+        if let Some(&(up, down)) = user_stats.get(&client.email) {
+            let (delta_up, current_up) =
+                counter_delta(up, client.last_up).unwrap_or((0, client.last_up));
+            let (delta_down, current_down) =
+                counter_delta(down, client.last_down).unwrap_or((0, client.last_down));
+            if delta_up > 0
+                || delta_down > 0
+                || current_up != client.last_up
+                || current_down != client.last_down
+            {
+                let last_online = if delta_up > 0 || delta_down > 0 {
+                    now
+                } else {
+                    client.last_online
+                };
+                db::clients::add_traffic(
+                    &state.db,
+                    client.id,
+                    delta_up,
+                    delta_down,
+                    current_up,
+                    current_down,
+                    last_online,
+                )
+                .await?;
+                legacy_deltas.insert(client.id, (delta_up, delta_down));
+            }
+        }
+    }
+
+    let applied = db::client_traffic::apply_tick(&state.db, &plans, now).await?;
+
+    let mut need_restart = false;
+    // Emails whose counters moved this poll: 3x-ui unions this signal with the
+    // connection-based online list.
+    let mut moved_emails: HashSet<String> = HashSet::new();
+
+    for client in &clients {
+        let (delta_up, delta_down) = applied
+            .get(&client.id)
+            .or_else(|| legacy_deltas.get(&client.id))
+            .copied()
+            .unwrap_or((0, 0));
+        if delta_up > 0 || delta_down > 0 {
+            moved_emails.insert(client.email.clone());
+        }
+
+        let used = client.up + delta_up + client.down + delta_down;
+        let over_quota = client.total > 0 && used >= client.total;
+        let expired = expired_at(client.expiry_time, now);
+        let over_ip_limit = client.limit_ip > 0
+            && online_ip_counts
+                .get(&client.email)
+                .is_some_and(|count| *count > client.limit_ip);
+        if client.enable && (over_quota || expired || over_ip_limit) {
+            db::clients::set_enable(&state.db, client.id, false).await?;
+            tracing::info!(
+                email = %client.email,
+                over_quota,
+                expired,
+                over_ip_limit,
+                "client disabled"
+            );
+            if restart_on_client_disable {
+                need_restart = true;
+            }
+        }
+
+        if client.enable && client.reset_days > 0 {
+            let interval = client.reset_days.saturating_mul(86_400);
+            let due = client.last_reset_time == 0
+                || now.saturating_sub(client.last_reset_time) >= interval;
+            if due {
+                let ids = associations
+                    .get(&client.id)
+                    .cloned()
+                    .unwrap_or_else(|| vec![client.inbound_id]);
+                let mut all_ok = true;
+                for inbound_id in &ids {
+                    if let Err(err) = state
+                        .stats
+                        .reset_pattern(&traffic_pattern(*inbound_id, &client.email))
+                        .await
+                    {
+                        tracing::warn!(
+                            error = %err,
+                            email = %client.email,
+                            inbound_id,
+                            "reset client stats failed"
+                        );
+                        all_ok = false;
+                    }
+                }
+                if all_ok {
+                    db::client_traffic::reset_client_verified(&state.db, client.id, now).await?;
+                    tracing::info!(email = %client.email, days = client.reset_days, "client traffic reset");
+                } else {
+                    // Never zero the database when an Xray counter may still
+                    // hold its old value: the next sample would bill it
+                    // again. Adopt the current counters as the new baseline
+                    // on the next full sample instead.
+                    db::client_traffic::mark_reconcile(&state.db, client.id, &ids, now).await?;
+                    db::clients::touch_reset_time(&state.db, client.id, now).await?;
+                    tracing::warn!(
+                        email = %client.email,
+                        "client traffic reset deferred; baselines flagged for reconcile"
+                    );
+                }
+            }
+        }
+    }
+
+    let mut active_tags = Vec::new();
+    for inbound in &inbounds {
+        let (delta_up, delta_down, next_up, next_down) = direction_deltas(
+            inbound_up.get(&inbound.tag).copied(),
+            inbound_down.get(&inbound.tag).copied(),
+            inbound.last_up,
+            inbound.last_down,
+        );
+        if delta_up > 0 || delta_down > 0 {
+            active_tags.push(inbound.tag.clone());
+        }
+
+        if (inbound_up.contains_key(&inbound.tag) || inbound_down.contains_key(&inbound.tag))
+            && (delta_up > 0
+                || delta_down > 0
+                || next_up != inbound.last_up
+                || next_down != inbound.last_down)
+        {
+            db::inbounds::add_traffic(
+                &state.db, inbound.id, delta_up, delta_down, next_up, next_down,
+            )
+            .await?;
+        }
+
+        let used = inbound.up + delta_up + inbound.down + delta_down;
+        let over_quota = inbound.total > 0 && used >= inbound.total;
+        let expired = expired_at(inbound.expiry_time, now);
+        if inbound.enable && (over_quota || expired) {
+            db::inbounds::set_enable(&state.db, inbound.id, false).await?;
+            tracing::info!(tag = %inbound.tag, over_quota, expired, "inbound disabled");
+            need_restart = true;
+        }
+
+        if inbound.enable && reset_due(inbound, now) {
+            reset_inbound_traffic(state, inbound, &clients, &associations, now).await?;
+        }
+    }
+
+    let online_emails =
+        refresh_online(state, now, grace, api_snapshot.as_ref(), &moved_emails).await;
+    refresh_active_inbounds(state, now, grace, &active_tags).await;
+
+    persist_online_heartbeat(state, &clients, &online_emails, &moved_emails, now).await?;
+
+    update_outbound_traffic(state, &outbound_up, &outbound_down).await?;
+
+    if need_restart {
+        if let Err(err) = service::apply(state).await {
+            tracing::warn!(error = %err, "apply after enforcement failed");
+        }
+    }
+
+    let (sum_up, sum_down): (i64, i64) =
+        sqlx::query_as("SELECT COALESCE(SUM(up), 0), COALESCE(SUM(down), 0) FROM inbounds")
+            .fetch_one(&state.db)
+            .await?;
+
+    let mut history = state.traffic_history.lock().await;
+    history.push_back(TrafficPoint {
+        ts: now,
+        up: sum_up,
+        down: sum_down,
+    });
+    while history.len() > MAX_HISTORY {
+        history.pop_front();
+    }
+
+    Ok(())
+}
+
+struct OnlineSnapshot {
+    emails: HashSet<String>,
+    ips: HashMap<String, Vec<crate::xray::stats::OnlineIp>>,
+    inbounds: HashMap<String, Vec<String>>,
+}
+
+// The generated config meters each (inbound, client) attachment under its own
+// identity (`<inbound id>:<email>`). These maps turn those identities back
+// into the panel email and the inbound tag it belongs to.
+fn identity_maps(
+    clients: &[Client],
+    inbounds: &[Inbound],
+    associations: &HashMap<i64, Vec<i64>>,
+) -> (HashMap<String, String>, HashMap<String, String>) {
+    let tags: HashMap<i64, &str> = inbounds
+        .iter()
+        .map(|inbound| (inbound.id, inbound.tag.as_str()))
+        .collect();
+    let mut email_by_identity = HashMap::new();
+    let mut tag_by_identity = HashMap::new();
+    for client in clients {
+        let ids = associations
+            .get(&client.id)
+            .cloned()
+            .unwrap_or_else(|| vec![client.inbound_id]);
+        for id in ids {
+            let Some(tag) = tags.get(&id) else {
+                continue;
+            };
+            let identity = stat_email(id, &client.email);
+            email_by_identity.insert(identity.clone(), client.email.clone());
+            tag_by_identity.insert(identity, (*tag).to_string());
+        }
+    }
+    (email_by_identity, tag_by_identity)
+}
+
+fn decode_online_users(
+    users: &[crate::xray::OnlineUser],
+    email_by_identity: &HashMap<String, String>,
+    tag_by_identity: &HashMap<String, String>,
+    client_emails: &HashSet<String>,
+) -> OnlineSnapshot {
+    let mut emails = HashSet::new();
+    let mut ips: HashMap<String, HashMap<String, crate::xray::stats::OnlineIp>> = HashMap::new();
+    let mut inbounds: HashMap<String, HashSet<String>> = HashMap::new();
+    for user in users {
+        // Only identities that map back to a live client may enter the online
+        // set. A fallback to the raw email used to admit deleted users and
+        // stale stat identities, inflating the dashboard and the IP counts;
+        // the raw form is still accepted when it is a real client email
+        // (configs written outside the panel).
+        let email = match email_by_identity.get(&user.email) {
+            Some(email) => email.clone(),
+            None if client_emails.contains(&user.email) => user.email.clone(),
+            None => {
+                tracing::debug!(identity = %user.email, "ignoring unknown online identity");
+                continue;
+            }
+        };
+        emails.insert(email.clone());
+        for ip in &user.ips {
+            ips.entry(email.clone())
+                .or_default()
+                .insert(ip.ip.clone(), ip.clone());
+        }
+        if let Some(tag) = tag_by_identity.get(&user.email) {
+            inbounds.entry(email).or_default().insert(tag.clone());
+        }
+    }
+    OnlineSnapshot {
+        emails,
+        ips: ips
+            .into_iter()
+            .map(|(email, by_ip)| (email, by_ip.into_values().collect()))
+            .collect(),
+        inbounds: inbounds
+            .into_iter()
+            .map(|(email, tags)| (email, tags.into_iter().collect()))
+            .collect(),
+    }
+}
+
+// Raw counters per stat identity: identity -> (uplink, downlink). A direction
+// is `None` when xray did not return it; that must not be coerced to zero.
+fn parse_user_stats(
+    stats: &[crate::xray::stats::proto::Stat],
+) -> HashMap<String, (Option<i64>, Option<i64>)> {
+    let mut out: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
+    for stat in stats {
+        let Some((key, uplink)) = parse_stat(&stat.name, "user") else {
+            continue;
+        };
+        let entry = out.entry(key.to_string()).or_insert((None, None));
+        if uplink {
+            entry.0 = Some(stat.value);
+        } else {
+            entry.1 = Some(stat.value);
+        }
+    }
+    out
+}
+
+// Idle-but-connected clients never write traffic, so persist their heartbeat
+// separately; active clients already wrote `now` in apply_tick. One batched
+// UPDATE per tick, like 3x-ui's BumpClientsLastOnline.
+async fn persist_online_heartbeat(
+    state: &AppState,
+    clients: &[Client],
+    online_emails: &HashSet<String>,
+    moved_emails: &HashSet<String>,
+    now: i64,
+) -> anyhow::Result<()> {
+    let touch_ids: Vec<i64> = clients
+        .iter()
+        .filter(|client| {
+            online_emails.contains(&client.email) && !moved_emails.contains(&client.email)
+        })
+        .map(|client| client.id)
+        .collect();
+    db::clients::touch_last_online(&state.db, &touch_ids, now).await?;
+    Ok(())
+}
+
+// Union of the connection-based online users and the emails whose counters
+// moved this poll, then age everything past the grace window, mirroring
+// 3x-ui GetOnlineUsers + traffic deltas.
+async fn refresh_online(
+    state: &AppState,
+    now: i64,
+    grace: i64,
+    api: Option<&OnlineSnapshot>,
+    moved_emails: &HashSet<String>,
+) -> HashSet<String> {
+    let online = {
+        let mut seen = state.online_last_seen.lock().await;
+        fold_online_signals(
+            &mut seen,
+            now,
+            grace,
+            api.map(|snapshot| &snapshot.emails),
+            moved_emails,
+        )
+    };
+
+    let mut snapshot = state.online_clients.lock().await;
+    snapshot.clear();
+    for email in &online {
+        let (ips, inbounds) = api
+            .map(|api| {
+                (
+                    api.ips.get(email).cloned().unwrap_or_default(),
+                    api.inbounds.get(email).cloned().unwrap_or_default(),
+                )
+            })
+            .unwrap_or_default();
+        snapshot.insert(
+            email.clone(),
+            crate::xray::OnlineUser {
+                email: email.clone(),
+                ips,
+                inbounds,
+            },
+        );
+    }
+    online
+}
+
+fn fold_online_signals(
+    seen: &mut HashMap<String, i64>,
+    now: i64,
+    grace: i64,
+    api_emails: Option<&HashSet<String>>,
+    moved_emails: &HashSet<String>,
+) -> HashSet<String> {
+    for email in moved_emails {
+        seen.insert(email.clone(), now);
+    }
+    if let Some(api_emails) = api_emails {
+        for email in api_emails {
+            seen.insert(email.clone(), now);
+        }
+    }
+    // Half-open window, like 3x-ui's `now-ts < grace`: a client idle for
+    // exactly the grace period is offline.
+    seen.retain(|_, seen_at| now.saturating_sub(*seen_at) < grace);
+    seen.keys().cloned().collect()
+}
+
+async fn refresh_active_inbounds(state: &AppState, now: i64, grace: i64, moved_tags: &[String]) {
+    let mut active = state.active_inbound_last_seen.lock().await;
+    for tag in moved_tags {
+        active.insert(tag.clone(), now);
+    }
+    active.retain(|_, seen_at| now.saturating_sub(*seen_at) < grace);
+    *state.active_inbounds.lock().await = active.keys().cloned().collect();
+}
+
+async fn reset_inbound_traffic(
+    state: &AppState,
+    inbound: &Inbound,
+    clients: &[Client],
+    associations: &HashMap<i64, Vec<i64>>,
+    now: i64,
+) -> anyhow::Result<()> {
+    let members: Vec<&Client> = clients
+        .iter()
+        .filter(|client| {
+            associations
+                .get(&client.id)
+                .map(|ids| ids.contains(&inbound.id))
+                .unwrap_or(client.inbound_id == inbound.id)
+        })
+        .collect();
+
+    // Reset every attachment of the client, not just this inbound: the DB
+    // counter is an aggregate, and a partial reset would look like a counter
+    // wrap and double-count the surviving attachments.
+    let mut plans: Vec<(i64, Vec<i64>)> = Vec::with_capacity(members.len());
+    let mut all_ok = true;
+    for client in &members {
+        let ids = associations
+            .get(&client.id)
+            .cloned()
+            .unwrap_or_else(|| vec![client.inbound_id]);
+        for inbound_id in &ids {
+            if let Err(err) = state
+                .stats
+                .reset_pattern(&traffic_pattern(*inbound_id, &client.email))
+                .await
+            {
+                tracing::warn!(error = %err, email = %client.email, inbound_id, "reset stats failed");
+                all_ok = false;
+            }
+        }
+        plans.push((client.id, ids));
+    }
+    if all_ok {
+        let pattern = format!("inbound>>>{}>>>traffic>>>", inbound.tag);
+        if let Err(err) = state.stats.reset_pattern(&pattern).await {
+            tracing::warn!(error = %err, tag = %inbound.tag, "reset inbound stats failed");
+            all_ok = false;
+        }
+    }
+    if !all_ok {
+        // Nothing may be zeroed while an Xray counter still holds its old
+        // value. Adopt the current counters on the next full sample instead.
+        for (client_id, ids) in &plans {
+            db::client_traffic::mark_reconcile(&state.db, *client_id, ids, now).await?;
+        }
+        db::inbounds::touch_reset_time(&state.db, inbound.id, now).await?;
+        tracing::warn!(tag = %inbound.tag, "scheduled traffic reset deferred; baselines flagged for reconcile");
+        return Ok(());
+    }
+
+    for (client_id, _) in &plans {
+        db::client_traffic::reset_client_verified(&state.db, *client_id, now).await?;
+    }
+    db::inbounds::reset_traffic(&state.db, inbound.id).await?;
+    tracing::info!(tag = %inbound.tag, "scheduled traffic reset");
+    Ok(())
+}
+
+async fn update_outbound_traffic(
+    state: &AppState,
+    up: &HashMap<String, i64>,
+    down: &HashMap<String, i64>,
+) -> anyhow::Result<()> {
+    let rows = db::outbounds::list_traffic(&state.db).await?;
+    let mut known: HashMap<String, (i64, i64)> = rows
+        .into_iter()
+        .map(|row| (row.tag, (row.last_up, row.last_down)))
+        .collect();
+    let tags: HashSet<String> = up.keys().chain(down.keys()).cloned().collect();
+
+    for tag in tags {
+        let (last_up, last_down) = known.remove(&tag).unwrap_or((0, 0));
+        let (delta_up, delta_down, next_up, next_down) = direction_deltas(
+            up.get(&tag).copied(),
+            down.get(&tag).copied(),
+            last_up,
+            last_down,
+        );
+        if delta_up > 0 || delta_down > 0 || next_up != last_up || next_down != last_down {
+            db::outbounds::upsert_traffic(
+                &state.db, &tag, delta_up, delta_down, next_up, next_down,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+// The UI/API write expiry as Unix milliseconds; older rows (native API) may
+// hold seconds. Normalize both before comparing against `now_secs`.
+fn expired_at(expiry: i64, now_secs: i64) -> bool {
+    if expiry <= 0 {
+        return false;
+    }
+    let expiry_ms = if expiry < 100_000_000_000 {
+        expiry.saturating_mul(1000)
+    } else {
+        expiry
+    };
+    expiry_ms <= now_secs.saturating_mul(1000)
+}
+
+// One inbound/outbound tag reports uplink and downlink independently. A
+// missing or invalid direction keeps its old baseline while the other one is
+// still billed, so a transiently absent stat cannot later be billed twice.
+fn direction_deltas(
+    up: Option<i64>,
+    down: Option<i64>,
+    last_up: i64,
+    last_down: i64,
+) -> (i64, i64, i64, i64) {
+    let (delta_up, next_up) = counter_delta(up, last_up).unwrap_or((0, last_up));
+    let (delta_down, next_down) = counter_delta(down, last_down).unwrap_or((0, last_down));
+    (delta_up, delta_down, next_up, next_down)
+}
+
+fn parse_stat<'a>(name: &'a str, kind: &str) -> Option<(&'a str, bool)> {
+    let mut parts = name.split(">>>");
+    if parts.next()? != kind {
+        return None;
+    }
+    let key = parts.next()?;
+    if parts.next()? != "traffic" {
+        return None;
+    }
+    let direction = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    match direction {
+        "uplink" => Some((key, true)),
+        "downlink" => Some((key, false)),
+        _ => None,
+    }
+}
+
+fn reset_due(inbound: &Inbound, now: i64) -> bool {
+    if inbound.traffic_reset == "never" || inbound.last_traffic_reset_time <= 0 {
+        return false;
+    }
+    let Some(last) = Local
+        .timestamp_opt(inbound.last_traffic_reset_time, 0)
+        .single()
+    else {
+        return false;
+    };
+    let Some(current) = Local.timestamp_opt(now, 0).single() else {
+        return false;
+    };
+
+    match inbound.traffic_reset.as_str() {
+        "hourly" => current.hour() != last.hour() || current.date_naive() != last.date_naive(),
+        "daily" => current.date_naive() != last.date_naive(),
+        "weekly" => current.iso_week() != last.iso_week(),
+        "monthly" => {
+            let month_changed = current.year() != last.year() || current.month() != last.month();
+            let days = days_in_month(current.year(), current.month());
+            let target = inbound.traffic_reset_day.clamp(1, days as i64) as u32;
+            month_changed && current.day() >= target
+        }
+        _ => false,
+    }
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    NaiveDate::from_ymd_opt(next_year, next_month, 1)
+        .and_then(|d| d.pred_opt())
+        .map(|d| d.day())
+        .unwrap_or(28)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grace_scales_with_poll_and_never_undercuts_xui() {
+        // 3x-ui's 5s poll uses a 20s window.
+        assert_eq!(online_grace_secs(5), 20);
+        assert_eq!(online_grace_secs(10), 20);
+        assert_eq!(online_grace_secs(30), 60);
+        // A slow poll stays capped: 2×300s would keep ghosts for 10 minutes.
+        assert_eq!(online_grace_secs(300), 60);
+    }
+
+    #[test]
+    fn online_window_unions_live_connections_and_traffic_movers() {
+        let moved = HashSet::from(["burst".to_string()]);
+        let mut seen = HashMap::new();
+        let api = HashSet::from(["idle".to_string()]);
+        let online = fold_online_signals(&mut seen, 1_000, 20, Some(&api), &moved);
+        assert_eq!(
+            online,
+            HashSet::from(["burst".to_string(), "idle".to_string()])
+        );
+    }
+
+    #[test]
+    fn online_window_drops_disconnects_after_grace_like_xui() {
+        let no_moved = HashSet::new();
+        let mut seen = HashMap::from([("old".to_string(), 980)]);
+        // Idle exactly `grace` seconds: half-open window means offline.
+        let api: HashSet<String> = HashSet::new();
+        let online = fold_online_signals(&mut seen, 1_000, 20, Some(&api), &no_moved);
+        assert!(online.is_empty());
+        assert!(!seen.contains_key("old"));
+
+        // One second inside the window: still online.
+        let mut seen = HashMap::from([("edge".to_string(), 981)]);
+        let online = fold_online_signals(&mut seen, 1_000, 20, Some(&api), &no_moved);
+        assert_eq!(online, HashSet::from(["edge".to_string()]));
+    }
+
+    #[test]
+    fn user_stats_keep_each_attachment_separate() {
+        use crate::xray::stats::proto::Stat;
+
+        let stats = vec![
+            Stat {
+                name: "user>>>1:alice>>>traffic>>>uplink".into(),
+                value: 10,
+            },
+            Stat {
+                name: "user>>>1:alice>>>traffic>>>downlink".into(),
+                value: 20,
+            },
+            Stat {
+                name: "user>>>2:alice>>>traffic>>>uplink".into(),
+                value: 5,
+            },
+            Stat {
+                name: "user>>>bob>>>traffic>>>downlink".into(),
+                value: 3,
+            },
+        ];
+        let parsed = parse_user_stats(&stats);
+        assert_eq!(parsed.get("1:alice"), Some(&(Some(10), Some(20))));
+        // Downlink was not reported for this attachment: None, not zero.
+        assert_eq!(parsed.get("2:alice"), Some(&(Some(5), None)));
+        assert_eq!(parsed.get("bob"), Some(&(None, Some(3))));
+    }
+
+    #[test]
+    fn online_identities_map_to_email_and_inbound_tags() {
+        use crate::xray::stats::OnlineIp;
+        use crate::xray::OnlineUser;
+
+        let email_by_identity = HashMap::from([
+            ("1:alice".to_string(), "alice".to_string()),
+            ("2:alice".to_string(), "alice".to_string()),
+        ]);
+        let tag_by_identity = HashMap::from([
+            ("1:alice".to_string(), "in-a".to_string()),
+            ("2:alice".to_string(), "in-b".to_string()),
+        ]);
+        let users = vec![
+            OnlineUser {
+                email: "1:alice".into(),
+                ips: vec![OnlineIp {
+                    ip: "1.2.3.4".into(),
+                    last_seen: 1,
+                }],
+                inbounds: Vec::new(),
+            },
+            OnlineUser {
+                email: "2:alice".into(),
+                ips: vec![
+                    OnlineIp {
+                        ip: "1.2.3.4".into(),
+                        last_seen: 2,
+                    },
+                    OnlineIp {
+                        ip: "5.6.7.8".into(),
+                        last_seen: 2,
+                    },
+                ],
+                inbounds: Vec::new(),
+            },
+        ];
+        let client_emails = HashSet::from(["alice".to_string()]);
+        let snapshot =
+            decode_online_users(&users, &email_by_identity, &tag_by_identity, &client_emails);
+        assert_eq!(snapshot.emails, HashSet::from(["alice".to_string()]));
+        assert_eq!(snapshot.ips["alice"].len(), 2, "IPs are deduped");
+        let mut tags = snapshot.inbounds["alice"].clone();
+        tags.sort();
+        assert_eq!(tags, vec!["in-a".to_string(), "in-b".to_string()]);
+    }
+
+    #[test]
+    fn unknown_online_identities_are_ignored() {
+        use crate::xray::stats::OnlineIp;
+        use crate::xray::OnlineUser;
+
+        let email_by_identity = HashMap::from([("1:alice".to_string(), "alice".to_string())]);
+        let tag_by_identity = HashMap::new();
+        let users = vec![
+            OnlineUser {
+                email: "1:alice".into(),
+                ips: Vec::new(),
+                inbounds: Vec::new(),
+            },
+            // Deleted client / stale identity from the running core.
+            OnlineUser {
+                email: "999:ghost".into(),
+                ips: vec![OnlineIp {
+                    ip: "6.6.6.6".into(),
+                    last_seen: 1,
+                }],
+                inbounds: Vec::new(),
+            },
+            // A plain email that still exists in the panel is accepted.
+            OnlineUser {
+                email: "bob".into(),
+                ips: Vec::new(),
+                inbounds: Vec::new(),
+            },
+        ];
+        let client_emails = HashSet::from(["alice".to_string(), "bob".to_string()]);
+        let snapshot =
+            decode_online_users(&users, &email_by_identity, &tag_by_identity, &client_emails);
+        assert_eq!(
+            snapshot.emails,
+            HashSet::from(["alice".to_string(), "bob".to_string()])
+        );
+        assert!(!snapshot.ips.contains_key("ghost"));
+    }
+
+    #[test]
+    fn expiry_handles_milliseconds_and_legacy_seconds() {
+        let now = 1_700_000_000;
+        assert!(expired_at(1_699_999_999, now));
+        assert!(expired_at(1_699_999_999_000, now));
+        assert!(!expired_at(1_700_000_001, now));
+        assert!(!expired_at(1_700_000_001_000, now));
+        assert!(!expired_at(0, now));
+        assert!(!expired_at(-86_400_000, now));
+    }
+
+    #[test]
+    fn missing_or_invalid_directions_keep_their_baselines() {
+        // Downlink moved, uplink was not reported: only down is billed.
+        assert_eq!(
+            direction_deltas(None, Some(260), 100, 200),
+            (0, 60, 100, 260)
+        );
+        // The mirror case: a missing downlink must not reset last_down.
+        assert_eq!(
+            direction_deltas(Some(150), None, 100, 200),
+            (50, 0, 150, 200)
+        );
+        assert_eq!(direction_deltas(None, None, 100, 200), (0, 0, 100, 200));
+        // Negative samples are treated like missing ones.
+        assert_eq!(
+            direction_deltas(Some(-1), Some(0), 100, 200),
+            (0, 0, 100, 0)
+        );
+    }
+
+    #[test]
+    fn parses_user_and_inbound_stats_only() {
+        assert_eq!(
+            parse_stat("user>>>a@b>>>traffic>>>uplink", "user"),
+            Some(("a@b", true))
+        );
+        assert_eq!(
+            parse_stat("inbound>>>in-443>>>traffic>>>downlink", "inbound"),
+            Some(("in-443", false))
+        );
+        assert_eq!(parse_stat("user>>>a@b>>>traffic>>>uplink", "inbound"), None);
+        assert_eq!(parse_stat("garbage", "user"), None);
+    }
+}

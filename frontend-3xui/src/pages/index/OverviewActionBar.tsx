@@ -1,0 +1,151 @@
+import { Fragment } from 'react';
+import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Button, Tag, Tooltip } from 'antd';
+import {
+  BarsOutlined,
+  CloudServerOutlined,
+  ControlOutlined,
+  PoweroffOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
+
+import { formatPanelVersion } from '@/lib/panel-version';
+import type { Status } from '@/models/status';
+
+interface OverviewActionBarProps {
+  status: Status;
+  isMobile: boolean;
+  panelVersion: string;
+  onStopXray: () => void;
+  onRestartXray: () => void;
+  onOpenLogs: () => void;
+  onOpenConfig: () => void;
+  onOpenBackup: () => void;
+  onOpenVersionSwitch: () => void;
+}
+
+interface BarAction {
+  key: string;
+  icon: ReactNode;
+  text: string;
+  onClick: () => void;
+  primary?: boolean;
+}
+
+const XRAY_STATE_KEYS: Record<string, string> = {
+  running: 'pages.index.xrayStatusRunning',
+  stop: 'pages.index.xrayStatusStop',
+  error: 'pages.index.xrayStatusError',
+};
+
+export default function OverviewActionBar({
+  status,
+  isMobile,
+  panelVersion,
+  onStopXray,
+  onRestartXray,
+  onOpenLogs,
+  onOpenConfig,
+  onOpenBackup,
+  onOpenVersionSwitch,
+}: OverviewActionBarProps) {
+  const { t } = useTranslation();
+  const stateText = t(XRAY_STATE_KEYS[status.xray.state] ?? 'pages.index.xrayStatusUnknown');
+  const hasVersion = !!status.xray.version && status.xray.version !== 'Unknown';
+  const size = isMobile ? ('small' as const) : ('middle' as const);
+
+  const actionGroups: BarAction[][] = [
+    [
+      {
+        key: 'restart',
+        icon: <ReloadOutlined aria-hidden />,
+        text: t('pages.index.restartXray'),
+        onClick: onRestartXray,
+        primary: true,
+      },
+      {
+        key: 'stop',
+        icon: <PoweroffOutlined aria-hidden />,
+        text: t('pages.index.stopXray'),
+        onClick: onStopXray,
+      },
+    ],
+    [
+      {
+        key: 'logs',
+        icon: <BarsOutlined aria-hidden />,
+        text: t('pages.index.logs'),
+        onClick: onOpenLogs,
+      },
+      {
+        key: 'config',
+        icon: <ControlOutlined aria-hidden />,
+        text: t('pages.index.config'),
+        onClick: onOpenConfig,
+      },
+      {
+        key: 'backup',
+        icon: <CloudServerOutlined aria-hidden />,
+        text: t('pages.index.backupTitle'),
+        onClick: onOpenBackup,
+      },
+    ],
+  ];
+
+  const statePill = (
+    <span className="ov-state" data-state={status.xray.state}>
+      <span className="ov-state-dot" style={{ color: status.xray.color }} />
+      <span>{`${t('pages.index.xrayStatus')} · ${stateText}`}</span>
+      {hasVersion && (
+        <Tooltip title={t('pages.index.xraySwitch')}>
+          <button type="button" className="ov-state-version" onClick={onOpenVersionSwitch}>
+            {`v${status.xray.version}`}
+          </button>
+        </Tooltip>
+      )}
+    </span>
+  );
+
+  return (
+    <div className="ov-bar">
+      {status.xray.errorMsg ? (
+        <Tooltip title={<span className="ov-error-detail">{status.xray.errorMsg}</span>}>
+          {statePill}
+        </Tooltip>
+      ) : (
+        statePill
+      )}
+
+      {status.xray.state === 'running' && status.xray.errorMsg ? (
+        <Tooltip title={<span className="ov-error-detail">{status.xray.errorMsg}</span>}>
+          <Tag color="error">{t('pages.index.xrayStatusError')}</Tag>
+        </Tooltip>
+      ) : null}
+
+      <span className="ov-panel-version ov-mono">{formatPanelVersion(panelVersion)}</span>
+
+      <div className="ov-bar-actions">
+        {actionGroups.map((group, groupIndex) => (
+          <Fragment key={group[0].key}>
+            {groupIndex > 0 && <span className="ov-bar-sep" />}
+            {group.map((action) => (
+              <Button
+                key={action.key}
+                type={action.primary ? undefined : 'text'}
+                color={action.primary ? 'primary' : undefined}
+                variant={action.primary ? 'outlined' : undefined}
+                size={size}
+                icon={action.icon}
+                aria-label={action.text}
+                onClick={action.onClick}
+              >
+                {isMobile ? undefined : action.text}
+              </Button>
+            ))}
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}

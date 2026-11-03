@@ -1,0 +1,20 @@
+CREATE TABLE outbound_subscriptions (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    remark                 TEXT    NOT NULL DEFAULT '',
+    url                    TEXT    NOT NULL,
+    enabled                INTEGER NOT NULL DEFAULT 1,
+    allow_private          INTEGER NOT NULL DEFAULT 0,
+    allow_insecure         INTEGER NOT NULL DEFAULT 0,
+    user_agent             TEXT    NOT NULL DEFAULT '',
+    proxy_url              TEXT    NOT NULL DEFAULT '',
+    tag_prefix             TEXT    NOT NULL DEFAULT '',
+    update_interval        INTEGER NOT NULL DEFAULT 600,
+    priority               INTEGER NOT NULL DEFAULT 0,
+    prepend                INTEGER NOT NULL DEFAULT 0,
+    last_updated           INTEGER NOT NULL DEFAULT 0,
+    last_error             TEXT    NOT NULL DEFAULT '',
+    last_fetched_outbounds TEXT    NOT NULL DEFAULT '',
+    link_identities        TEXT    NOT NULL DEFAULT '',
+    created_at             INTEGER NOT NULL DEFAULT 0,
+    updated_at             INTEGER NOT NULL DEFAULT 0
+);

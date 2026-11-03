@@ -1,0 +1,72 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      PANEL_GITHUB_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend-3xui/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend-3xui
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - uses: goto-bus-stop/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.24.0 --locked
+
+      - name: Verify tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          test "v${version}" = "${GITHUB_REF_NAME}" || {
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml v${version}"
+            exit 1
+          }
+
+      - name: Build release binary
+        run: cargo zigbuild --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Package release
+        run: |
+          set -euo pipefail
+          bin=target/x86_64-unknown-linux-musl/release/xray-panel-rs
+          strip "$bin"
+          mkdir -p dist/xray-panel-rs-linux-amd64-lumen
+          cp "$bin" dist/xray-panel-rs-linux-amd64-lumen/xray-panel-rs
+          cp README.md deploy/install.sh deploy/xray-panel.service deploy/xray-panel.env.example dist/xray-panel-rs-linux-amd64-lumen/
+          (cd dist/xray-panel-rs-linux-amd64-lumen && sha256sum xray-panel-rs > SHA256SUMS)
+          tar -czf dist/xray-panel-rs-linux-amd64-lumen.tar.gz -C dist xray-panel-rs-linux-amd64-lumen
+          cp "$bin" dist/xray-panel-rs
+          cp dist/xray-panel-rs-linux-amd64-lumen/SHA256SUMS dist/SHA256SUMS
+          file "$bin"
+          cat dist/SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/xray-panel-rs-linux-amd64-lumen.tar.gz
+            dist/xray-panel-rs
+            dist/SHA256SUMS
+          generate_release_notes: true

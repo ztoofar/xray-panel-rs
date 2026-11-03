@@ -1,0 +1,288 @@
+/* Sci-fi surface pass: deep navy glass, cyan rails and a technical grid.
+   Ant Design tokens carry the palette; this file adds the texture and glow. */
+
+body.dark {
+  --scifi-line: rgba(56, 189, 248, 0.16);
+  --scifi-line-strong: rgba(34, 211, 238, 0.42);
+  --scifi-surface: #0a1322;
+  --scifi-surface-2: #0e1a2e;
+  --scifi-glow: rgba(34, 211, 238, 0.28);
+  background: #050a12;
+}
+
+body.light {
+  --scifi-line: rgba(8, 145, 178, 0.18);
+  --scifi-line-strong: rgba(8, 145, 178, 0.4);
+  --scifi-surface: #ffffff;
+  --scifi-surface-2: #f2f9ff;
+  --scifi-glow: rgba(8, 145, 178, 0.16);
+  background: #e8f4fb;
+}
+
+/* ---- Sidebar ---- */
+body.dark .ant-sidebar > .ant-layout-sider {
+  background: linear-gradient(180deg, #071120 0%, #04080f 100%) !important;
+  border-right: 1px solid var(--scifi-line);
+  box-shadow: 10px 0 40px rgba(0, 0, 0, 0.35);
+}
+
+body.light .ant-sidebar > .ant-layout-sider {
+  background: linear-gradient(180deg, #f7fbff 0%, #e9f4fb 100%) !important;
+  border-right: 1px solid var(--scifi-line);
+}
+
+.sider-brand,
+.drawer-brand {
+  border-bottom: 1px solid var(--scifi-line) !important;
+}
+
+.brand-text {
+  background: linear-gradient(90deg, #67e8f9 0%, #38bdf8 55%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+body.light .brand-text {
+  background: linear-gradient(90deg, #0e7490 0%, #0284c7 55%, #6d28d9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.brand-mark {
+  color: #22d3ee;
+  filter: drop-shadow(0 0 7px rgba(34, 211, 238, 0.75));
+}
+
+body.light .brand-mark {
+  color: #0891b2;
+  filter: drop-shadow(0 0 4px rgba(8, 145, 178, 0.35));
+}
+
+body.dark .sider-nav .ant-menu-item-selected,
+body.dark .sider-utility .ant-menu-item-selected,
+body.dark .drawer-menu .ant-menu-item-selected {
+  box-shadow:
+    inset 3px 0 0 #22d3ee,
+    0 0 18px rgba(34, 211, 238, 0.12);
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.35);
+}
+
+body.light .sider-nav .ant-menu-item-selected,
+body.light .sider-utility .ant-menu-item-selected,
+body.light .drawer-menu .ant-menu-item-selected {
+  box-shadow: inset 3px 0 0 #0891b2;
+}
+
+/* ---- Cards ---- */
+body.dark .ant-card {
+  background: linear-gradient(180deg, rgba(13, 26, 45, 0.96), rgba(8, 17, 31, 0.96));
+  border-color: var(--scifi-line);
+}
+
+body.dark .ant-card-head {
+  border-bottom: 1px solid var(--scifi-line);
+}
+
+body.dark .ant-card-head-title {
+  color: #bfe4ff;
+  letter-spacing: 0.03em;
+}
+
+body.light .ant-card {
+  border-color: var(--scifi-line);
+}
+
+body.light .ant-card-head-title {
+  color: #0e7490;
+  letter-spacing: 0.03em;
+}
+
+/* ---- Tables ---- */
+body.dark .ant-table {
+  background: transparent;
+  color: #cfe3f8;
+}
+
+body.dark .ant-table-thead > tr > th {
+  background: linear-gradient(180deg, rgba(20, 42, 66, 0.95), rgba(10, 24, 40, 0.95)) !important;
+  color: #9fd8f5 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px !important;
+  border-bottom: 1px solid var(--scifi-line) !important;
+}
+
+body.dark .ant-table-tbody > tr > td {
+  border-bottom-color: rgba(56, 189, 248, 0.08) !important;
+}
+
+body.dark .ant-table-tbody > tr:hover > td {
+  background: rgba(34, 211, 238, 0.06) !important;
+}
+
+body.dark .ant-table-tbody > tr.ant-table-row-selected > td {
+  background: rgba(34, 211, 238, 0.1) !important;
+}
+
+body.light .ant-table-thead > tr > th {
+  background: #eef8ff !important;
+  color: #0e7490 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px !important;
+  border-bottom: 1px solid var(--scifi-line) !important;
+}
+
+body.light .ant-table-tbody > tr:hover > td {
+  background: rgba(8, 145, 178, 0.05) !important;
+}
+
+/* ---- Buttons ---- */
+body .ant-btn-primary:not(:disabled) {
+  background: linear-gradient(135deg, #67e8f9 0%, #22d3ee 45%, #0891b2 100%) !important;
+  border: none !important;
+  color: #04141f !important;
+  font-weight: 600;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.28);
+}
+
+body .ant-btn-primary:not(:disabled):hover {
+  background: linear-gradient(135deg, #a5f3fc 0%, #67e8f9 45%, #22d3ee 100%) !important;
+  color: #04141f !important;
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.5);
+}
+
+body .ant-btn-primary:disabled {
+  background: #1b3350 !important;
+  color: rgba(215, 233, 255, 0.4) !important;
+  box-shadow: none;
+}
+
+body.light .ant-btn-primary:not(:disabled) {
+  background: linear-gradient(135deg, #06b6d4 0%, #0284c7 100%) !important;
+  color: #ffffff !important;
+}
+
+body.light .ant-btn-primary:not(:disabled):hover {
+  background: linear-gradient(135deg, #22d3ee 0%, #0369a1 100%) !important;
+  color: #ffffff !important;
+}
+
+/* ---- Inputs ---- */
+body.dark .ant-input,
+body.dark .ant-input-affix-wrapper,
+body.dark .ant-select-selector,
+body.dark .ant-picker,
+body.dark .ant-input-number,
+body.dark textarea.ant-input {
+  background-color: #08111f !important;
+  border-color: var(--scifi-line) !important;
+}
+
+body.dark .ant-input:hover,
+body.dark .ant-input-affix-wrapper:hover,
+body.dark .ant-select-selector:hover,
+body.dark .ant-picker:hover,
+body.dark .ant-input-number:hover {
+  border-color: var(--scifi-line-strong) !important;
+}
+
+body.dark .ant-input:focus,
+body.dark .ant-input-focused,
+body.dark .ant-input-affix-wrapper-focused,
+body.dark .ant-select-focused .ant-select-selector,
+body.dark .ant-picker-focused {
+  border-color: #22d3ee !important;
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.15) !important;
+}
+
+body.light .ant-input:focus,
+body.light .ant-input-focused,
+body.light .ant-input-affix-wrapper-focused,
+body.light .ant-select-focused .ant-select-selector,
+body.light .ant-picker-focused {
+  border-color: #0891b2 !important;
+  box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.12) !important;
+}
+
+/* ---- Overlays ---- */
+body.dark .ant-modal-content,
+body.dark .ant-drawer-content,
+body.dark .ant-drawer-body,
+body.dark .ant-dropdown-menu,
+body.dark .ant-select-dropdown,
+body.dark .ant-picker-dropdown .ant-picker-panel-container {
+  background-color: var(--scifi-surface) !important;
+  border: 1px solid var(--scifi-line);
+}
+
+body.dark .ant-modal-content {
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.06),
+    0 24px 80px rgba(0, 0, 0, 0.7),
+    0 0 40px rgba(34, 211, 238, 0.08);
+}
+
+body.dark .ant-modal-header {
+  background: transparent;
+  border-bottom: 1px solid var(--scifi-line);
+}
+
+body.light .ant-modal-content,
+body.light .ant-dropdown-menu,
+body.light .ant-select-dropdown {
+  border: 1px solid var(--scifi-line);
+}
+
+/* ---- Tabs ---- */
+body.dark .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #67e8f9 !important;
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.35);
+}
+
+body.dark .ant-tabs-ink-bar {
+  background: #22d3ee !important;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+}
+
+body.light .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #0e7490 !important;
+}
+
+body.light .ant-tabs-ink-bar {
+  background: #0891b2 !important;
+}
+
+/* ---- Misc ---- */
+body.dark .ant-tag {
+  border-color: rgba(56, 189, 248, 0.18);
+}
+
+body.dark .ant-statistic-content {
+  color: #e6f4ff;
+}
+
+body.dark *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+body.dark *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #155e75, #0e7490);
+  border-radius: 999px;
+  border: 2px solid #050a12;
+}
+
+body.dark *::-webkit-scrollbar-track {
+  background: #060c16;
+}
+
+body.dark ::selection {
+  background: rgba(34, 211, 238, 0.28);
+  color: #ffffff;
+}

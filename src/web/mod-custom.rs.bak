@@ -1,0 +1,87 @@
+use axum::{
+    body::Body,
+    http::{header, HeaderValue, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    Json,
+};
+use rust_embed::RustEmbed;
+use serde_json::json;
+
+#[derive(RustEmbed)]
+#[folder = "web/dist/"]
+struct Assets;
+
+const RAW_CONFIG_HTML: &str = r#"<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Xray 原始配置</title>
+<style>
+body{margin:0;background:#0b1220;color:#d6e2f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;height:100vh;display:flex;flex-direction:column}
+.bar{display:flex;gap:12px;align-items:center;padding:10px 14px;background:#111a2b;border-bottom:1px solid #1f2a3d;flex-wrap:wrap}
+.bar strong{font-size:14px}.bar span{color:#8fa3bf;font-size:12px;word-break:break-all}
+.bar .spacer{flex:1}button,a{background:#1f2a3d;color:#d6e2f0;border:1px solid #2d3b52;border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;text-decoration:none}
+button.primary{background:#1677ff;border-color:#1677ff}button:hover,a:hover{filter:brightness(1.15)}
+#content{flex:1;width:100%;box-sizing:border-box;border:0;outline:0;resize:none;padding:14px;background:#0b1220;color:#d6e2f0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.6}
+#msg{padding:8px 14px;font-size:13px;min-height:20px}#msg.err{color:#ff7875}#msg.ok{color:#95de64}
+</style></head><body>
+<div class="bar"><strong>Xray 原始配置文件</strong><span id="path">加载中...</span><span class="spacer"></span>
+<button id="reload">重新加载</button><button id="save" class="primary">校验并保存</button><a href="/">返回面板</a></div>
+<textarea id="content" spellcheck="false" placeholder="加载中..."></textarea><div id="msg"></div>
+<script>
+var $=function(id){return document.getElementById(id)};
+function show(text,error){var el=$('msg');el.textContent=text;el.className=error?'err':'ok'}
+async function csrf(){var r=await fetch('/csrf-token',{credentials:'same-origin'});if(!r.ok)return '';var j=await r.json().catch(function(){return null});return j&&j.obj?j.obj:''}
+async function load(){var r=await fetch('/api/xray/raw-config',{credentials:'same-origin'});if(r.status===401){location.href='/login';return}var j=await r.json().catch(function(){return null});if(!r.ok){show((j&&j.error)||'加载失败',true);return}$('path').textContent=(j&&j.path)||'';$('content').value=(j&&j.content)||'';show('已加载',false)}
+async function save(){show('正在校验配置...',false);var token=await csrf();var r=await fetch('/api/xray/raw-config',{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':token},body:JSON.stringify({content:$('content').value})});var j=await r.json().catch(function(){return null});if(r.ok){show('保存成功，Xray 已重启',false)}else{show((j&&j.error)||('保存失败 '+r.status),true)}}
+$('reload').onclick=load;$('save').onclick=save;load();
+</script></body></html>"#;
+
+pub async fn static_handler(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    if path == "raw-config" {
+        return serve_html(RAW_CONFIG_HTML);
+    }
+    let path = uri.path().trim_start_matches('/');
+    if path.starts_with("api/") {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response();
+    }
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    if let Some(content) = Assets::get(path) {
+        return serve(path, content.data.into_owned());
+    }
+    if !path.rsplit('/').next().unwrap_or(path).contains('.') {
+        if let Some(content) = Assets::get("index.html") {
+            return serve("index.html", content.data.into_owned());
+        }
+    }
+    (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+fn serve_html(html: &str) -> Response {
+    let mut response = Response::new(Body::from(html.to_string()));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
+}
+
+fn serve(path: &str, bytes: Vec<u8>) -> Response {
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(mime.as_ref())
+            .unwrap_or(HeaderValue::from_static("application/octet-stream")),
+    );
+    let cache = if path.ends_with(".html") {
+        HeaderValue::from_static("no-cache")
+    } else {
+        HeaderValue::from_static("public, max-age=31536000, immutable")
+    };
+    response.headers_mut().insert(header::CACHE_CONTROL, cache);
+    response
+}

@@ -1,0 +1,22 @@
+[Unit]
+Description=xray-panel-rs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/xray-panel.env
+# Relative defaults (PANEL_DB/PANEL_XRAY_LOG) must not land in /.
+WorkingDirectory=/etc/xray-panel
+ExecStart=/usr/local/bin/xray-panel-rs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# Xray binary replacement and the default geofile location (XRAY_BIN dir).
+ReadWritePaths=/etc/xray-panel /usr/local/etc/xray /usr/local/bin
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
