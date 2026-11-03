@@ -28,22 +28,20 @@
 1. 当前已发布 **0.2.16**（协议补全、节点地址、在线更新、一键安装、GitHub
    Actions）。打新版本时同步 `Cargo.toml` 与 tag，推送 `v*` 标签由
    `.github/workflows/release.yml` 构建发布。
-2. 修改 `Cargo.toml` 的 `version`（先改再做前端/后端构建）。
-3. 构建：
+2. 本地只改代码并自测：前端构建、`cargo fmt --check`、`cargo test`、
+   `cargo clippy`。**不需要本地 musl 打包。**
+3. 修改 `Cargo.toml` 的 `version`，更新文档，提交并推送 `main`。
+4. 等 main 的 CI 通过后推送 tag（tag 必须等于 `v${Cargo.toml version}`）：
    ```sh
-   cd frontend-3xui
-   export PATH="/d/ClaudeCode/Tools/node-v26.13.0-win-x64:$PATH"
-   npm run build
-   cd ..
-   export PATH="/d/ClaudeCode/Tools/zig-npm/node_modules/@zigc/win32-x64/bin:$PATH"
-   cargo zigbuild --release --target x86_64-unknown-linux-musl
+   git tag v0.2.17 && git push origin v0.2.17
    ```
-4. 组装 `dist/xray-panel-rs-linux-amd64-lumen/`：二进制、`deploy/` 的
-   `install.sh`/service/env 示例、README、SHA256SUMS；生成 tar.gz 与 SHA256。
-5. 更新 `PROGRESS.md`、`memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
-6. 升级说明：替换二进制即可；迁移 0009 自动执行；旧 `.db` 备份仍可恢复。
-7. 0.2.13 发布包已包含：2026-11-02 功能整改 + 此前 0.2.12 的全部内容
-   （新增依赖 `zip`；删除代码后二进制为 12,623,520 字节）。
+5. `.github/workflows/release.yml` 自动构建 musl、打包 tar.gz/原始二进制/
+   SHA256SUMS 并创建 Release；到 Releases 页面核对资产与哈希。
+6. 更新 `PROGRESS.md`、`memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`
+   记录 Release 哈希。
+7. 仅当用户明确要求本地备用包或 Actions 不可用时，才在本机执行
+   `cargo zigbuild --release --target x86_64-unknown-linux-musl` 并手工组装
+   `dist/`；正常发布不要做这一步。
 
 ### B. 用户要求继续某项开发
 - 先读 `docs/` 对应文档与相关源码，确认现状。

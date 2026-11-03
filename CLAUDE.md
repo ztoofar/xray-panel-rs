@@ -124,9 +124,12 @@ GitHub 发布：同步 `Cargo.toml` 版本后推 `v*` 标签，`.github/workflow
 - `npm run typecheck` 当前会因 `node_modules` 缺少 vitest/storybook 等
   devDependencies 报既有错误；判断自己的改动时，以**改动文件没有新增报错**为准，
   并在 `KNOWN-ISSUES.md` / `TODO.md` 跟踪。
-- 打包发布（只在用户要求时）：构建前端 → musl release → 生成
-  `dist/xray-panel-rs-linux-amd64-lumen.tar.gz`（含二进制与 `install.sh`）→
-  记录 SHA256 并更新文档。
+- **发布默认走 GitHub Actions**（本地只改代码）：同步 `Cargo.toml` 版本 →
+  提交并推送 `main` → 推送 `v*` 标签；`.github/workflows/release.yml` 自动
+  构建 musl、打包、创建 Release。本地不需要 `cargo zigbuild` 或手工 tar。
+- 本地仍负责：前端构建（本地运行）、`cargo fmt/test/clippy`、版本号与文档。
+- 只有用户要求本地备用包或 Actions 不可用时，才在本机生成
+  `dist/xray-panel-rs-linux-amd64-lumen.tar.gz` 并记录 SHA256。
 
 ---
 
