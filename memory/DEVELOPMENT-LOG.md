@@ -856,3 +856,15 @@
   `CURRENT-STATUS.md` §2.26。
 - 未验证：真实 Linux/musl、真实 systemd 重跑；代理可达但目标不可达的归因。
 - 未打包、未 bump 版本（仍 0.2.18）。
+
+## 2026-11-04 00:21 — 0.2.19 发布
+
+- `Cargo.toml` / `Cargo.lock` 版本 0.2.18 → `0.2.19`。
+- 内容：安装幂等跳过（版本 marker 或包内 SHA-256）、`PANEL_FORCE=1`、
+  二进制 `--version`/`LUMEN_VERSION`、更新/下载代理失败提示、README 重写。
+- 发布前验证：`cargo fmt --check`、`cargo test` 97/97、clippy 零警告、
+  `cargo build` 成功；`tmp/install-skip-test/run.sh` 10/10；
+  `tmp/e2e-update-hint/e2e.py` 全部通过。
+- 发布方式：推送 `main` 与 tag `v0.2.19`，由 GitHub Actions `release.yml`
+  构建 musl 包并创建 Release；本地不打包。
+- Release 资产大小与 digest：待 Actions 完成后补充。
