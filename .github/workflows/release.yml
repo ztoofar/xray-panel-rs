@@ -76,10 +76,20 @@ jobs:
 
             脚本会下载本 Release、校验 SHA256、安装面板，并在缺少 Xray 时安装官方核心。
 
+            ## 代理
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh \
+              | sudo PANEL_PROXY=http://127.0.0.1:7890 bash
+            ```
+
+            支持 HTTP/SOCKS；面板在线更新使用「设置 → 更新代理」的同一地址，
+            代理不可达时脚本和面板都会返回包含代理地址的错误。
+
             ## 在线更新
 
-            登录面板 → 设置 → 面板更新 → 检查更新。面板从 Releases 下载并校验二进制，
-            原子替换后由 systemd 自动重启。
+            登录面板 → 设置 → 面板更新 → 检查更新。面板从 Releases 下载 tar.gz，
+            使用 GitHub 资产 digest 校验并解出二进制，原子替换后由 systemd 自动重启。
 
             ## 资产
 
