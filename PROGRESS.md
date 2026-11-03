@@ -1205,3 +1205,13 @@ Linux `/proc` 实时采集：
   `sha256:23a4885d...18a9`。
 - 在线更新改为下载 tar.gz + digest 校验 + 内置 tar 解析提取二进制。
 - 0.2.16 用户需用一键安装脚本升级一次，之后在线更新恢复（KNOWN-ISSUES N3）。
+
+## 2026-11-04 — 0.2.18：安装/更新代理、systemd 判定与 Linux 集成测试
+
+- 一键脚本支持安装/更新两种模式与 PANEL_PROXY；面板在线更新复用 updateProxy
+  并在错误中带出代理地址。
+- 服务单元注入 PANEL_SYSTEMD=1，旧单元用 MainPID 兼容；修复 CI 中误判 systemd
+  导致进程退出。
+- 新增 integration workflow：Linux 上真实跑通 v0.2.17→v0.2.18 在线更新和
+  v0.2.18 一键安装；坏代理报错验证通过。
+- 发布 v0.2.18，唯一资产 tar.gz 5,425,000 字节，digest `sha256:ba59a2a2...8496`。

@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-03 23:50（本地时间）
+> 最后更新：2026-11-04 00:05（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,15 +8,15 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.17` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.17`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,422,123 字节，SHA256 `23a4885d...18a9`（GitHub asset digest） |
-| 当前源码 | `0.2.17` 已推送 GitHub（tag `v0.2.17` → `c5bdaa3`）；Release 只保留 tar.gz，更新器用资产 digest 校验并解压 |
-| 上一版 | GitHub Release `v0.2.16`：tar 5,417,245 字节 SHA256 `ad58e7da...4b3c`，另有二进制与 SHA256SUMS；更早 `v0.2.15` 等 |
-| 0.2.17 SHA256 | `23a4885d7d87a2354f0c4e979eb2bb0644454e1cc47c5c61736f3825d08318a9`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 仍校验解压后的二进制 |
+| `Cargo.toml` 版本 | `0.2.18` |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.18`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,425,000 字节，SHA256 `ba59a2a2...8496`（GitHub asset digest） |
+| 当前源码 | `0.2.18` 已推送 GitHub（tag `v0.2.18` → `4128263`）；安装/更新脚本支持代理，在线更新按系统单元判定重启 |
+| 上一版 | GitHub Release `v0.2.17`：tar 5,422,123 字节 SHA256 `23a4885d...18a9`；更早 `v0.2.16` 等 |
+| 0.2.18 SHA256 | `ba59a2a2bf29e5b9f0f5a5d9cfb21df2ba83a6ba68bacd868bc827646f688496`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-03 22:52 由当前 `frontend-3xui/` 源码重建（协议表单 + 节点地址 + 面板更新） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建 |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.17 Release tar 内含静态 ELF 二进制；本地不再生成备用二进制 |
+| musl 产物 | 0.2.18 Release tar 内含静态 ELF 二进制；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -639,6 +639,31 @@
 - **兼容性**：v0.2.16 更新器查找旧原始二进制资产，无法自动升级到 0.2.17；
   0.2.16 用户需用一键安装脚本升级一次（KNOWN-ISSUES N3）。
 - 未验证：真实 Linux + systemd 在线更新与解压全流程（T23/N2）。
+
+## 2.25 安装/更新代理与 systemd 重启判定（2026-11-03）—— 已在 GitHub Actions Linux 验证
+
+- `install.sh`：
+  - 检测已有 `/usr/local/bin/xray-panel-rs`，打印更新模式；DB 与
+    `/etc/xray-panel.env` 保留（复用 `deploy/install.sh`）。
+  - 新增 `PANEL_PROXY`（HTTP/SOCKS；回退 `HTTPS_PROXY`/`ALL_PROXY`），所有面板与
+    Xray 下载统一走 `download()`；失败时报错包含代理地址。
+  - 修复 Release 包内 `install.sh` 缺少执行位的问题（git mode 100755 +
+    release workflow `chmod +x`），下载端也改用 `bash install.sh`。
+- 面板在线更新：
+  - 复用设置页「更新代理」（`updateProxy`）；check 与 install 的错误链加入
+    `via update proxy <addr>`，前端直接显示。
+  - 重启判定改为 `PANEL_SYSTEMD=1`（服务单元注入）；旧单元回退
+    `INVOCATION_ID` + `systemctl show MainPID == 当前 PID`，避免在 systemd 会话
+    里手动运行也误退出。
+- 新增 `.github/workflows/integration.yml`（手动触发）：
+  - `online-update`：构建 v0.2.17 测试面板 → 真实下载 v0.2.18 tar.gz、按 digest
+    校验、解压替换 → 重启后版本 0.2.18；坏代理时错误包含代理地址。
+  - `installer`：坏代理报错；真实执行一键脚本安装 v0.2.18（systemctl stub），
+    校验二进制版本、service 和 env 文件。
+- 结果：两个 job 均通过；`cargo test` 93/93、clippy 零警告。
+- 发布：GitHub Release v0.2.18，唯一资产 tar.gz 5,425,000 字节，digest
+  `sha256:ba59a2a2...8496`。
+- 未验证：真实 systemd 服务下的自动重启（CI 用 stub）；见 TODO T23。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

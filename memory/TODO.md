@@ -10,11 +10,13 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 
 ## P1 — 重要
 
-### T23. 真实 Linux systemd 验证面板在线更新
-- 现状：`panel_update` 只用单测验证版本比较；GitHub Actions 首次发布后，尚未在
-  真实 Linux 上走完“检查更新 → 下载校验 → 替换 → systemd 重启 → 版本变化”。
-- 内容：用旧版本安装包部署 0.2.15 → 登录设置页检查更新到 0.2.16 → 确认自动重启、
-  DB/入站/设置保留、`/usr/local/bin/xray-panel-rs.bak` 存在。
+### T23. 真实 systemd 服务验证面板自动重启
+- 现状：GitHub Actions `integration` 已在 Linux 验证 v0.2.17→v0.2.18 的下载、
+  digest 校验、解压、替换和版本变化（非 systemd 路径，`restartRequired:true`）；
+  一键安装也用 systemctl stub 验证通过。尚未在真实 systemd 服务下验证
+  `PANEL_SYSTEMD=1`/`MainPID` 判定与 `Restart=on-failure` 自动拉起。
+- 内容：用 0.2.17 安装包部署到真实 Linux systemd → 检查更新到 0.2.18 → 确认
+  服务自动重启、DB/入站/设置保留、`.bak` 存在。
 - 验收：有命令/日志证据；结果写入 `DEVELOPMENT-LOG.md` 与 `KNOWN-ISSUES.md` N2。
 
 ### T21. 真实 Xray 回归新增入站协议

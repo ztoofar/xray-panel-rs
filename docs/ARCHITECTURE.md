@@ -82,8 +82,10 @@
 本地默认 `ztoofar/xray-panel-rs`）的 latest release 下载
 `xray-panel-rs-linux-amd64-lumen.tar.gz`，用 GitHub 为资产计算的 SHA-256 digest
 校验，再用内置的最小 tar.gz 解析器取出 `xray-panel-rs`，写入同目录临时文件并
-原子替换当前可执行文件；在 systemd（`INVOCATION_ID`）下 1.5s 后 `exit(1)`，
-由 `Restart=on-failure` 拉起新版本，否则返回 `restartRequired:true`。
+原子替换当前可执行文件；服务单元设置 `PANEL_SYSTEMD=1`（旧单元用
+`INVOCATION_ID` + `systemctl show MainPID` 兼容判断），确认由 systemd 托管时
+1.5s 后 `exit(1)`，由 `Restart=on-failure` 拉起新版本，否则返回
+`restartRequired:true`。
 
 ## 4. HTTP 请求流程
 

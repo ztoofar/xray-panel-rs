@@ -319,12 +319,14 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   systemd 启动时更新接口返回 `restartRequired:true`，需要手动重启。
 - 仅支持 Linux；Windows/macOS 返回明确错误。
 
-### N2 尚未在真实 Linux 上验证在线更新 —— 未验证
-- 现状：模块单测覆盖版本比较；完整下载/替换/重启流程需在 GitHub Release
-  发布后用真实 Linux + systemd 验证。首次发布 `v0.2.16` 后应执行：
-  旧版本安装 → 检查更新 → 更新 → 面板自动重启 → 版本号变化 → DB/入站保留。
-- 影响：若 `current_exe` 路径或 systemd 权限与预期不同，更新可能失败并保留
-  `.bak` 二进制；安装脚本部署路径为 `/usr/local/bin/xray-panel-rs`。
+### N2 真实 systemd 自动重启仍未验证 —— 部分验证
+- 已验证：GitHub Actions `integration` 在 Linux 上跑通
+  v0.2.17 → v0.2.18 的检查更新、tar.gz 下载、资产 digest 校验、解压替换，
+  重启后版本变为 0.2.18；坏代理返回带代理地址的错误；一键安装脚本在 Linux
+  用 systemctl stub 安装 0.2.18 成功。
+- 未验证：真实 systemd 服务下 `PANEL_SYSTEMD=1`/`MainPID` 判定和
+  `Restart=on-failure` 自动拉起。影响：若单元环境或权限不同，更新可能需要
+  手动执行 `systemctl restart xray-panel`。
 
 ### N3 v0.2.16 → v0.2.17 需要一次手动升级 —— 兼容性限制
 - v0.2.16 在线更新查找 Release 中的原始 `xray-panel-rs` 资产；v0.2.17 起 Release

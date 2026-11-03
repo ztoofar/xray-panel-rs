@@ -809,3 +809,22 @@
   `updateAvailable:false`；Release 资产列表只有 tar.gz。
 - 兼容性：0.2.16 更新器仍查找旧二进制资产，需一键安装脚本升级一次
   （KNOWN-ISSUES N3）；Release 说明已加入该提示。
+
+## 2026-11-04 00:05 — v0.2.18：安装/更新代理与 systemd 重启判定
+
+- `install.sh`：检测已有安装并走更新模式；新增 `PANEL_PROXY`（HTTP/SOCKS，
+  回退 HTTPS_PROXY/ALL_PROXY）；下载失败报错包含代理地址；兼容安装包内
+  `install.sh` 无执行位的情况（`bash install.sh`）。
+- 修复 Release 包内 `install.sh` 权限：git mode 改为 100755，release workflow
+  显式 `chmod +x`。
+- 面板在线更新复用 `updateProxy`，check/install 错误链加入
+  `via update proxy <addr>`；服务单元新增 `PANEL_SYSTEMD=1`，旧单元用
+  `INVOCATION_ID` + `systemctl MainPID` 兼容判断，修复 GitHub Actions 中
+  误判 systemd 后 `exit(1)` 的问题。
+- 新增 `.github/workflows/integration.yml`，手动触发：
+  - online-update：v0.2.17 测试二进制真实更新到 v0.2.18；
+  - installer：v0.2.18 一键安装（systemctl stub）与坏代理报错。
+- 结果：integration 两个 job 均通过；`cargo test` 93/93、clippy 零警告。
+- 发布 v0.2.18：唯一资产 tar.gz 5,425,000 字节，digest
+  `sha256:ba59a2a2bf29e5b9f0f5a5d9cfb21df2ba83a6ba68bacd868bc827646f688496`。
+- 未验证：真实 systemd 服务下的自动重启（CI 使用 stub）；TODO T23。
