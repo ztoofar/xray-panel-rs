@@ -1188,3 +1188,20 @@ Linux `/proc` 实时采集：
   `d6e7c21e...5cac3`；0.2.14 归档保留。
 - 未验证：真实 Linux + 官方 Xray 的 `run -test`/连接（T21）；真实客户端用
   新链接连接。
+
+## 2026-11-03 — Release 资产精简为 tar.gz，在线更新改用资产 digest
+
+- 用户要求不再单独发布二进制和 SHA256SUMS；Release 只保留
+  `xray-panel-rs-linux-amd64-lumen.tar.gz`。
+- 面板在线更新改为下载 tar.gz，使用 GitHub 资产 `digest` 校验，并用内置最小
+  tar.gz 解析器解出 `xray-panel-rs`；新增 `flate2` 直接依赖与 3 个解析测试。
+- 版本 0.2.17；`cargo test` 93/93、clippy 零警告、musl release 成功。
+- v0.2.16 更新器仍查找原始二进制资产，需用一键安装脚本升级一次后才能使用
+  0.2.17+ 的在线更新（见 KNOWN-ISSUES N3）。
+
+## 2026-11-03 — 0.2.17：Release 只保留 tar.gz
+
+- `v0.2.17` 发布成功；唯一资产 tar.gz 5,422,123 字节，GitHub asset digest
+  `sha256:23a4885d...18a9`。
+- 在线更新改为下载 tar.gz + digest 校验 + 内置 tar 解析提取二进制。
+- 0.2.16 用户需用一键安装脚本升级一次，之后在线更新恢复（KNOWN-ISSUES N3）。

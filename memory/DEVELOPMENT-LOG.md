@@ -781,3 +781,31 @@
   `updateAvailable:false`、repo 正确；Windows 更新接口返回 Linux-only 明确错误；
   设置页 UI 显示「面板更新/检查更新/节点地址」且无控制台报错。
 - 未验证：真实 Linux + systemd 在线更新（T23/N2）；一键安装在全新 Linux 执行。
+
+## 2026-11-03 23:40 — Release 资产精简为仅 tar.gz，在线更新改为解压
+
+- 用户要求 Release 不再单独放二进制（压缩包已包含），也不再放 SHA256SUMS。
+- 后端 `src/panel_update.rs`：
+  - latest release 只查找 `xray-panel-rs-linux-amd64-lumen.tar.gz`；
+  - 使用 GitHub 资产 `digest`（`sha256:<hex>`）校验下载的 tar.gz；
+  - 内置最小 tar.gz 解析器（`flate2` GzDecoder + 512 字节 tar header）提取
+    `xray-panel-rs-linux-amd64-lumen/xray-panel-rs`，校验 ELF 头与大小上限；
+  - 新增 3 个解析测试（正常提取/缺文件/非 ELF）。
+- `.github/workflows/release.yml`：只上传 tar.gz；包内 SHA256SUMS 保留。
+- `Cargo.toml` 增加直接依赖 `flate2`（原本通过 zip 间接存在）。
+- 版本 0.2.16 → 0.2.17；`cargo test` 93/93、clippy 零警告、fmt 通过；
+  musl release 44.83s。
+- 兼容性：v0.2.16 更新器查找原始二进制资产，无法自动升级到 0.2.17；
+  0.2.16 用户需用一键安装脚本升级一次（KNOWN-ISSUES N3）。
+
+## 2026-11-03 23:50 — v0.2.17 发布（Release 仅 tar.gz）
+
+- tag `v0.2.17`（c5bdaa3）推送；Actions `release` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.17>
+  唯一资产：`xray-panel-rs-linux-amd64-lumen.tar.gz` 5,422,123 字节，
+  GitHub asset digest `sha256:23a4885d7d87a2354f0c4e979eb2bb0644454e1cc47c5c61736f3825d08318a9`。
+- 不再上传原始二进制和 SHA256SUMS；包内仍有 SHA256SUMS。
+- 验证：本地 0.2.17 debug `panelUpdateCheck` 返回 current/latest 0.2.17、
+  `updateAvailable:false`；Release 资产列表只有 tar.gz。
+- 兼容性：0.2.16 更新器仍查找旧二进制资产，需一键安装脚本升级一次
+  （KNOWN-ISSUES N3）；Release 说明已加入该提示。
