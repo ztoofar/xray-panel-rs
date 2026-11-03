@@ -27,8 +27,9 @@ SQLite 存储，面板直接管理本机 Xray 子进程。
   地址，不会把浏览器打开的局域网地址写进链接
 - Xray 版本切换、Geofiles 更新、GEOdata 源配置；支持在设置页配置 HTTP/SOCKS5
   更新代理（用于 GitHub/Geofiles 下载）
-- 面板在线更新：设置页从 GitHub Releases 检查并下载新版本，SHA256 校验后原子
-  替换，systemd 部署自动重启；GitHub Actions 在 `v*` 标签自动构建发布
+- 面板在线更新：设置页从 GitHub Releases 下载压缩包，用 GitHub 资产 digest
+  校验后解出二进制并原子替换，systemd 部署自动重启；GitHub Actions 在 `v*`
+  标签自动构建发布
 - SQLite `.db` 文件备份与恢复（自定义 `/settings` 页保留；面板设置页也可备份/恢复）
 - Lumen 品牌与青蓝主题（#0EA5E9），默认浅色，支持深色/极暗主题
 - 静态前端嵌入二进制，无 Node 运行时依赖
@@ -63,7 +64,8 @@ curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.
 ### 在线更新
 
 登录面板 →「设置」→「面板更新」→「检查更新」/「立即更新」。面板从 GitHub
-Releases 下载并校验二进制，原子替换后由 systemd 自动重启；非 systemd 部署会
+Releases 下载 tar.gz、用资产 digest 校验并解出二进制，原子替换后由 systemd
+自动重启；非 systemd 部署会
 提示手动重启。
 
 ## 环境要求
