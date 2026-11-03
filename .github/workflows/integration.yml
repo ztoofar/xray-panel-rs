@@ -40,7 +40,8 @@ jobs:
           fi
           echo "latest=$LATEST test=$TEST_VERSION"
           sed -i "s/^version = \"$CURRENT\"$/version = \"$TEST_VERSION\"/" Cargo.toml
-          cargo build --release --locked
+          # The version override changes Cargo.lock, so --locked would fail.
+          cargo build --release
           echo "LATEST=$LATEST" >> "$GITHUB_ENV"
 
       - name: Install test helpers
