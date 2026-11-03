@@ -473,3 +473,35 @@
   更新器优先检查该变量。旧单元没有该变量时，仅在 `INVOCATION_ID` 存在且
   `systemctl show -p MainPID --value xray-panel` 等于当前进程 PID 时才自动退出。
 - 后果：旧版单元仍可自动重启；在 systemd 会话里手动启动的进程不会误退出。
+
+## D035 一键脚本按版本幂等跳过，二进制暴露 LUMEN_VERSION
+- 日期：2026-11-04
+- 背景：用户发现已安装最新版后重跑一键脚本仍会下载、停止面板并覆盖二进制。
+- 决策：
+  1. 脚本解析 `releases/latest` 跳转的 `Location` 得到目标版本，请求同样走
+     `PANEL_PROXY`；
+  2. 新版本二进制支持 `--version` / `-V`，输出
+     `xray-panel-rs <ver> (LUMEN_VERSION=<ver>)`；脚本先 `grep -a` 检查
+     `LUMEN_VERSION=` 再执行，避免用旧二进制探测时误启动服务或执行迁移；
+  3. 版本一致时直接退出，不下载、不停服务；`PANEL_FORCE=1` 绕过；
+  4. 没有 marker 的旧二进制（0.2.18 及更早）下载 Release tar.gz 后，按包内
+     二进制 SHA-256 与已安装文件比对，一致时同样跳过；
+  5. 无论是否跳过面板重装，`/usr/local/bin/xray` 缺失时仍安装 Xray 核心。
+- 被否方案：直接执行旧二进制探测版本（可能启动服务/执行迁移）；只比较 GitHub
+  tag 与日志（依赖日志权限与时间窗口）；跳过时完全不做 Xray 检查（破坏修复场景）。
+- 后果：0.2.19 起重复执行脚本可零下载跳过；0.2.18 及更早需一次 5.4 MB 下载后
+  按哈希跳过。跳过路径不会重写 systemd 单元，修复单元需 `PANEL_FORCE=1`。
+
+## D036 更新/下载失败时给出可操作的代理提示
+- 日期：2026-11-04
+- 背景：用户实测 `updateProxy=http://127.0.0.1:10813`，面板检查更新只显示
+  `io: Connection refused (os error 111)`，无法判断 `127.0.0.1` 指面板服务器自身。
+- 决策：`updates::network_hint` 先按 `io::ErrorKind` 与 `ureq::Error` 变体识别
+  传输失败，再用本地化文本（`os error 111`/`10061` 等）兜底；`panel_update`
+  check/install、`xray_versions`、`install_xray`、Geofiles 的错误链前加提示：
+  有代理时说明代理需从面板主机可达、`127.0.0.1` 是面板服务器自身；无代理时
+  提示检查网络或配置代理。原始 URL、代理地址与系统错误保留在链尾。
+- 被否方案：只匹配英文 `Connection refused`（Windows 本地化文本不匹配）；只返回
+  简化提示（丢失排障信息）；把提示写死在前端（其他入口无提示）。
+- 后果：错误信息更长，但可直接定位代理配置问题；代理可达但目标不可达时提示
+  可能把原因归到代理（见 `KNOWN-ISSUES.md` N6）。

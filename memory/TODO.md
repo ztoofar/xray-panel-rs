@@ -10,6 +10,22 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 
 ## P1 — 重要
 
+### T24. 真实 Linux 验证安装幂等与更新代理提示
+- 现状：`install.sh` 的版本跳过/哈希跳过与 `network_hint` 只在 Windows 本地
+  桩环境、fake xray 和真实本机连接拒绝上验证；未在真实 Linux + musl 二进制
+  上执行。
+- 内容：
+  1. 安装 0.2.18 → 重跑脚本：确认走下载+哈希路径后跳过，不停止服务；
+  2. 安装包含 marker 的新版本 → 重跑脚本：确认零下载跳过；
+  3. `PANEL_FORCE=1`：确认重新执行 `deploy/install.sh`；
+  4. 面板设置 `updateProxy=127.0.0.1:10813` → 检查更新：确认提示包含
+     代理地址与 127.0.0.1 说明；
+  5. 配置真实代理后：确认检查更新恢复正常。
+- 验收：命令与日志证据写入 `DEVELOPMENT-LOG.md`；更新 `KNOWN-ISSUES.md`
+  N5/N6 的验证状态。
+- 备注：`LUMEN_VERSION` marker 只在下一个 Release 生效；0.2.18 及更早只能走
+  哈希路径。
+
 ### T23. 真实 systemd 服务验证面板自动重启
 - 现状：GitHub Actions `integration` 已在 Linux 验证 v0.2.17→v0.2.18 的下载、
   digest 校验、解压、替换和版本变化（非 systemd 路径，`restartRequired:true`）；
@@ -35,12 +51,10 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
   并补单测（auth/keypair/allowedIPs/MTU）。
 - 验收：`subLinks` 对新协议返回非空链接；测试通过。
 
-### T1. 同步 README 与真实行为
-- 现状：README 写“流量轮询默认 10 秒、可调 5–300 秒”，代码为默认 5 秒、
-  `trafficPollSecs` 允许 2–300；README“明确不做”里写 IP 连接数限制，
-  但 `jobs.rs` 已实现 `limitIp` 近似执行；`/settings` 说明也可能过期。
-- 内容：以代码为准修订 README，补充面板路径（`webBasePath`）与定期内存维护说明。
-- 验收：README 中每条行为都能在代码/测试中找到依据；不再有互相矛盾的描述。
+### T1. 同步 README 与真实行为 —— 已完成（2026-11-04）
+- README 已重写并核对代码：轮询默认 5 秒、范围 2–300；`limitIp` 为近似执行；
+  健康检查为 `/api/health`；补充 `webBasePath`、内存维护、安装幂等与
+  `PANEL_FORCE`。见 `CURRENT-STATUS.md` §2.26。
 
 ### T2. 面板路径的 HTTP 层集成测试
 - 现状：现有验证是 `base_path` 纯函数单测 + 无头 Chrome 手工端到端；

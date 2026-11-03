@@ -76,6 +76,7 @@ fn proxy_label(proxy: Option<&str>) -> String {
 async fn latest_release(state: &AppState) -> Result<Release> {
     let proxy = updates::update_proxy(state).await;
     let label = proxy_label(proxy.as_deref());
+    let proxy_hint = proxy.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<Release> {
         let agent = updates::agent(proxy.as_deref(), API_TIMEOUT)?;
         let url = format!("https://api.github.com/repos/{PANEL_REPO}/releases/latest");
@@ -132,7 +133,9 @@ async fn latest_release(state: &AppState) -> Result<Release> {
     })
     .await
     .context("release lookup task failed")?;
-    result.with_context(|| format!("query GitHub releases {label}"))
+    result
+        .with_context(|| format!("query GitHub releases {label}"))
+        .map_err(|err| updates::with_network_hint(err, proxy_hint.as_deref()))
 }
 
 pub async fn check(state: &AppState) -> Result<Value> {
@@ -333,6 +336,7 @@ pub async fn install(state: &AppState) -> Result<Value> {
     }
     let proxy = updates::update_proxy(state).await;
     let label = proxy_label(proxy.as_deref());
+    let proxy_hint = proxy.clone();
     let target = current_binary()?;
     let release_for_download = release.clone();
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
@@ -341,7 +345,8 @@ pub async fn install(state: &AppState) -> Result<Value> {
     })
     .await
     .context("panel download task failed")?
-    .with_context(|| format!("download panel update {label}"))?;
+    .with_context(|| format!("download panel update {label}"))
+    .map_err(|err| updates::with_network_hint(err, proxy_hint.as_deref()))?;
 
     let temp = stage_binary(&target, &bytes)?;
     replace_binary(&temp, &target)?;

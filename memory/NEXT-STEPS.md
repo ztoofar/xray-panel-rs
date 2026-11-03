@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-03 23:05
+> 最后更新：2026-11-04 00:15
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -16,9 +16,11 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` **93/93**；clippy 零警告；Cargo 版本 `0.2.18`；migrations 到
+   期望：`cargo test` **97/97**；clippy 零警告；Cargo 版本 `0.2.18`；migrations 到
    `0009_outbound_subscriptions.sql`；`web/dist` 不比前端源码旧。
-   当前源码与 GitHub v0.2.18 发布包一致（CURRENT-STATUS §2.22–§2.25）；
+   GitHub Release v0.2.18 已发布；**本地还有未发布改动**（安装幂等跳过、
+   `--version` marker、更新代理报错提示、README 重写，见 CURRENT-STATUS §2.26），
+   未打包、未 bump 版本；
 3. 如果用户说“继续开发”但没有指定任务：先汇报核对结果，再从 `TODO.md` 的
    P1 中给出建议，等用户选择。**不要自动打包，不要自动 bump 版本。**
 
@@ -26,8 +28,10 @@
 
 ### A. 用户要求“打包/发布”
 1. 当前已发布 **0.2.18**（协议补全、节点地址、在线更新、一键安装/更新、
-   安装与更新代理；Release 只保留 tar.gz）。打新版本时同步 `Cargo.toml` 与 tag，
-   推送 `v*` 标签由 `.github/workflows/release.yml` 构建发布。
+   安装与更新代理；Release 只保留 tar.gz）。本地未发布改动见 §2.26；打包时
+   递增版本（下一版预计 0.2.19），同步 `Cargo.toml` 与 tag，推送 `v*` 标签由
+   `.github/workflows/release.yml` 构建发布。注意：`LUMEN_VERSION` marker 只有
+   新版本包含，0.2.18 及更早仍走下载+哈希跳过路径。
 2. 本地只改代码并自测：前端构建、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。**不需要本地 musl 打包。**
 3. 修改 `Cargo.toml` 的 `version`，更新文档，提交并推送 `main`。
@@ -92,7 +96,10 @@
 - **P1-T9**：v0.2.7 统计修复 + Xray 设置修复的真机回归（清单见 `TODO.md` /
   `KNOWN-ISSUES.md` G6）。
 - **P1-T16**：出站订阅真实 Linux + 真实 Xray 回归（含 socks5 代理认证）。
-- **P1-T1**：README 与代码不一致（轮询默认 5 秒/范围 2–300；`limitIp` 已实现）。
+- **已完成（2026-11-04）**：安装脚本按版本幂等跳过（`PANEL_FORCE=1` 强制）、
+  面板更新/下载的代理报错提示、README 重写（CURRENT-STATUS §2.26）。未打包。
+- **P1-T24**：真实 Linux 验证安装幂等（版本/哈希跳过、`PANEL_FORCE`）与
+  `updateProxy=127.0.0.1` 的报错提示。
 - **P1-T2**：面板路径的 HTTP 层自动化测试。
 - **P1-T3**：前端 devDependencies 不完整导致 `npm run typecheck` / `npm run test`
   既有报错；本次删除/修改后的测试未执行。

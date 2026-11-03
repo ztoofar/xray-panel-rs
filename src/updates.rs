@@ -100,11 +100,92 @@ pub(crate) fn get_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Ve
     read_limited(&mut response, limit).with_context(|| format!("read {url}"))
 }
 
+fn io_kind_is_transport(kind: std::io::ErrorKind) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        kind,
+        ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::TimedOut
+            | ErrorKind::NotConnected
+            | ErrorKind::NetworkUnreachable
+            | ErrorKind::HostUnreachable
+            | ErrorKind::AddrNotAvailable
+    )
+}
+
+fn is_transport_failure(err: &anyhow::Error) -> bool {
+    let typed = err.chain().any(|cause| {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return io_kind_is_transport(io.kind());
+        }
+        if let Some(ureq_err) = cause.downcast_ref::<ureq::Error>() {
+            return match ureq_err {
+                ureq::Error::Io(io) => io_kind_is_transport(io.kind()),
+                ureq::Error::Timeout(_)
+                | ureq::Error::HostNotFound
+                | ureq::Error::ConnectionFailed
+                | ureq::Error::ConnectProxyFailed(_) => true,
+                _ => false,
+            };
+        }
+        false
+    });
+    if typed {
+        return true;
+    }
+    // Windows error text is localized and older platforms may not map every
+    // socket error to a kind; keep a narrow textual fallback.
+    let text = format!("{err:#}").to_ascii_lowercase();
+    [
+        "connection refused",
+        "os error 111",
+        "os error 10061",
+        "connection reset",
+        "connection timed out",
+        "timed out",
+        "dns error",
+        "failed to lookup address",
+        "network is unreachable",
+        "no route to host",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+/// Actionable hint for transport failures. When an update proxy is configured
+/// the panel can only reach the internet through it, so refused connections
+/// and timeouts almost always mean the proxy is down or unreachable.
+pub(crate) fn network_hint(err: &anyhow::Error, proxy: Option<&str>) -> Option<String> {
+    if !is_transport_failure(err) {
+        return None;
+    }
+    Some(match proxy {
+        Some(proxy) => format!(
+            "cannot reach update proxy {proxy}: ensure the proxy is running and reachable \
+             from the panel host; 127.0.0.1 is the panel server itself, not your computer. \
+             Fix or clear the update proxy in panel settings"
+        ),
+        None => "cannot reach GitHub directly: check the panel host's network and DNS, \
+                 or configure an update proxy in panel settings"
+            .to_string(),
+    })
+}
+
+pub(crate) fn with_network_hint(err: anyhow::Error, proxy: Option<&str>) -> anyhow::Error {
+    match network_hint(&err, proxy) {
+        Some(hint) => err.context(hint),
+        None => err,
+    }
+}
+
 /// Fetch the Xray release tags published on GitHub, newest first. Tags keep
 /// their leading `v` because that is what the download URL expects.
 pub async fn xray_versions(state: &AppState) -> Result<Vec<String>> {
     let proxy = update_proxy(state).await;
-    tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+    let proxy_hint = proxy.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
         let agent = agent(proxy.as_deref(), API_TIMEOUT)?;
         let mut response = agent
             .get(XRAY_RELEASES_API)
@@ -128,7 +209,8 @@ pub async fn xray_versions(state: &AppState) -> Result<Vec<String>> {
         Ok(versions)
     })
     .await
-    .context("release lookup task failed")?
+    .context("release lookup task failed")?;
+    result.map_err(|err| with_network_hint(err, proxy_hint.as_deref()))
 }
 
 fn version_at_least(tag: &str, major: u64, minor: u64, patch: u64) -> bool {
@@ -189,6 +271,7 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
     let asset = xray_asset_name()?;
     let url = format!("https://github.com/XTLS/Xray-core/releases/download/{version}/{asset}");
     let proxy = update_proxy(state).await;
+    let proxy_hint = proxy.clone();
     let target = state.cfg.xray_bin.clone();
     let bin_dir = target
         .parent()
@@ -213,7 +296,12 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
 
     let staged = match download {
         Ok(Ok(path)) => path,
-        Ok(Err(err)) => return Err(err.context("download task failed")),
+        Ok(Err(err)) => {
+            return Err(with_network_hint(
+                err.context("download task failed"),
+                proxy_hint.as_deref(),
+            ))
+        }
         Err(err) => bail!("download task failed: {err}"),
     };
 
@@ -330,6 +418,7 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
         bail!("unknown geofile: {only:?}");
     }
     let proxy = update_proxy(state).await;
+    let proxy_hint = proxy.clone();
     // Xray resolves geodata from XRAY_LOCATION_ASSET when set; otherwise the
     // conventional location is the binary's own folder.
     let bin_dir = std::env::var("XRAY_LOCATION_ASSET")
@@ -345,7 +434,7 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| PathBuf::from("."))
         });
-    let installed = tokio::task::spawn_blocking(move || -> Result<usize> {
+    let result = tokio::task::spawn_blocking(move || -> Result<usize> {
         let agent = agent(proxy.as_deref(), DOWNLOAD_TIMEOUT)?;
         let mut installed = 0;
         let mut errors = Vec::new();
@@ -361,7 +450,8 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
         Ok(installed)
     })
     .await
-    .context("geofile task failed")??;
+    .context("geofile task failed")?;
+    let installed = result.map_err(|err| with_network_hint(err, proxy_hint.as_deref()))?;
     if installed > 0 {
         state
             .xray
@@ -415,6 +505,33 @@ mod tests {
         assert!(!version_at_least("v26.6.26", 26, 6, 27));
         assert!(!version_at_least("v25.12.0", 26, 6, 27));
         assert!(!version_at_least("nightly", 26, 6, 27));
+    }
+
+    #[test]
+    fn transport_errors_explain_the_update_proxy() {
+        let err = anyhow::anyhow!(
+            "fetch https://api.github.com/repos/x/releases/latest: io: Connection refused (os error 111)"
+        );
+        let hint = network_hint(&err, Some("http://127.0.0.1:10813")).unwrap();
+        assert!(hint.contains("http://127.0.0.1:10813"));
+        assert!(hint.contains("127.0.0.1 is the panel server itself"));
+
+        let direct = network_hint(&err, None).unwrap();
+        assert!(direct.contains("configure an update proxy"));
+    }
+
+    #[test]
+    fn parsing_errors_get_no_network_hint() {
+        let err = anyhow::anyhow!("parse GitHub release: expected value");
+        assert!(network_hint(&err, Some("http://127.0.0.1:10813")).is_none());
+    }
+
+    #[test]
+    fn typed_io_errors_do_not_depend_on_localized_text() {
+        let io = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let err = anyhow::Error::new(ureq::Error::Io(io));
+        let hint = network_hint(&err, Some("http://127.0.0.1:10813")).unwrap();
+        assert!(hint.contains("cannot reach update proxy"));
     }
 
     #[test]

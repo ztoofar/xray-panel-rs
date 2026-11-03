@@ -36,6 +36,16 @@ use crate::{
 };
 
 fn main() -> anyhow::Result<()> {
+    if std::env::args().skip(1).any(|arg| is_version_arg(&arg)) {
+        // install.sh greps the binary for the LUMEN_VERSION marker before
+        // running --version, so older builds are never executed to probe them.
+        println!(
+            "xray-panel-rs {} (LUMEN_VERSION={})",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
     let panel_logs = init_tracing();
     let cfg = Config::from_env()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -44,6 +54,10 @@ fn main() -> anyhow::Result<()> {
         .build()
         .context("build tokio runtime")?;
     runtime.block_on(run(cfg, panel_logs))
+}
+
+fn is_version_arg(arg: &str) -> bool {
+    matches!(arg, "--version" | "-V")
 }
 
 fn init_tracing() -> PanelLogBuffer {
@@ -330,4 +344,18 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_version_arg;
+
+    #[test]
+    fn version_flags_are_recognised() {
+        assert!(is_version_arg("--version"));
+        assert!(is_version_arg("-V"));
+        assert!(!is_version_arg("--help"));
+        assert!(!is_version_arg("version"));
+        assert!(!is_version_arg(""));
+    }
 }

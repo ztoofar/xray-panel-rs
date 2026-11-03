@@ -828,3 +828,31 @@
 - 发布 v0.2.18：唯一资产 tar.gz 5,425,000 字节，digest
   `sha256:ba59a2a2bf29e5b9f0f5a5d9cfb21df2ba83a6ba68bacd868bc827646f688496`。
 - 未验证：真实 systemd 服务下的自动重启（CI 使用 stub）；TODO T23。
+
+## 2026-11-04 00:15 — 安装幂等跳过、更新报错提示与 README 重写
+
+- 用户反馈：已安装最新版后重跑一键脚本仍会重新安装；面板在线更新经
+  `updateProxy=http://127.0.0.1:10813` 报 `Connection refused (os error 111)`，
+  希望报错更可操作；同时要求 README 精简、正式化。
+- `install.sh`：
+  - 新增 `PANEL_FORCE=1`；解析 GitHub `releases/latest` 的 `Location` 得到目标
+    版本（走 `PANEL_PROXY`）。
+  - 新增 `installed_version()`：先 `grep -a LUMEN_VERSION=` 再执行
+    `--version`，避免旧二进制误启动；版本一致直接退出，不下载/不停服务。
+  - 无 marker 的旧二进制下载并校验后按 SHA-256 比对，一致时跳过。
+  - 跳过面板重装时仍补装缺失的 Xray 核心。
+- `src/main.rs`：`--version`/`-V` 在初始化前输出版本与 `LUMEN_VERSION` marker；
+  新增 `is_version_arg` 单测。
+- `src/updates.rs`：`network_hint` / `with_network_hint` 按类型识别传输错误
+  （本地化文本兜底），接入 `xray_versions`、`install_xray`、Geofiles。
+- `src/panel_update.rs`：check/install 错误前加代理可操作提示。
+- `README.md`：全面重写，精简结构并修正过期描述（轮询 5 秒/2–300、
+  `limitIp` 为近似执行、`/api/health` 路径等）。
+- `release.yml`：发布说明补充跳过与 `PANEL_FORCE`。
+- 验证：`cargo fmt --check`、`cargo test` 97/97、clippy 零警告、`cargo build`
+  成功；`--version`/`-V` 实测；`tmp/install-skip-test/run.sh` 10 项断言全通过；
+  `tmp/e2e-update-hint/e2e.py` 全通过（真实本机连接拒绝、fake xray + 临时 DB）。
+- 文档：新增 `DECISIONS.md` D035/D036、`KNOWN-ISSUES.md` N5/N6；
+  `CURRENT-STATUS.md` §2.26。
+- 未验证：真实 Linux/musl、真实 systemd 重跑；代理可达但目标不可达的归因。
+- 未打包、未 bump 版本（仍 0.2.18）。

@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 00:05（本地时间）
+> 最后更新：2026-11-04 00:15（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -10,7 +10,7 @@
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.18` |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.18`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,425,000 字节，SHA256 `ba59a2a2...8496`（GitHub asset digest） |
-| 当前源码 | `0.2.18` 已推送 GitHub（tag `v0.2.18` → `4128263`）；安装/更新脚本支持代理，在线更新按系统单元判定重启 |
+| 当前源码 | `0.2.18` 已推送 GitHub（tag `v0.2.18` → `4128263`）；本地另有未发布改动（§2.26，未打包、未 bump） |
 | 上一版 | GitHub Release `v0.2.17`：tar 5,422,123 字节 SHA256 `23a4885d...18a9`；更早 `v0.2.16` 等 |
 | 0.2.18 SHA256 | `ba59a2a2bf29e5b9f0f5a5d9cfb21df2ba83a6ba68bacd868bc827646f688496`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
@@ -664,6 +664,56 @@
 - 发布：GitHub Release v0.2.18，唯一资产 tar.gz 5,425,000 字节，digest
   `sha256:ba59a2a2...8496`。
 - 未验证：真实 systemd 服务下的自动重启（CI 用 stub）；见 TODO T23。
+
+## 2.26 安装幂等、更新报错与 README 重写（2026-11-04）—— 已实现并本地验证；未打包
+
+用户要求：
+1. 已安装最新版时重跑一键脚本不应重复安装，并提供强制重装开关。
+2. 面板在线更新经代理连接失败时，报错应可操作（实测
+   `update proxy http://127.0.0.1:10813` → `Connection refused (os error 111)`）。
+3. README 精简、正式化。
+
+已实现：
+
+- `install.sh`：
+  - 新增 `PANEL_FORCE=1`（强制重装）。
+  - 通过 `https://github.com/<repo>/releases/latest` 的 `Location` 解析目标版本，
+    请求走 `PANEL_PROXY`。
+  - `installed_version()` 先 `grep -a LUMEN_VERSION=` 再执行 `--version`，避免
+    旧二进制被探测时启动服务/执行迁移。
+  - 版本一致时直接退出：不下载、不停服务；无 marker 的旧二进制下载校验后按
+    包内二进制 SHA-256 比对，一致时同样跳过。
+  - 跳过面板重装时仍会在 `/usr/local/bin/xray` 缺失时安装 Xray。
+- `src/main.rs`：`--version` / `-V` 在初始化前输出
+  `xray-panel-rs <ver> (LUMEN_VERSION=<ver>)`；新增参数识别单测。
+- `src/updates.rs`：新增 `network_hint` / `with_network_hint`，按
+  `io::ErrorKind` 与 `ureq::Error` 变体识别传输失败，本地化文本
+  （`os error 111`/`10061` 等）兜底；用于 `xray_versions`、`install_xray`、
+  Geofiles。
+- `src/panel_update.rs`：check/install 的 GitHub 查询与下载错误前加可操作提示：
+  有代理时说明 `127.0.0.1` 指面板服务器自身、需从面板主机可达；无代理时提示
+  检查网络或配置代理。原始错误链保留。
+- `README.md`：重写为功能概览/安装/更新/配置/部署/构建/限制；修正轮询默认值
+  （5 秒，2–300）、`limitIp` 口径、健康检查路径等过期描述。
+- `release.yml` 发布说明补充“已最新版跳过重装 / `PANEL_FORCE`”。
+
+验证：
+
+- `cargo fmt --check` 通过；`cargo test` **97/97**；clippy 零警告；
+  `cargo build` 成功。
+- `./target/debug/xray-panel-rs.exe --version` 与 `-V` 均输出带
+  `LUMEN_VERSION=` 的版本行；二进制内可 `grep` 到该 marker。
+- `tmp/install-skip-test/run.sh`（离线桩，假 root/假 Release，10 项断言）全通过：
+  marker 匹配跳过且不下载/不部署、无 marker 时哈希匹配跳过、`PANEL_FORCE`
+  强制部署、版本不匹配进入安装路径。
+- `tmp/e2e-update-hint/e2e.py`（Windows debug + fake xray + 临时 DB）全通过：
+  `updateProxy=127.0.0.1:10813` 时 `panelUpdateCheck` 返回 `success:false`，
+  消息包含代理地址、`127.0.0.1 is the panel server itself` 与
+  `os error 10061`；非法代理仍被拒绝。
+- **未验证**：真实 Linux / musl 二进制；真实 systemd 下重跑脚本；代理可达但
+  目标不可达时的提示归因；0.2.18 及更早版本没有 marker，首次重跑仍需下载
+  5.4 MB 后按哈希跳过。
+- **未打包、未 bump 版本**（仍 0.2.18）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
