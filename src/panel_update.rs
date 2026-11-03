@@ -66,9 +66,17 @@ fn is_newer(candidate: &str, current: &str) -> bool {
     }
 }
 
+fn proxy_label(proxy: Option<&str>) -> String {
+    match proxy {
+        Some(proxy) => format!("via update proxy {proxy}"),
+        None => "directly (no update proxy configured)".into(),
+    }
+}
+
 async fn latest_release(state: &AppState) -> Result<Release> {
     let proxy = updates::update_proxy(state).await;
-    tokio::task::spawn_blocking(move || -> Result<Release> {
+    let label = proxy_label(proxy.as_deref());
+    let result = tokio::task::spawn_blocking(move || -> Result<Release> {
         let agent = updates::agent(proxy.as_deref(), API_TIMEOUT)?;
         let url = format!("https://api.github.com/repos/{PANEL_REPO}/releases/latest");
         let body = updates::get_bytes(&agent, &url, MAX_API_BYTES)?;
@@ -123,7 +131,8 @@ async fn latest_release(state: &AppState) -> Result<Release> {
         })
     })
     .await
-    .context("release lookup task failed")?
+    .context("release lookup task failed")?;
+    result.with_context(|| format!("query GitHub releases {label}"))
 }
 
 pub async fn check(state: &AppState) -> Result<Value> {
@@ -298,6 +307,7 @@ pub async fn install(state: &AppState) -> Result<Value> {
         bail!("already running the latest version ({PANEL_VERSION})");
     }
     let proxy = updates::update_proxy(state).await;
+    let label = proxy_label(proxy.as_deref());
     let target = current_binary()?;
     let release_for_download = release.clone();
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
@@ -305,7 +315,8 @@ pub async fn install(state: &AppState) -> Result<Value> {
         download_verified(&agent, &release_for_download)
     })
     .await
-    .context("panel download task failed")??;
+    .context("panel download task failed")?
+    .with_context(|| format!("download panel update {label}"))?;
 
     let temp = stage_binary(&target, &bytes)?;
     replace_binary(&temp, &target)?;

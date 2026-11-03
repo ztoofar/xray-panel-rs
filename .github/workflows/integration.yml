@@ -1,0 +1,184 @@
+name: integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  online-update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend-3xui/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend-3xui
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build a lower-version test panel from current source
+        run: |
+          set -euo pipefail
+          LATEST=$(curl -fsSL https://api.github.com/repos/ztoofar/xray-panel-rs/releases/latest \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')
+          CURRENT=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          IFS=. read -r major minor patch <<<"$LATEST"
+          if [ "$patch" -gt 0 ]; then
+            TEST_VERSION="$major.$minor.$((patch - 1))"
+          else
+            TEST_VERSION="$major.$((minor - 1)).99"
+          fi
+          echo "latest=$LATEST test=$TEST_VERSION"
+          sed -i "s/^version = \"$CURRENT\"$/version = \"$TEST_VERSION\"/" Cargo.toml
+          cargo build --release --locked
+          echo "LATEST=$LATEST" >> "$GITHUB_ENV"
+
+      - name: Install test helpers
+        run: |
+          set -euo pipefail
+          cat > /tmp/fake-xray <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            version) echo "Xray 26.10.31"; exit 0 ;;
+            run)
+              case "$*" in *-test*) exit 0 ;; esac
+              sleep 600
+              ;;
+          esac
+          exit 0
+          EOF
+          chmod +x /tmp/fake-xray
+
+      - name: Exercise online update
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/panel
+          start_panel() {
+            PANEL_LISTEN=127.0.0.1:2061 \
+            PANEL_DB=/tmp/panel/panel.db \
+            XRAY_BIN=/tmp/fake-xray \
+            XRAY_CONFIG=/tmp/panel/config.json \
+            PANEL_XRAY_LOG=/tmp/panel/xray.log \
+            PANEL_USERNAME=admin PANEL_PASSWORD=admin \
+            target/release/xray-panel-rs >/tmp/panel/panel.log 2>&1 &
+            echo $!
+          }
+          wait_health() {
+            for _ in $(seq 1 60); do
+              curl -sf http://127.0.0.1:2061/api/health >/dev/null && return 0
+              sleep 1
+            done
+            echo "panel did not become healthy" >&2
+            cat /tmp/panel/panel.log >&2 || true
+            return 1
+          }
+          cleanup() {
+            [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null || true
+            pkill -f /tmp/fake-xray 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          PID=$(start_panel)
+          wait_health
+
+          curl -sf -c /tmp/panel/cookies -X POST \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -d 'username=admin&password=admin' \
+            http://127.0.0.1:2061/login >/tmp/panel/login.json
+          CSRF=$(awk '$6 ~ /csrf/ {print $7}' /tmp/panel/cookies | head -n1)
+          test -n "$CSRF"
+
+          curl -sf -b /tmp/panel/cookies -H "x-csrf-token: $CSRF" \
+            -X POST -d 'updateProxy=http://127.0.0.1:1' \
+            http://127.0.0.1:2061/panel/api/setting/update >/dev/null
+          BAD=$(curl -s -b /tmp/panel/cookies \
+            http://127.0.0.1:2061/panel/api/server/panelUpdateCheck)
+          echo "bad proxy: $BAD"
+          echo "$BAD" | grep -q 'proxy http://127.0.0.1:1'
+          curl -sf -b /tmp/panel/cookies -H "x-csrf-token: $CSRF" \
+            -X POST -d 'updateProxy=' \
+            http://127.0.0.1:2061/panel/api/setting/update >/dev/null
+
+          CHECK=$(curl -sf -b /tmp/panel/cookies \
+            http://127.0.0.1:2061/panel/api/server/panelUpdateCheck)
+          echo "check: $CHECK"
+          echo "$CHECK" | grep -q "\"latest\":\"$LATEST\""
+          echo "$CHECK" | grep -q '"updateAvailable":true'
+
+          UPDATE=$(curl -sf -b /tmp/panel/cookies -H "x-csrf-token: $CSRF" \
+            -X POST http://127.0.0.1:2061/panel/api/server/panelUpdate)
+          echo "update: $UPDATE"
+          echo "$UPDATE" | grep -q '"success":true'
+          echo "$UPDATE" | grep -q '"restartRequired":true'
+
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          pkill -f /tmp/fake-xray 2>/dev/null || true
+
+          PID=$(start_panel)
+          wait_health
+          STATUS=$(curl -sf -b /tmp/panel/cookies http://127.0.0.1:2061/panel/api/status)
+          echo "status: $STATUS"
+          echo "$STATUS" | grep -q "\"version\":\"$LATEST\""
+          echo "online update OK"
+
+  installer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve latest release
+        run: |
+          LATEST=$(curl -fsSL https://api.github.com/repos/ztoofar/xray-panel-rs/releases/latest \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')
+          echo "LATEST=$LATEST" >> "$GITHUB_ENV"
+
+      - name: Bad installer proxy is reported
+        run: |
+          set +e
+          OUT=$(sudo env PATH="/tmp/fakebin:$PATH" SKIP_XRAY=1 \
+            PANEL_PROXY=http://127.0.0.1:1 \
+            PANEL_DATA_DIR=/tmp/e2e/bad-data \
+            PANEL_ENV_FILE=/tmp/e2e/bad-panel.env \
+            XRAY_CONFIG=/tmp/e2e/xray/config.json \
+            bash install.sh 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT"
+          test "$RC" -ne 0
+          echo "$OUT" | grep -q 'proxy http://127.0.0.1:1'
+
+      - name: Run one-click installer with a systemctl stub
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fakebin /tmp/e2e
+          cat > /tmp/fakebin/systemctl <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            is-active) exit 1 ;;
+            *) exit 0 ;;
+          esac
+          EOF
+          chmod +x /tmp/fakebin/systemctl
+
+          sudo env PATH="/tmp/fakebin:$PATH" SKIP_XRAY=1 \
+            PANEL_DATA_DIR=/tmp/e2e/data \
+            PANEL_ENV_FILE=/tmp/e2e/panel.env \
+            XRAY_CONFIG=/tmp/e2e/xray/config.json \
+            bash install.sh
+
+          test -x /usr/local/bin/xray-panel-rs
+          grep -a -q "$LATEST" /usr/local/bin/xray-panel-rs
+          test -f /etc/systemd/system/xray-panel.service
+          test -f /tmp/e2e/panel.env
+          echo "installer OK"

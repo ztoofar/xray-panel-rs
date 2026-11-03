@@ -1949,7 +1949,7 @@
       "nodeAddressDesc": "Domain or IP written into share links and QR codes. Leave empty to use the address you opened the panel from.",
       "nodeAddressInvalid": "Node address must be a host without http:// or a path",
       "panelUpdate": "Panel Update",
-      "panelUpdateDesc": "Check GitHub Releases and update the panel binary online. A systemd deployment restarts automatically after the binary is replaced.",
+      "panelUpdateDesc": "Check GitHub Releases and update the panel binary online. Downloads use the Update Proxy setting; a systemd deployment restarts automatically after the binary is replaced.",
       "panelUpdateCurrent": "Current",
       "panelUpdateLatest": "Latest",
       "panelUpToDate": "Up to date",

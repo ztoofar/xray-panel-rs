@@ -1835,7 +1835,7 @@
       "nodeAddressDesc": "生成分享链接和二维码时使用的域名或 IP；留空则使用浏览器当前地址。",
       "nodeAddressInvalid": "节点地址只能填写域名或 IP，不能包含 http:// 或路径",
       "panelUpdate": "面板更新",
-      "panelUpdateDesc": "从 GitHub Releases 检查并在线更新面板二进制；systemd 部署会在替换后自动重启。",
+      "panelUpdateDesc": "从 GitHub Releases 检查并在线更新面板二进制；下载使用「更新代理」设置，代理不通会直接报错。systemd 部署会在替换后自动重启。",
       "panelUpdateCurrent": "当前",
       "panelUpdateLatest": "最新",
       "panelUpToDate": "已是最新版本",

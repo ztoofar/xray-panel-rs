@@ -53,13 +53,19 @@ GitHub Releases：<https://github.com/ztoofar/xray-panel-rs/releases>
 curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh | sudo bash
 ```
 
-脚本会下载最新 Release、校验 SHA256、安装面板；`/usr/local/bin/xray` 不存在时
-自动安装官方 Xray 核心（`SKIP_XRAY=1` 可跳过）。指定版本或仓库：
+脚本会下载最新 Release、校验 SHA256、安装面板；检测到已有安装时自动走更新
+流程，保留数据库和 `/etc/xray-panel.env`。`/usr/local/bin/xray` 不存在时自动
+安装官方 Xray 核心（`SKIP_XRAY=1` 可跳过）。
+
+指定版本、仓库或下载代理（支持 HTTP 与 SOCKS5）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh \
-  | sudo PANEL_VERSION=0.2.16 PANEL_REPO=owner/repo bash
+  | sudo PANEL_VERSION=0.2.18 PANEL_PROXY=http://127.0.0.1:7890 bash
 ```
+
+`PANEL_PROXY` 也可写成 `socks5h://127.0.0.1:1080`；未设置时回退到
+`HTTPS_PROXY`/`ALL_PROXY`。代理不可达时脚本会明确报错。
 
 ### 在线更新
 
@@ -109,8 +115,8 @@ GitHub Actions 在推送 `v*` 标签时自动构建并发布以上文件
 （`.github/workflows/release.yml`）。发布前先同步 `Cargo.toml` 版本，然后：
 
 ```sh
-git tag v0.2.17
-git push origin v0.2.17
+git tag v0.2.18
+git push origin v0.2.18
 ```
 
 标签必须与 `Cargo.toml` 的版本一致，否则 release workflow 会失败。

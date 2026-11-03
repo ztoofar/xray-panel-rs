@@ -1835,7 +1835,7 @@
       "nodeAddressDesc": "生成分享連結和二維碼時使用的域名或 IP；留空則使用瀏覽器目前位址。",
       "nodeAddressInvalid": "節點地址只能填寫域名或 IP，不能包含 http:// 或路徑",
       "panelUpdate": "面板更新",
-      "panelUpdateDesc": "從 GitHub Releases 檢查並線上更新面板二進位；systemd 部署會在替換後自動重啟。",
+      "panelUpdateDesc": "從 GitHub Releases 檢查並線上更新面板二進位；下載使用「更新代理」設定，代理不通會直接報錯。systemd 部署會在替換後自動重啟。",
       "panelUpdateCurrent": "目前",
       "panelUpdateLatest": "最新",
       "panelUpToDate": "已是最新版本",

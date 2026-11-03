@@ -5,7 +5,9 @@
 #
 # Environment:
 #   PANEL_REPO       GitHub repo (default: ztoofar/xray-panel-rs)
-#   PANEL_VERSION    Release tag or version, e.g. v0.2.16 (default: latest)
+#   PANEL_VERSION    Release tag or version, e.g. v0.2.18 (default: latest)
+#   PANEL_PROXY      HTTP/SOCKS proxy for downloads, e.g. http://127.0.0.1:7890
+#                    or socks5h://127.0.0.1:1080 (falls back to HTTPS_PROXY)
 #   SKIP_XRAY=1      Do not install the Xray core when /usr/local/bin/xray is missing
 #   XRAY_VERSION     Xray release tag (default: latest)
 #   PANEL_DATA_DIR, PANEL_ENV_FILE, XRAY_CONFIG   forwarded to deploy/install.sh
@@ -13,6 +15,7 @@ set -euo pipefail
 
 REPO=${PANEL_REPO:-ztoofar/xray-panel-rs}
 VERSION=${PANEL_VERSION:-}
+PROXY=${PANEL_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-}}}}}
 SKIP_XRAY=${SKIP_XRAY:-0}
 XRAY_VERSION=${XRAY_VERSION:-}
 
@@ -20,6 +23,24 @@ log() { printf '\033[1;36m[lumen]\033[0m %s\n' "$*"; }
 die() {
   printf '\033[1;31m[lumen]\033[0m %s\n' "$*" >&2
   exit 1
+}
+
+PROXY_ARGS=()
+if [ -n "$PROXY" ]; then
+  PROXY_ARGS=(-x "$PROXY")
+  log "using download proxy: $PROXY"
+fi
+
+# download URL OUTFILE: fails loudly and mentions the proxy when one is set.
+download() {
+  local url=$1 out=$2
+  if ! curl -fsSL --retry 3 --connect-timeout 20 --max-time 600 \
+    "${PROXY_ARGS[@]}" -o "$out" "$url"; then
+    if [ -n "$PROXY" ]; then
+      die "download failed: $url (proxy $PROXY is unreachable or invalid)"
+    fi
+    die "download failed: $url (check network access to GitHub)"
+  fi
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -42,9 +63,14 @@ else
   BASE="https://github.com/${REPO}/releases/latest/download"
 fi
 
-log "downloading Lumen release from ${REPO}"
-curl -fL --retry 3 -o "$TMP/package.tar.gz" \
-  "${BASE}/xray-panel-rs-linux-amd64-lumen.tar.gz"
+MODE=install
+if [ -x /usr/local/bin/xray-panel-rs ]; then
+  MODE=update
+  log "existing Lumen installation detected; updating (database and config are kept)"
+fi
+
+log "downloading Lumen release from ${REPO} (${MODE})"
+download "${BASE}/xray-panel-rs-linux-amd64-lumen.tar.gz" "$TMP/package.tar.gz"
 tar -xzf "$TMP/package.tar.gz" -C "$TMP"
 PKG="$TMP/xray-panel-rs-linux-amd64-lumen"
 [ -x "$PKG/install.sh" ] || die "release package is missing install.sh"
@@ -65,8 +91,8 @@ install_xray() {
     digest_url="https://github.com/XTLS/Xray-core/releases/latest/download/${asset}"
   fi
   log "installing Xray core from ${digest_url}"
-  curl -fL --retry 3 -o "$TMP/xray.zip" "$digest_url"
-  curl -fL --retry 3 -o "$TMP/xray.dgst" "${digest_url}.dgst"
+  download "$digest_url" "$TMP/xray.zip"
+  download "${digest_url}.dgst" "$TMP/xray.dgst"
   digest=$(sed -n 's/^SHA2-256=//p' "$TMP/xray.dgst" | head -n1)
   [ -n "$digest" ] || die "Xray digest file has no SHA2-256 entry"
   got=$(sha256sum "$TMP/xray.zip" | awk '{print $1}')

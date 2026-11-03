@@ -72,7 +72,9 @@ pub(crate) fn agent(proxy: Option<&str>, timeout: Duration) -> Result<ureq::Agen
         .user_agent("lumen-panel-updater")
         .http_status_as_error(false);
     if let Some(proxy) = proxy {
-        builder = builder.proxy(Some(ureq::Proxy::new(proxy)?));
+        let parsed =
+            ureq::Proxy::new(proxy).with_context(|| format!("invalid update proxy: {proxy}"))?;
+        builder = builder.proxy(Some(parsed));
     }
     Ok(builder.build().into())
 }
