@@ -1,4 +1,5 @@
 use std::{
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -16,9 +17,12 @@ pub const PANEL_REPO: &str = match option_env!("PANEL_GITHUB_REPO") {
 };
 
 const PANEL_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PANEL_ASSET: &str = "xray-panel-rs-linux-amd64-lumen.tar.gz";
+const PANEL_ENTRY: &str = "xray-panel-rs-linux-amd64-lumen/xray-panel-rs";
 const MAX_API_BYTES: u64 = 4 << 20;
+const MAX_ARCHIVE_BYTES: u64 = 64 << 20;
 const MAX_BINARY_BYTES: u64 = 64 << 20;
-const MAX_SUMS_BYTES: u64 = 64 << 10;
+const MAX_EXTRACTED_BYTES: u64 = 192 << 20;
 const API_TIMEOUT: Duration = Duration::from_secs(20);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -28,8 +32,8 @@ struct Release {
     version: String,
     html_url: String,
     published_at: String,
-    binary_url: String,
-    sums_url: String,
+    archive_url: String,
+    archive_digest: String,
 }
 
 impl Release {
@@ -83,14 +87,24 @@ async fn latest_release(state: &AppState) -> Result<Release> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let asset_url = |name: &str| {
-            assets
-                .iter()
-                .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))
-                .and_then(|asset| asset.get("browser_download_url"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        };
+        let archive = assets
+            .iter()
+            .find(|asset| asset.get("name").and_then(Value::as_str) == Some(PANEL_ASSET))
+            .with_context(|| format!("latest release has no {PANEL_ASSET} asset"))?;
+        let archive_url = archive
+            .get("browser_download_url")
+            .and_then(Value::as_str)
+            .context("release asset has no download URL")?
+            .to_string();
+        // GitHub computes the digest for every uploaded asset; no separate
+        // checksum asset is needed.
+        let archive_digest = archive
+            .get("digest")
+            .and_then(Value::as_str)
+            .and_then(|value| value.strip_prefix("sha256:"))
+            .map(str::to_ascii_lowercase)
+            .filter(|value| value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()))
+            .context("release asset has no sha256 digest")?;
         Ok(Release {
             tag,
             version,
@@ -104,9 +118,8 @@ async fn latest_release(state: &AppState) -> Result<Release> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            binary_url: asset_url("xray-panel-rs")
-                .context("latest release has no xray-panel-rs binary asset")?,
-            sums_url: asset_url("SHA256SUMS").context("latest release has no SHA256SUMS asset")?,
+            archive_url,
+            archive_digest,
         })
     })
     .await
@@ -119,14 +132,103 @@ pub async fn check(state: &AppState) -> Result<Value> {
 }
 
 fn download_verified(agent: &ureq::Agent, release: &Release) -> Result<Vec<u8>> {
-    let sums = updates::get_bytes(agent, &release.sums_url, MAX_SUMS_BYTES)?;
-    let expected = updates::parse_sha256sum(&sums, "xray-panel-rs")?;
-    let binary = updates::get_bytes(agent, &release.binary_url, MAX_BINARY_BYTES)?;
-    let got = hex::encode(Sha256::digest(&binary));
-    if got != expected {
-        bail!("panel binary SHA-256 mismatch (expected {expected}, got {got})");
+    let archive = updates::get_bytes(agent, &release.archive_url, MAX_ARCHIVE_BYTES)?;
+    let got = hex::encode(Sha256::digest(&archive));
+    if got != release.archive_digest {
+        bail!(
+            "panel archive SHA-256 mismatch (expected {}, got {got})",
+            release.archive_digest
+        );
     }
-    Ok(binary)
+    extract_panel_binary(&archive)
+}
+
+fn extract_panel_binary(archive: &[u8]) -> Result<Vec<u8>> {
+    let decoder = flate2::read::GzDecoder::new(archive);
+    extract_from_tar(decoder)
+}
+
+fn tar_name(header: &[u8; 512]) -> String {
+    let field = |start: usize, len: usize| {
+        let raw = &header[start..start + len];
+        let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+        String::from_utf8_lossy(&raw[..end]).trim().to_string()
+    };
+    let name = field(0, 100);
+    let prefix = field(345, 155);
+    if prefix.is_empty() {
+        name
+    } else {
+        format!("{prefix}/{name}")
+    }
+}
+
+fn tar_size(header: &[u8; 512]) -> Result<u64> {
+    let raw = &header[124..136];
+    let text = String::from_utf8_lossy(raw);
+    let text = text.trim_matches(|c: char| c == '\0' || c == ' ');
+    u64::from_str_radix(text, 8).context("parse tar entry size")
+}
+
+fn read_exact_limited<R: Read>(reader: &mut R, len: u64, budget: &mut u64) -> Result<Vec<u8>> {
+    if len > MAX_BINARY_BYTES || len > *budget {
+        bail!("archive binary exceeds the size limit");
+    }
+    *budget -= len;
+    let mut bytes = vec![0u8; len as usize];
+    reader.read_exact(&mut bytes).context("read tar entry")?;
+    Ok(bytes)
+}
+
+fn skip_exact<R: Read>(reader: &mut R, len: u64, budget: &mut u64) -> Result<()> {
+    if len > *budget {
+        bail!("archive expands beyond the size limit");
+    }
+    *budget -= len;
+    let skipped = std::io::copy(&mut reader.by_ref().take(len), &mut std::io::sink())
+        .context("skip tar entry")?;
+    if skipped != len {
+        bail!("truncated tar archive");
+    }
+    Ok(())
+}
+
+fn pad_after(size: u64) -> u64 {
+    (512 - size % 512) % 512
+}
+
+fn extract_from_tar<R: Read>(reader: R) -> Result<Vec<u8>> {
+    let mut reader = BufReader::new(reader);
+    let mut header = [0u8; 512];
+    let mut budget = MAX_EXTRACTED_BYTES;
+    loop {
+        match reader.read_exact(&mut header) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                bail!("tar archive ends before the panel binary");
+            }
+            Err(err) => return Err(err).context("read tar header"),
+        }
+        if header.iter().all(|byte| *byte == 0) {
+            bail!("tar archive has no {PANEL_ENTRY}");
+        }
+        let name = tar_name(&header);
+        let size = tar_size(&header)?;
+        let typeflag = header[156];
+        let regular = typeflag == b'0' || typeflag == 0;
+        if regular && name == PANEL_ENTRY {
+            let binary = read_exact_limited(&mut reader, size, &mut budget)?;
+            if binary.len() < 4 || &binary[..4] != b"\x7fELF" {
+                bail!("{PANEL_ENTRY} is not a Linux ELF binary");
+            }
+            return Ok(binary);
+        }
+        skip_exact(&mut reader, size, &mut budget)?;
+        let padding = pad_after(size);
+        if padding > 0 {
+            skip_exact(&mut reader, padding, &mut budget)?;
+        }
+    }
 }
 
 fn current_binary() -> Result<PathBuf> {
@@ -232,7 +334,70 @@ pub async fn install(state: &AppState) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use flate2::{write::GzEncoder, Compression};
+
     use super::*;
+
+    fn tar_header(name: &str, size: usize, typeflag: u8) -> [u8; 512] {
+        let mut header = [0u8; 512];
+        header[..name.len()].copy_from_slice(name.as_bytes());
+        header[100..108].copy_from_slice(b"0000755\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        header[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        header[156] = typeflag;
+        header
+    }
+
+    fn tar_entry(tar: &mut Vec<u8>, name: &str, data: &[u8], typeflag: u8) {
+        tar.extend_from_slice(&tar_header(name, data.len(), typeflag));
+        tar.extend_from_slice(data);
+        let padding = pad_after(data.len() as u64);
+        tar.extend(std::iter::repeat_n(0u8, padding as usize));
+    }
+
+    fn gzip(archive: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(archive).expect("gzip");
+        encoder.finish().expect("gzip finish")
+    }
+
+    #[test]
+    fn extracts_the_panel_binary_from_the_release_tarball() {
+        let mut tar = Vec::new();
+        tar_entry(&mut tar, "xray-panel-rs-linux-amd64-lumen/", &[], b'5');
+        tar_entry(
+            &mut tar,
+            "xray-panel-rs-linux-amd64-lumen/README.md",
+            b"readme",
+            b'0',
+        );
+        tar_entry(&mut tar, PANEL_ENTRY, b"\x7fELF-panel", b'0');
+        tar.extend(std::iter::repeat_n(0u8, 512));
+
+        let binary = extract_panel_binary(&gzip(&tar)).expect("extract");
+        assert_eq!(binary, b"\x7fELF-panel");
+    }
+
+    #[test]
+    fn rejects_archives_without_the_panel_binary() {
+        let mut tar = Vec::new();
+        tar_entry(&mut tar, "other/file", b"data", b'0');
+        tar.extend(std::iter::repeat_n(0u8, 512));
+        let err = extract_panel_binary(&gzip(&tar)).expect_err("missing binary");
+        assert!(format!("{err:#}").contains("has no"), "{err:#}");
+    }
+
+    #[test]
+    fn rejects_non_elf_payloads() {
+        let mut tar = Vec::new();
+        tar_entry(&mut tar, PANEL_ENTRY, b"not-an-elf", b'0');
+        let err = extract_panel_binary(&gzip(&tar)).expect_err("non-elf");
+        assert!(format!("{err:#}").contains("not a Linux ELF"), "{err:#}");
+    }
 
     #[test]
     fn version_comparison_ignores_the_v_prefix_and_prerelease_suffix() {

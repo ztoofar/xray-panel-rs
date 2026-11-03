@@ -430,3 +430,19 @@
   （需要新增 tar/gzip 依赖，且不如原始二进制 + SHA256SUMS 简单）。
 - 后果：在线更新依赖 GitHub 可达或设置页 `updateProxy`；仅支持 Linux；
   非 systemd 运行方式需要手动重启。
+
+## D032 Release 只发布 tar.gz，在线更新用 GitHub 资产 digest
+- 日期：2026-11-03
+- 背景：用户要求 Release 资产不要单独放二进制，压缩包里已有；也不必额外发布
+  SHA256SUMS 文件。
+- 决策：
+  1. Release 只上传 `xray-panel-rs-linux-amd64-lumen.tar.gz`；包内仍保留
+     `SHA256SUMS` 用于离线校验。
+  2. 面板在线更新从 GitHub Releases API 读取该资产的 `digest`
+     （`sha256:<hex>`），下载 tar.gz 后按其校验，再用内置最小 tar 解析器解出
+     `xray-panel-rs`；不下载额外校验文件。
+  3. 新增直接依赖 `flate2`（原本已由 zip 间接引入），不增加新的重量级依赖。
+- 被否方案：继续发布原始二进制 + SHA256SUMS（用户明确要求精简资产）；调用系统
+  `tar` 解包（依赖宿主机工具，不如内置解析可靠）。
+- 后果：**v0.2.16 的在线更新仍按旧的原始二进制逻辑查找资产，无法自动升级到
+  0.2.17**；0.2.16 用户需用一键安装脚本升级一次，之后 v0.2.17+ 可正常在线更新。

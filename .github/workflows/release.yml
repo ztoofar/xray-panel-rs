@@ -57,18 +57,14 @@ jobs:
           cp README.md deploy/install.sh deploy/xray-panel.service deploy/xray-panel.env.example dist/xray-panel-rs-linux-amd64-lumen/
           (cd dist/xray-panel-rs-linux-amd64-lumen && sha256sum xray-panel-rs > SHA256SUMS)
           tar -czf dist/xray-panel-rs-linux-amd64-lumen.tar.gz -C dist xray-panel-rs-linux-amd64-lumen
-          cp "$bin" dist/xray-panel-rs
-          cp dist/xray-panel-rs-linux-amd64-lumen/SHA256SUMS dist/SHA256SUMS
           file "$bin"
-          cat dist/SHA256SUMS
+          cat dist/xray-panel-rs-linux-amd64-lumen/SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/xray-panel-rs-linux-amd64-lumen.tar.gz
-            dist/xray-panel-rs
-            dist/SHA256SUMS
           generate_release_notes: true
           body: |
             ## 一键安装（Linux x86_64，需 root）
@@ -86,7 +82,9 @@ jobs:
 
             ## 资产
 
-            - `xray-panel-rs-linux-amd64-lumen.tar.gz`：完整安装包
-            - `xray-panel-rs`：原始 Linux amd64 二进制（在线更新使用）
-            - `SHA256SUMS`：二进制校验和
+            - `xray-panel-rs-linux-amd64-lumen.tar.gz`：完整安装包（含二进制、
+              systemd 单元、安装脚本和包内 SHA256SUMS）
+
+            面板在线更新使用 GitHub 为 Release 资产自动计算的 SHA-256 digest，
+            不再额外发布校验文件。
 

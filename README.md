@@ -91,14 +91,13 @@ cargo build --release  # 产物 target/release/xray-panel-rs
 
 ## 预编译二进制
 
-每个 GitHub Release 附带：
+每个 GitHub Release 只附带一个资产：
 
-- `xray-panel-rs-linux-amd64-lumen.tar.gz`：完整安装包（二进制 + systemd 单元 +
-  安装脚本 + README + SHA256SUMS）
-- `xray-panel-rs`：Linux amd64 静态二进制（musl，无需 glibc），供面板在线更新使用
-- `SHA256SUMS`：二进制校验和
+- `xray-panel-rs-linux-amd64-lumen.tar.gz`：完整安装包（Linux amd64 静态二进制、
+  systemd 单元、安装脚本、README 和包内 `SHA256SUMS`）
 
-也可在源码目录执行：
+面板在线更新下载这个压缩包，使用 GitHub 为 Release 资产自动计算的 SHA-256
+digest 校验后解出二进制；不依赖额外校验文件。也可在源码目录执行：
 
 ```sh
 cargo zigbuild --release --target x86_64-unknown-linux-musl
@@ -108,8 +107,8 @@ GitHub Actions 在推送 `v*` 标签时自动构建并发布以上文件
 （`.github/workflows/release.yml`）。发布前先同步 `Cargo.toml` 版本，然后：
 
 ```sh
-git tag v0.2.16
-git push origin v0.2.16
+git tag v0.2.17
+git push origin v0.2.17
 ```
 
 标签必须与 `Cargo.toml` 的版本一致，否则 release workflow 会失败。

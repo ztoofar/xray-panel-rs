@@ -60,10 +60,10 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.16`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
-  0.2.16 包含：11 种 Xray 原生入站/13 种原生出站协议补全、面板「节点地址」、
-  面板在线更新（GitHub Releases + SHA256 校验 + systemd 重启）、一键安装脚本与
-  GitHub Actions 构建发布。见 `memory/CURRENT-STATUS.md` §2.14–§2.23。
+- **当前源码版本**：`0.2.17`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+  0.2.17 在 0.2.16 基础上把在线更新改为下载 tar.gz、使用 GitHub 资产 digest 校验
+  并解出二进制；Release 资产只保留压缩包。0.2.16 包含协议补全、节点地址、在线
+  更新、一键安装和 GitHub Actions。见 `memory/CURRENT-STATUS.md` §2.14–§2.24。
 - **当前生效前端**：`frontend-3xui/`（3x-ui 前端的裁剪版），构建输出到 `web/dist/`。
   只暴露七个路由：系统状态 `/`、入站、客户端、出站、路由、Xray、设置。
 - **非生效目录**：`frontend/`（早期自研表单源码）和 `web/dist-custom-v2/` 保留备查，

@@ -157,7 +157,7 @@
 | POST | `/panel/api/server/restartXrayService` | 已实现 |
 | POST | `/panel/api/server/stopXrayService` | 已实现（只停 Xray 子进程） |
 | GET | `/panel/api/server/panelUpdateCheck` | 已实现：查询 GitHub Releases 最新版本，返回 `current/latest/updateAvailable/releaseUrl` |
-| POST | `/panel/api/server/panelUpdate` | 已实现：下载并校验最新面板二进制，原子替换后退出（systemd `Restart=on-failure` 拉起）；非 systemd 返回 `restartRequired:true` |
+| POST | `/panel/api/server/panelUpdate` | 已实现：下载 Release 的 tar.gz，用 GitHub 资产 digest 校验并解出二进制，原子替换后退出（systemd `Restart=on-failure` 拉起）；非 systemd 返回 `restartRequired:true` |
 | GET | `/panel/api/server/getNewUUID` | 已实现 |
 | GET | `/panel/api/server/getNewX25519Cert` | 已实现 |
 | GET | `/panel/api/server/getNewVlessEnc` | 已实现（调用 `xray vlessenc`） |

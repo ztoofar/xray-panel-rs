@@ -79,10 +79,11 @@
 `shareAddrStrategy`/`shareAddr` 仍然优先。
 
 面板在线更新：`panel_update` 从 `PANEL_GITHUB_REPO`（CI 编译时注入为当前仓库，
-本地默认 `ztoofar/xray-panel-rs`）的 latest release 下载 `xray-panel-rs` 与
-`SHA256SUMS`，校验后写入同目录临时文件并原子替换当前可执行文件；在 systemd
-（`INVOCATION_ID`）下 1.5s 后 `exit(1)`，由 `Restart=on-failure` 拉起新版本，
-否则返回 `restartRequired:true`。
+本地默认 `ztoofar/xray-panel-rs`）的 latest release 下载
+`xray-panel-rs-linux-amd64-lumen.tar.gz`，用 GitHub 为资产计算的 SHA-256 digest
+校验，再用内置的最小 tar.gz 解析器取出 `xray-panel-rs`，写入同目录临时文件并
+原子替换当前可执行文件；在 systemd（`INVOCATION_ID`）下 1.5s 后 `exit(1)`，
+由 `Restart=on-failure` 拉起新版本，否则返回 `restartRequired:true`。
 
 ## 4. HTTP 请求流程
 
