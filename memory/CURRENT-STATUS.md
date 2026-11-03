@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-03 23:05（本地时间）
+> 最后更新：2026-11-03 23:15（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -9,14 +9,14 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.16` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.16`（Actions 构建，资产以 Releases 页面为准）；本地备用包 `dist/xray-panel-rs-linux-amd64-lumen.tar.gz` 5,411,231 字节 |
-| 当前源码 | `0.2.16` 已推送 GitHub（`57b97c2`）；包含协议补全、节点地址、在线更新与一键安装，无未打包源码改动 |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.16`：`xray-panel-rs-linux-amd64-lumen.tar.gz` 5,417,245 字节，SHA256 `ad58e7da...4b3c`；原始二进制 12,742,128 字节，SHA256 `f1760246...ee83` |
+| 当前源码 | `0.2.16` 已推送 GitHub（tag `v0.2.16` → `c4c669a`）；包含协议补全、节点地址、在线更新与一键安装，无未打包源码改动 |
 | 上一版归档 | `dist/xray-panel-rs-linux-amd64-lumen-0.2.15.tar.gz`（5,398,823 字节，SHA256 `40b4b245...fb13a`）；更早 `...-0.2.14.tar.gz` 等 |
-| 0.2.16 本地 SHA256 | 归档 `a39f292330cbe707f7fc0ebbc9b86e81aa69d98a2d5e789f6067795f308894a3`；二进制 `ea183fb183a37f410a6dda11c61c09437484fbc80accf1cb8687e3e49a7c049f`（GitHub Release 资产哈希以 Actions 为准） |
+| 0.2.16 SHA256 | Release 归档 `ad58e7dae135a0fdfa689a2af5935ef3989d2c28a58e007284abcad000604b3c`；二进制 `f1760246078b995118b608085c21b0f65d0d218fc472cad2b50fef228209ee83`；SHA256SUMS 内容为 `f176...ee83  xray-panel-rs` |
 | 0.2.16 源码包 | `dist/xray-panel-rs-0.2.16-src.tar.gz`（4,224,342 字节），SHA256 `2091acf5ff7a53fa0b790459cf30b26b397140d3b6772d6cd9ca3ccbcc307628`；不含 `target/tmp/node_modules/web/dist-3xui/web/dist-custom-v2`，含已构建 `web/dist` 与 `.github/` |
 | 前端构建产物 | `web/dist/` 已在 2026-11-03 22:52 由当前 `frontend-3xui/` 源码重建（协议表单 + 节点地址 + 面板更新） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 已打包：`dist/xray-panel-rs-linux-amd64-lumen/xray-panel-rs`（12,728,480 字节，静态 ELF，已 strip） |
+| musl 产物 | GitHub Release 二进制 12,742,128 字节（静态 ELF，已 strip）；本地 `dist/` 备用包 12,728,480 字节 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -598,6 +598,28 @@
   musl release 成功；包内 `sha256sum -c`/`gzip -t`/`file` 通过。
 - 未验证：GitHub Actions 首次发布、真实 Linux systemd 在线更新全流程（N2）。
   详见 `KNOWN-ISSUES.md` N1/N2。
+
+## 2.23 GitHub Release v0.2.16（2026-11-03）—— 已验证
+
+- 仓库：<https://github.com/ztoofar/xray-panel-rs>（public），main 与 tag `v0.2.16`
+  已推送；Actions `ci` 通过（fmt/test/clippy），`release` 通过。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.16>
+  - `xray-panel-rs-linux-amd64-lumen.tar.gz`：5,417,245 字节，SHA256
+    `ad58e7dae135a0fdfa689a2af5935ef3989d2c28a58e007284abcad000604b3c`
+  - `xray-panel-rs`：12,742,128 字节，SHA256
+    `f1760246078b995118b608085c21b0f65d0d218fc472cad2b50fef228209ee83`
+  - `SHA256SUMS`：`f176...ee83  xray-panel-rs`
+- 一键安装（README 顶部）：
+  `curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh | sudo bash`
+- 验证：
+  - 本地 panel（0.2.16 debug）调用 `panelUpdateCheck` 成功返回
+    `current=0.2.16, latest=0.2.16, updateAvailable=false, repo=ztoofar/xray-panel-rs`。
+  - Windows 调用 `panelUpdate` 返回明确错误
+    `online panel update is supported on Linux only`（符合预期）。
+  - 无头 Chrome：设置页显示「面板更新 / 检查更新 / 节点地址」，控制台无报错。
+  - GitHub Actions release 成功产出 tar.gz、原始二进制、SHA256SUMS。
+- 未验证：真实 Linux + systemd 在线更新全流程（TODO T23 / KNOWN-ISSUES N2）；
+  一键安装脚本未在全新 Linux 上实际执行（只做了语法与资产校验）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

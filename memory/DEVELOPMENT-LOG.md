@@ -765,3 +765,19 @@
   源码包 4,224,342 字节 SHA256 `2091acf5...7628`。0.2.15 归档保留。
 - 未验证：真实 Linux systemd 下的在线更新全流程（N2）；GitHub Actions Release
   产物以下载页为准。
+
+## 2026-11-03 23:15 — GitHub Release v0.2.16 发布完成
+
+- 仓库 main + tag `v0.2.16`（c4c669a）推送完成。
+- GitHub Actions：`ci`（fmt/test 90/90/clippy）通过；`release` 通过（Node 26 +
+  cargo-zigbuild 0.24.0 + Zig，musl 构建、打包、softprops 发布）。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.16>：
+  - tar.gz 5,417,245 字节，SHA256
+    `ad58e7dae135a0fdfa689a2af5935ef3989d2c28a58e007284abcad000604b3c`
+  - 原始二进制 12,742,128 字节，SHA256
+    `f1760246078b995118b608085c21b0f65d0d218fc472cad2b50fef228209ee83`
+  - `SHA256SUMS` 内容 `f176...ee83  xray-panel-rs`
+- 验证：本地 0.2.16 面板 `panelUpdateCheck` 成功返回 current/latest 0.2.16、
+  `updateAvailable:false`、repo 正确；Windows 更新接口返回 Linux-only 明确错误；
+  设置页 UI 显示「面板更新/检查更新/节点地址」且无控制台报错。
+- 未验证：真实 Linux + systemd 在线更新（T23/N2）；一键安装在全新 Linux 执行。

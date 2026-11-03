@@ -103,11 +103,11 @@
 - **P2-T20**：清理活动页面中的 Hosts/Nodes 残留数据 plumbing（无对应管理页）。
 - **P2-T13**：`subSortIndex`/`excludeFromSub` 已保存但订阅服务器未实现。
 - 当前源码/发布版：**0.2.16**；GitHub `ztoofar/xray-panel-rs`，Releases 由 Actions 构建。
-- 本地备用包：`dist/xray-panel-rs-linux-amd64-lumen.tar.gz`
-  （5,411,231 字节，SHA256 `a39f2923...94a3`）；二进制 12,728,480 字节，
-  SHA256 `ea183fb1...049f`。GitHub Release 由 Actions 构建，资产哈希以
-  Releases 页面 / `SHA256SUMS` 为准。
+- GitHub Release `v0.2.16`：tar.gz 5,417,245 字节
+  SHA256 `ad58e7da...4b3c`；二进制 12,742,128 字节 SHA256 `f1760246...ee83`；
+  原始二进制与 SHA256SUMS 已附加，面板在线更新使用这两个资产。
 - 上一版归档：`dist/xray-panel-rs-linux-amd64-lumen-0.2.15.tar.gz`
   （5,398,823 字节，SHA256 `40b4b245...fb13a`）；更早 `...-0.2.14.tar.gz` 等。
-- 源码包：`dist/xray-panel-rs-0.2.16-src.tar.gz`（4,224,342 字节，
-  SHA256 `2091acf5...7628`）。
+- 本地源码包：`dist/xray-panel-rs-0.2.16-src.tar.gz`（4,224,342 字节，
+  SHA256 `2091acf5...7628`）；GitHub Release 另提供自动源码归档。
+- 一键安装：`curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh | sudo bash`。

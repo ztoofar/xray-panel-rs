@@ -116,6 +116,9 @@ export PATH="/d/ClaudeCode/Tools/zig-npm/node_modules/@zigc/win32-x64/bin:$PATH"
 cargo zigbuild --release --target x86_64-unknown-linux-musl
 ```
 
+GitHub 发布：同步 `Cargo.toml` 版本后推 `v*` 标签，`.github/workflows/release.yml`
+自动构建并上传 tar.gz、原始二进制与 SHA256SUMS 到 Releases。
+
 注意：
 
 - `npm run typecheck` 当前会因 `node_modules` 缺少 vitest/storybook 等
