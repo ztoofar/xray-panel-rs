@@ -888,4 +888,7 @@
 - 文档：新增 `DECISIONS.md` D037、`KNOWN-ISSUES.md` N7；
   `CURRENT-STATUS.md` §2.28–§2.29。
 - 版本 0.2.19 → `0.2.20`；推送 `main` 与 tag `v0.2.20` 由 Actions 构建。
-- Release 资产大小/digest：待 Actions 完成后补充。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.20>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,426,606 字节，
+  GitHub asset digest
+  `sha256:61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`。

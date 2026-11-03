@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 00:36（本地时间）
+> 最后更新：2026-11-04 00:45（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -9,10 +9,10 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.20` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.20`（发布中，Actions 完成后填入资产大小与 digest） |
-| 当前源码 | `0.2.20` 已推送 GitHub（tag `v0.2.20`，提交见 §2.29） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.20`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,426,606 字节，SHA256 `61f1a69f...9269`（GitHub asset digest） |
+| 当前源码 | `0.2.20` 已推送 GitHub（tag `v0.2.20` → `d6f7efa`） |
 | 上一版 | GitHub Release `v0.2.19`：tar 5,424,758 字节，asset digest `sha256:ab81a7c7...35c6` |
-| 0.2.20 SHA256 | 待 Actions 完成后填写（tar.gz，GitHub asset digest） |
+| 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
 | 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建（0.2.20 无前端改动） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
@@ -760,15 +760,20 @@
 - **范围说明**：非网络类错误仍可能包含英文原始信息（如 GitHub 返回非 200、
   Release 缺资产）。见 `KNOWN-ISSUES.md` N7。
 
-## 2.29 0.2.20 发布（2026-11-04）—— 发布进行中
+## 2.29 0.2.20 发布（2026-11-04）—— 已验证
 
 - 版本：`Cargo.toml` / `Cargo.lock` = `0.2.20`。
 - 内容：§2.28 的代理/网络错误中文化；无前端改动。
-- 发布路径：commit + push `main` → tag `v0.2.20` → GitHub Actions
-  `release.yml` 构建并创建 Release；本地不打包。
+- 发布路径：提交 `d6f7efa` + push `main` → tag `v0.2.20` → GitHub Actions
+  `release.yml` 成功并创建 Release；本地不打包。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.20>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,426,606 字节**，
+  GitHub asset digest
+  `sha256:61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`。
 - 发布前验证：`cargo fmt --check`、`cargo test` 99/99、clippy 零警告、
   `cargo build` 成功；更新报错 e2e 全通过。
-- Release 资产与 digest：待 Actions 完成后填写。
+- 未验证：真实 Linux/musl 运行、真实代理不可达场景的 UI 展示（本地 e2e 覆盖
+  返回文本，未用真实反向代理/浏览器确认）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
