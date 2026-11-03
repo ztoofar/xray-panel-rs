@@ -70,3 +70,23 @@ jobs:
             dist/xray-panel-rs
             dist/SHA256SUMS
           generate_release_notes: true
+          body: |
+            ## 一键安装（Linux x86_64，需 root）
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh | sudo bash
+            ```
+
+            脚本会下载本 Release、校验 SHA256、安装面板，并在缺少 Xray 时安装官方核心。
+
+            ## 在线更新
+
+            登录面板 → 设置 → 面板更新 → 检查更新。面板从 Releases 下载并校验二进制，
+            原子替换后由 systemd 自动重启。
+
+            ## 资产
+
+            - `xray-panel-rs-linux-amd64-lumen.tar.gz`：完整安装包
+            - `xray-panel-rs`：原始 Linux amd64 二进制（在线更新使用）
+            - `SHA256SUMS`：二进制校验和
+
