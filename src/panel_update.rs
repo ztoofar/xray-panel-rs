@@ -285,6 +285,31 @@ fn stage_binary(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
     Ok(temp)
 }
 
+// INVOCATION_ID is inherited by shells started from a systemd session, so it
+// alone is not proof that this process is the xray-panel service. The unit sets
+// PANEL_SYSTEMD=1; legacy units fall back to comparing systemd's MainPID.
+fn running_under_systemd() -> bool {
+    if std::env::var("PANEL_SYSTEMD").ok().as_deref() == Some("1") {
+        return true;
+    }
+    if std::env::var_os("INVOCATION_ID").is_none() {
+        return false;
+    }
+    let output = std::process::Command::new("systemctl")
+        .args(["show", "-p", "MainPID", "--value", "xray-panel"])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let pid = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<u32>()
+                .ok();
+            pid == Some(std::process::id())
+        }
+        _ => false,
+    }
+}
+
 fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     let backup = target.with_extension("bak");
     std::fs::copy(target, &backup).with_context(|| {
@@ -326,7 +351,7 @@ pub async fn install(state: &AppState) -> Result<Value> {
         "panel binary updated"
     );
 
-    let systemd = std::env::var_os("INVOCATION_ID").is_some();
+    let systemd = running_under_systemd();
     if systemd {
         tokio::spawn(async {
             tokio::time::sleep(Duration::from_millis(1500)).await;

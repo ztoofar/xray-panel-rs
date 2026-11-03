@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=PANEL_SYSTEMD=1
 EnvironmentFile=/etc/xray-panel.env
 # Relative defaults (PANEL_DB/PANEL_XRAY_LOG) must not land in /.
 WorkingDirectory=/etc/xray-panel

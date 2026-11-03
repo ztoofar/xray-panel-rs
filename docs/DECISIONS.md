@@ -464,3 +464,12 @@
   代理失败只显示 curl 原始错误（无法区分网络/代理问题）。
 - 后果：`PANEL_PROXY` 只影响脚本下载，不写入面板设置；面板运行期更新仍读
   `updateProxy`。安装脚本未设置代理时行为不变。
+
+## D034 在线更新重启判定：PANEL_SYSTEMD + MainPID
+- 日期：2026-11-03
+- 背景：集成测试发现 GitHub Actions 继承 `INVOCATION_ID`，面板误判为 systemd
+  托管并 `exit(1)`，实际不会被拉起。
+- 决策：`deploy/xray-panel.service` 显式设置 `Environment=PANEL_SYSTEMD=1`；
+  更新器优先检查该变量。旧单元没有该变量时，仅在 `INVOCATION_ID` 存在且
+  `systemctl show -p MainPID --value xray-panel` 等于当前进程 PID 时才自动退出。
+- 后果：旧版单元仍可自动重启；在 systemd 会话里手动启动的进程不会误退出。

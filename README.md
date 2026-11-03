@@ -163,6 +163,7 @@ Type=simple
 EnvironmentFile=/etc/xray-panel.env
 # 防止相对路径的数据库/日志落到根目录
 WorkingDirectory=/etc/xray-panel
+Environment=PANEL_SYSTEMD=1
 ExecStart=/usr/local/bin/xray-panel-rs
 Restart=on-failure
 RestartSec=3
