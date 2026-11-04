@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 23:30（本地时间）
+> 最后更新：2026-11-04 23:42（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -9,16 +9,17 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.23` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.22`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，SHA256 `c3a60555...44e9`（GitHub asset digest）；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.23`（未打包/未打 tag）：在 0.2.22 基础上把 IP数据云移入“高级”页的标签（§2.37）；最近发布仍为 `v0.2.22` |
-| 上一版 | GitHub Release `v0.2.21`：tar 5,465,980 字节，asset digest `sha256:143e27bf...f101a` |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.23`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,227 字节，SHA256 `9bd16e84...3811`（GitHub asset digest）；Release 页面只显示更新内容 |
+| 当前源码 | `0.2.23`（tag `v0.2.23` → `a0aa557`，已发布）：IP数据云移入“高级”页标签，与出站检测同页切换（§2.37/§2.38） |
+| 上一版 | GitHub Release `v0.2.22`：tar 5,473,730 字节，asset digest `sha256:c3a60555...44e9` |
+| 0.2.23 SHA256 | `9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`（tar.gz，GitHub asset digest） |
 | 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-04 22:5x 由当前 `frontend-3xui/` 源码重建（含 IP数据云设置页） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-04 23:3x 由当前 `frontend-3xui/` 源码重建（含高级页标签） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.21 Release tar 内含静态 ELF 二进制（12,861,232 字节，已 strip）；本地不生成备用二进制 |
+| musl 产物 | 0.2.23 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -954,6 +955,21 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
   “出站检测 / IP数据云”两个标签，可来回切换；IP数据云标签显示 API Key
   输入与提示；出站检测原有内容正常。
 - 未验证：真实 Linux/musl；有效 IP数据云 Key 成功响应（T28）。
+
+## 2.38 v0.2.23 发布（2026-11-04）—— 已验证
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.23`；tag `v0.2.23` → `a0aa557`。
+- Release 页面：标题 `## 更新内容`（不带版本号），只列 0.2.23 更新条目；
+  无安装/更新说明、无 Full Changelog。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.23>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,473,227 字节**，
+  GitHub asset digest
+  `sha256:9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`。
+- Actions：release run `41859508942` 成功。
+- 发布前验证：`cargo test` 112/112、clippy 零警告、fmt 通过、前端构建；
+  `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome 验证高级页两个标签可切换。
+- **未验证**：真实 Linux/musl 运行；发布包本地下载校验（网络受限）；
+  有效 IP数据云 Key 成功响应（T28）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

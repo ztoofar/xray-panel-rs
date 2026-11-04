@@ -1262,3 +1262,13 @@ Linux `/proc` 实时采集：
 - 设置侧栏取消独立 IP数据云入口；“高级”页改为“出站检测 / IP数据云”两个
   可切换标签，样式与常规设置页一致。
 - 版本 0.2.23（未打包/未打 tag）；前端构建与无头 Chrome 标签切换验证通过。
+
+## 2026-11-04 23:42 — 0.2.23 发布
+
+- 版本 0.2.23；提交 `a0aa557`，tag `v0.2.23`。
+- GitHub Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.23>
+  唯一资产 tar.gz 5,473,227 字节，asset digest
+  `sha256:9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`。
+- 内容：IP数据云移入“高级”页标签，与出站检测同页切换；Release 只显示
+  不带版本号的“更新内容”。
+- 未验证：真实 Linux/musl、有效 IP数据云 Key 成功响应。

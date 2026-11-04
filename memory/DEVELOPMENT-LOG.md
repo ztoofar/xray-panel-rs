@@ -1051,3 +1051,18 @@
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；前端构建成功；
   `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome 验证两个标签可切换、IP数据云
   API Key 输入存在、旧出站检测内容正常（桌面视口）。
+
+## 2026-11-04 23:42 — v0.2.23 发布
+
+- 版本 0.2.23；tag `v0.2.23` → 提交 `a0aa557`。
+- 发布 Actions：run `41859508942` 成功；Release
+  <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.23> 创建。
+- 资产：`xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,227 字节，
+  GitHub asset digest
+  `sha256:9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`。
+- Release 说明：标题 `## 更新内容`（无版本号），只列 0.2.23 标签页调整条目；
+  无安装/更新说明和 Full Changelog（D046/D047）。
+- 验证：发布前 `cargo test` 112/112、clippy、fmt、前端构建、无头 Chrome
+  高级页标签切换检查通过。发布包本机下载校验因网络受限未完成。
+- 未验证：有效 IP数据云 Key 成功响应（T28）、真实 Linux/musl（T26）、
+  真实公网客户端（T27）。
