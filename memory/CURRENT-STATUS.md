@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 23:00（本地时间）
+> 最后更新：2026-11-04 22:57（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -10,7 +10,7 @@
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.22` |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.21`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，SHA256 `143e27bf...f101a`（GitHub asset digest） |
-| 当前源码 | `0.2.22`（已推送 `main`，未打包/未打 tag）：位置查询改用纯真 + 可选 IP数据云，版本策略改为每次代码修改都 bump（§2.32–§2.34） |
+| 当前源码 | `0.2.22`（提交 `01c2586`，已推送 `main`，未打包/未打 tag）：位置查询改用纯真 + 可选 IP数据云，版本策略改为每次代码修改都 bump（§2.32–§2.34） |
 | 上一版 | GitHub Release `v0.2.20`：tar 5,426,606 字节，asset digest `sha256:61f1a69f...9269` |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
@@ -907,7 +907,7 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
   未打 tag）；本次改动包含 §2.32 的纯真主源与 §2.33 的 IP数据云功能。
 - 规则：根 `CLAUDE.md` 规则 3 与会话结束清单已改为“每次代码修改都递增版本”，
   `docs/DECISIONS.md` 追加 D045；纯文档/记忆同步不单独 bump。
-- 推送：提交并推送 `main`（提交号见 `DEVELOPMENT-LOG.md` 同日记录）。
+- 推送：提交 `01c2586`，已推送 `main`（`c7ce15a..01c2586`）。
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；版本号随二进制显示
   `0.2.22`。**未打包、未创建 Release/tag。**
 

@@ -994,3 +994,16 @@
   `tmp/e2e-advanced/ipdc-check.py`、`ipdc-ui.py` 全部通过。
 - 未验证：有效 Key 的成功响应/真实精度、真实 Linux、额度耗尽提示。
 - 未打包、未 bump 版本（仍 0.2.21）。
+
+## 2026-11-04 22:57 — 版本策略改为每次修改 bump，0.2.22 推送
+
+- 用户要求：推送当前代码；以后只要有修改，版本号都增加。
+- 版本：`Cargo.toml` / `Cargo.lock` 从 `0.2.21` → **`0.2.22`**（未打包、
+  未打 tag、未创建 Release）。
+- 规则：`CLAUDE.md` 规则 3 与会话结束清单改为“每次代码修改都递增版本号”；
+  `docs/DECISIONS.md` 追加 D045；`memory/NEXT-STEPS.md` 同步期望版本与策略。
+- 提交：`01c2586 feat: accurate IP location with optional IPDataCloud lookup`，
+  已推送 `main`（`c7ce15a..01c2586`）。
+- 验证：`cargo test` **112/112**、clippy 零警告、fmt 通过；二进制版本显示
+  `0.2.22`；前端构建与无头 Chrome 检查、假 Key 端到端见同日上一条。
+- 仍未验证：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl。

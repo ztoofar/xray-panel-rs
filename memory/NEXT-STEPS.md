@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 22:50
+> 最后更新：2026-11-04 22:57
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -34,7 +34,7 @@
   `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
 - 发布包已下载核对：digest 一致、包内 SHA256SUMS 通过、静态 ELF 含
   `LUMEN_VERSION=0.2.21`。
-- **当前未打包源码（版本 `0.2.22`，已推送 `main`）**：
+- **当前未打包源码（版本 `0.2.22`，提交 `01c2586`，已推送 `main`）**：
   1. 位置查询主源改为 zxinc（纯真库），ipwho.is 兜底，移除 ipapi.co
      （CURRENT-STATUS §2.32、DECISIONS D043）；
   2. 新增可选 IP数据云高精查询：设置页 `/settings#ipdata` 填 API Key，
