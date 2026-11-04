@@ -1007,3 +1007,21 @@
 - 验证：`cargo test` **112/112**、clippy 零警告、fmt 通过；二进制版本显示
   `0.2.22`；前端构建与无头 Chrome 检查、假 Key 端到端见同日上一条。
 - 仍未验证：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl。
+
+## 2026-11-04 23:15 — v0.2.22 发布
+
+- 版本 `Cargo.toml` / `Cargo.lock` = 0.2.22；tag `v0.2.22` → 提交 `99612d0`。
+- 发布 Actions：run `41853368185` 成功；Release
+  <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.22> 创建。
+- 资产：`xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，
+  GitHub asset digest
+  `sha256:c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`。
+- Release 说明：用户要求“只显示更新内容”。修改 `.github/workflows/release.yml`
+  的 body 为更新列表并关闭 `generate_release_notes`；用一次性 workflow
+  `41854912426` 将已发布 v0.2.22 的 body 改为仅更新内容，随后删除该 workflow
+  （提交 `89c4c2c`、`8a82b65`）。更新说明存档
+  `.github/release-notes/v0.2.22.md`。
+- 验证：发布前 `cargo test` 112/112、clippy、fmt、前端构建、假 Key 端到端、
+  无头 Chrome 设置页检查通过；发布资产下载校验结果见下一条补充。
+- 未验证：有效 IP数据云 Key 成功响应（T28）、真实 Linux/musl（T26）、
+  真实公网客户端（T27）。

@@ -619,3 +619,14 @@
 - 后果：源码版本号变成开发进度计数器，不再等于已发布版本；`CLAUDE.md`
   规则 3、会话结束清单和 `memory/NEXT-STEPS.md` 同步更新。本次将
   `0.2.21` → `0.2.22`。
+
+## D046 Release 页面只显示本次更新内容
+- 日期：2026-11-04
+- 背景：用户要求 Release 页面“只显示更新内容就行了”。此前
+  `.github/workflows/release.yml` 的 body 含一键安装、代理、在线更新和资产说明，
+  并开启 `generate_release_notes`，页面较长。
+- 决策：Release body 只保留“X.Y.Z 更新内容”列表；不再写入安装/更新说明，
+  也关闭自动生成的 Full Changelog。安装与更新说明继续放在 README、`install.sh`
+  和面板界面中。每次发布前更新 workflow body 的版本号和更新条目。
+- 后果：Release 页面更简洁；发布前必须人工更新 body；v0.2.22 的历史说明
+  保存在 `.github/release-notes/v0.2.22.md`。

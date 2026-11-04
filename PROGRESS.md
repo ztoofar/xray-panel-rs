@@ -1240,3 +1240,14 @@ Linux `/proc` 实时采集：
   二进制 SHA256 `997fb41a...dcdb`、含 `LUMEN_VERSION=0.2.21`。
 - 内容：0.2.20 + 2026-11-04 七项增强（CURRENT-STATUS §2.30）。
 - 未验证：真实 Linux/musl 运行。
+
+## 2026-11-04 23:15 — 0.2.22 发布
+
+- 版本 0.2.21 → 0.2.22；提交 `99612d0`，tag `v0.2.22`。
+- GitHub Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.22>
+  唯一资产 tar.gz 5,473,730 字节，asset digest
+  `sha256:c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`。
+- 内容：位置查询主源改为纯真（zxinc）、可选 IP数据云高精查询与独立设置页。
+- Release 页面只显示“0.2.22 更新内容”；安装/代理/在线更新说明不再写入 Release
+  （DECISIONS D046）。
+- 未验证：有效 IP数据云 Key 成功响应、真实 Linux/musl、真实公网客户端。

@@ -61,9 +61,10 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.22`（以 `Cargo.toml` 为准），源码已推送 `main`，
-  尚未打包/打 tag。0.2.22 将位置查询主源改为纯真库（zxinc），并增加可选的
-  IP数据云高精查询与独立设置页（见 `memory/CURRENT-STATUS.md` §2.32/§2.33）。
+- **当前源码版本**：`0.2.22`（以 `Cargo.toml` 为准），已随 GitHub Release
+  `v0.2.22` 发布（tag → `99612d0`）。0.2.22 将位置查询主源改为纯真库（zxinc），
+  并增加可选的 IP数据云高精查询与独立设置页；Release 页面只列本次更新内容
+  （见 `memory/CURRENT-STATUS.md` §2.32/§2.33/§2.35、DECISIONS D046）。
   0.2.21 增加客户端在线 IP/按需位置、出站真实连接检测与微信通知、面板日志
   UTC+8/历史、设置保存不重启等（见 `memory/CURRENT-STATUS.md` §2.30/§2.31）。
   0.2.20 将代理/网络类失败统一为中文提示（“代理不可用”），原生错误只写日志。
@@ -134,6 +135,9 @@ GitHub 发布：同步 `Cargo.toml` 版本后推 `v*` 标签，`.github/workflow
 - **发布默认走 GitHub Actions**（本地只改代码）：同步 `Cargo.toml` 版本 →
   提交并推送 `main` → 推送 `v*` 标签；`.github/workflows/release.yml` 自动
   构建 musl、打包、创建 Release。本地不需要 `cargo zigbuild` 或手工 tar。
+- **发布前更新 Release 说明**：修改 `.github/workflows/release.yml` 的 `body`，
+  只保留本次版本的更新内容列表；不要在 Release 写安装/更新说明，也不要启用
+  `generate_release_notes`（DECISIONS D046）。
 - 本地仍负责：前端构建（本地运行）、`cargo fmt/test/clippy`、版本号与文档。
 - 只有用户要求本地备用包或 Actions 不可用时，才在本机生成
   `dist/xray-panel-rs-linux-amd64-lumen.tar.gz` 并记录 SHA256。

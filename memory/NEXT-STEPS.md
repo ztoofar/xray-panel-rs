@@ -25,22 +25,18 @@
 
 ## 当前状态（2026-11-04）
 
-- 已发布：GitHub `v0.2.21`（tag → `85f85da`，唯一资产
-  `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，digest
-  `sha256:143e27bf...f101a`）。内容为 0.2.20 + 2026-11-04 七项增强
-  （CURRENT-STATUS §2.30/§2.31）。
-- 上一版：GitHub `v0.2.20`（tag → `d6f7efa`）。
-- 验证：`cargo test` 107/107、clippy 零警告、fmt 通过、前端 build 成功；
-  `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
-- 发布包已下载核对：digest 一致、包内 SHA256SUMS 通过、静态 ELF 含
-  `LUMEN_VERSION=0.2.21`。
-- **当前未打包源码（版本 `0.2.22`，提交 `01c2586`，已推送 `main`）**：
-  1. 位置查询主源改为 zxinc（纯真库），ipwho.is 兜底，移除 ipapi.co
-     （CURRENT-STATUS §2.32、DECISIONS D043）；
-  2. 新增可选 IP数据云高精查询：设置页 `/settings#ipdata` 填 API Key，
-     位置结果显示“纯真 + IP数据云”两行（§2.33、DECISIONS D044）；
-  3. 版本策略改为每次代码修改都 bump（§2.34、DECISIONS D045）。
-  当前 `cargo test` 112/112。下次打包时使用 `0.2.22` 或按新规则继续递增。
+- 已发布：GitHub `v0.2.22`（tag → `99612d0`，唯一资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，digest
+  `sha256:c3a60555...44e9`）。内容为纯真主源 + 可选 IP数据云 + 独立设置页；
+  Release 页面只显示更新内容（CURRENT-STATUS §2.32–§2.35）。
+- 上一版：GitHub `v0.2.21`（tag → `85f85da`，5,465,980 字节，
+  digest `sha256:143e27bf...f101a`）。
+- 验证：`cargo test` 112/112、clippy 零警告、fmt 通过、前端 build 成功；
+  `tmp/e2e-advanced/ipdc-check.py`、`ipdc-ui.py` 全通过。
+- 发布 Actions：release run `41853368185` 成功；发布说明更新 run
+  `41854912426` 成功；发布包下载校验见 `CURRENT-STATUS.md` §2.35。
+- 仍未验证：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl（T26）；
+  真实公网客户端（T27）。
 
 ## 下一步（按用户任务二选一）
 
@@ -49,9 +45,11 @@
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
-3. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
+3. 更新 `.github/workflows/release.yml` 的 `body`：只写本次版本的更新内容，
+   不写安装/更新说明，不启用 `generate_release_notes`（D046）。
+4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
-4. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**
+5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**
 
 ### B. 用户要求继续开发
 - 新功能请看 `docs/API.md`、`docs/ARCHITECTURE.md` 与 `TODO.md`。

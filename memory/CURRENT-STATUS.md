@@ -9,9 +9,10 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.22` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.21`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，SHA256 `143e27bf...f101a`（GitHub asset digest） |
-| 当前源码 | `0.2.22`（提交 `01c2586`，已推送 `main`，未打包/未打 tag）：位置查询改用纯真 + 可选 IP数据云，版本策略改为每次代码修改都 bump（§2.32–§2.34） |
-| 上一版 | GitHub Release `v0.2.20`：tar 5,426,606 字节，asset digest `sha256:61f1a69f...9269` |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.22`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，SHA256 `c3a60555...44e9`（GitHub asset digest）；Release 页面只显示更新内容 |
+| 当前源码 | `0.2.22`（tag `v0.2.22` → `99612d0`，已发布；`main` 另有仅 CI/发布说明/记忆文档的后续提交）：位置查询改用纯真 + 可选 IP数据云（§2.32–§2.35） |
+| 上一版 | GitHub Release `v0.2.21`：tar 5,465,980 字节，asset digest `sha256:143e27bf...f101a` |
+| 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
@@ -910,6 +911,23 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
 - 推送：提交 `01c2586`，已推送 `main`（`c7ce15a..01c2586`）。
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；版本号随二进制显示
   `0.2.22`。**未打包、未创建 Release/tag。**
+
+## 2.35 v0.2.22 发布（2026-11-04）—— 已验证
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.22`；tag `v0.2.22` → `99612d0`。
+- Release 页面：只显示“0.2.22 更新内容”；一键安装/代理/在线更新/资产说明
+  已移除，`generate_release_notes` 已关闭（见 `docs/DECISIONS.md` D046）。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.22>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,473,730 字节**，
+  GitHub asset digest
+  `sha256:c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`。
+- Actions：release run `41853368185` 成功；发布说明更新 run `41854912426`
+  成功；临时更新 workflow 已删除。
+- 本地验证：`cargo test` **112/112**、clippy 零警告、fmt 通过、前端构建、
+  假 Key 端到端与无头 Chrome 设置页检查均通过；下载资产的包内校验见
+  `memory/DEVELOPMENT-LOG.md` 同日发布记录。
+- **未验证**：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl 运行
+  （T26）；真实公网客户端（T27）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
