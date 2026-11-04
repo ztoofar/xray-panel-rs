@@ -1229,3 +1229,14 @@ Linux `/proc` 实时采集：
 - 设置保存不再触发 Xray/面板重启；重启面板按钮始终可用并显式执行。
 - 验证：cargo test 107/107、clippy、fmt、前端 build；三个 e2e 脚本全通过。
 - 未打包、未 bump 版本（0.2.20）。
+
+## 2026-11-04 19:10 — 0.2.21 发布
+
+- 版本 0.2.20 → 0.2.21；提交 `85f85da`，tag `v0.2.21`。
+- GitHub Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.21>
+  唯一资产 tar.gz 5,465,980 字节，asset digest
+  `sha256:143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`。
+- 本地校验：tar SHA-256 一致、包内 `sha256sum -c` 通过、静态 ELF 已 strip、
+  二进制 SHA256 `997fb41a...dcdb`、含 `LUMEN_VERSION=0.2.21`。
+- 内容：0.2.20 + 2026-11-04 七项增强（CURRENT-STATUS §2.30）。
+- 未验证：真实 Linux/musl 运行。

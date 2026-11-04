@@ -938,6 +938,14 @@
 - 发布前验证：`cargo test` 107/107、clippy 零警告、`cargo fmt --check`、
   前端 `npm run build`；`tmp/e2e-advanced/e2e.py`、`ui-run.py`、
   `online-e2e.py` 全通过。
-- 发布路径：更新 CLAUDE.md/README/记忆文档 → 提交 push `main` → CI 通过后
-  推送 tag `v0.2.21`，由 GitHub Actions 构建 tar.gz。
-- **待补**：Release 资产大小与 digest、tag/commit 哈希。
+- 发布路径：更新 CLAUDE.md/README/记忆文档 → 提交 `85f85da` push `main`
+  （CI `41816323238` 成功）→ 推送 tag `v0.2.21` → release run
+  `41816700205` 成功创建 Release。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.21>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，
+  GitHub asset digest
+  `sha256:143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`。
+- 本地下载校验：tar.gz SHA-256 与 digest 一致；包内 `sha256sum -c` 通过；
+  二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb`，
+  12,861,232 字节，x86-64 静态 ELF、已 strip，内含 `LUMEN_VERSION=0.2.21`。
+- 未验证：真实 Linux/musl 运行（TODO T26）。

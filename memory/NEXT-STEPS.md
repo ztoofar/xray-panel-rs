@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 18:47
+> 最后更新：2026-11-04 19:10
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -25,13 +25,15 @@
 
 ## 当前状态（2026-11-04）
 
-- 源码：`0.2.21`（提交 `3a95b46`，含 2026-11-04 七项增强，CURRENT-STATUS
-  §2.30）。发布流程：等待 `33c9e1d` 的 CI 通过后 push `main` + tag
-  `v0.2.21`，由 Actions 构建；Release 哈希待补。
-- 上一版：GitHub `v0.2.20`（tag → `d6f7efa`，仅 tar.gz 资产）。
+- 已发布：GitHub `v0.2.21`（tag → `85f85da`，唯一资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，digest
+  `sha256:143e27bf...f101a`）。内容为 0.2.20 + 2026-11-04 七项增强
+  （CURRENT-STATUS §2.30/§2.31）。
+- 上一版：GitHub `v0.2.20`（tag → `d6f7efa`）。
 - 验证：`cargo test` 107/107、clippy 零警告、fmt 通过、前端 build 成功；
   `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
-- **尚未生成 0.2.21 tar.gz**。
+- 发布包已下载核对：digest 一致、包内 SHA256SUMS 通过、静态 ELF 含
+  `LUMEN_VERSION=0.2.21`。
 
 ## 下一步（按用户任务二选一）
 
