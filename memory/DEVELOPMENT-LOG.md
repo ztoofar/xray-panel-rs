@@ -930,3 +930,14 @@
   `online-e2e.py` 全部通过（真实 Xray 26.10.31 + mock 微信 + 无头 Chrome +
   真实 VLESS 客户端连接）。
 - 未打包、未 bump 版本；源码提交见相邻提交。
+
+## 2026-11-04 18:45 — 0.2.21 发布准备
+
+- 版本 `Cargo.toml` / `Cargo.lock`：0.2.20 → **0.2.21**。
+- 内容：0.2.20 全部功能 + 2026-11-04 七项增强（CURRENT-STATUS §2.30）。
+- 发布前验证：`cargo test` 107/107、clippy 零警告、`cargo fmt --check`、
+  前端 `npm run build`；`tmp/e2e-advanced/e2e.py`、`ui-run.py`、
+  `online-e2e.py` 全通过。
+- 发布路径：更新 CLAUDE.md/README/记忆文档 → 提交 push `main` → CI 通过后
+  推送 tag `v0.2.21`，由 GitHub Actions 构建 tar.gz。
+- **待补**：Release 资产大小与 digest、tag/commit 哈希。

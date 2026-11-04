@@ -60,7 +60,9 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.20`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+- **当前源码版本**：`0.2.21`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+  0.2.21 增加客户端在线 IP/按需位置、出站真实连接检测与微信通知、面板日志
+  UTC+8/历史、设置保存不重启等（见 `memory/CURRENT-STATUS.md` §2.30/§2.31）。
   0.2.20 将代理/网络类失败统一为中文提示（“代理不可用”），原生错误只写日志。
   0.2.19 增加一键脚本按版本幂等跳过（`PANEL_FORCE` 强制）、二进制
   `--version`/`LUMEN_VERSION` marker；0.2.18 增加一键脚本安装/更新与

@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 18:37
+> 最后更新：2026-11-04 18:47
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,26 +18,25 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 107/107、clippy 零警告、Cargo 版本仍 `0.2.20`、
-   `web/dist` 不旧于前端源码；工作区干净（2026-11-04 增强已提交）。
+   期望：`cargo test` 107/107、clippy 零警告、Cargo 版本 `0.2.21`、
+   `web/dist` 不旧于前端源码；工作区干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**不要自动打包、不要自动 bump 版本。**
 
 ## 当前状态（2026-11-04）
 
-- 已发布：GitHub `v0.2.20`（tag → `d6f7efa`，仅 tar.gz 资产）。
-- 源码 `main` 已包含 **2026-11-04 七项增强**（CURRENT-STATUS §2.30）：
-  客户端在线 IP/按需位置、后端错误中文化、Xray 短版本号、安全警告按登录周期、
-  高级页出站真实连接检测 + 微信通知、面板日志中国时间/详细/历史、设置保存不
-  重启 + 重启面板按钮。
+- 源码：`0.2.21`（提交 `3a95b46`，含 2026-11-04 七项增强，CURRENT-STATUS
+  §2.30）。发布流程：等待 `33c9e1d` 的 CI 通过后 push `main` + tag
+  `v0.2.21`，由 Actions 构建；Release 哈希待补。
+- 上一版：GitHub `v0.2.20`（tag → `d6f7efa`，仅 tar.gz 资产）。
 - 验证：`cargo test` 107/107、clippy 零警告、fmt 通过、前端 build 成功；
   `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
-- **未打包、未 bump 版本**（仍 0.2.20）；tar.gz 尚不包含本次增强。
+- **尚未生成 0.2.21 tar.gz**。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 递增 `Cargo.toml` / `Cargo.lock` 版本（预计 `0.2.21`），同步
+1. 递增 `Cargo.toml` / `Cargo.lock` 版本（下一次预计 `0.2.22`），同步
    `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。

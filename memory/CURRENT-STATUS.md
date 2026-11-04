@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 18:37（本地时间）
+> 最后更新：2026-11-04 18:45（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.20` |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.20`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,426,606 字节，SHA256 `61f1a69f...9269`（GitHub asset digest） |
-| 当前源码 | `0.2.20` + 2026-11-04 功能增强（已提交，未打包；tag `v0.2.20` 仍指向 `d6f7efa`） |
+| `Cargo.toml` 版本 | `0.2.21` |
+| 最近发布 | 0.2.21 待 GitHub Actions 构建；上一版 `v0.2.20` 资产 5,426,606 字节，SHA256 `61f1a69f...9269` |
+| 当前源码 | `0.2.21`（2026-11-04 功能增强，已提交 main，等待 tag/Release） |
 | 上一版 | GitHub Release `v0.2.19`：tar 5,424,758 字节，asset digest `sha256:ab81a7c7...35c6` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
@@ -835,6 +835,18 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
   OnlineMap 会丢弃回环地址 127.0.0.1）；第三方位置服务在面板网络中的可达性；
   英文界面下后端错误仍为中文（见 `KNOWN-ISSUES.md` H4）。
 - **未打包、未 bump 版本**（`Cargo.toml` 仍 0.2.20）。
+
+## 2.31 0.2.21 发布（2026-11-04）—— 等待 GitHub Actions
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.21`。
+- 内容：0.2.20 全部功能 + §2.30 的七项增强（客户端在线 IP/按需位置、
+  后端错误中文化、Xray 短版本号、安全警告按登录周期、高级页出站真实连接检测
+  与微信通知、面板日志 UTC+8/详细/14 天历史、设置保存不重启）。
+- 发布路径：提交后 push `main` → 等 `ci` 通过 → 推送 tag `v0.2.21`，
+  由 `.github/workflows/release.yml` 构建 musl tar.gz 并创建 Release。
+- 发布前验证：`cargo test` 107/107、clippy 零警告、fmt、前端构建；
+  `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
+- **待补**：Release 资产大小与 GitHub asset digest；真实 Linux/musl 未验证。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

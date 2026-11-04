@@ -52,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.
 
 | 变量 | 说明 |
 | --- | --- |
-| `PANEL_VERSION` | 安装指定版本，例如 `0.2.18`；默认最新版本 |
+| `PANEL_VERSION` | 安装指定版本，例如 `0.2.21`；默认最新版本 |
 | `PANEL_REPO` | 发布仓库，默认 `ztoofar/xray-panel-rs` |
 | `PANEL_PROXY` | 下载代理，支持 `http://` 与 `socks5h://`；未设置时回退 `HTTPS_PROXY` / `ALL_PROXY` |
 | `PANEL_FORCE` | 设为 `1` 时即使已是最新版本也重新安装 |
@@ -63,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.sh \
-  | sudo PANEL_VERSION=0.2.20 PANEL_PROXY=http://127.0.0.1:7890 bash
+  | sudo PANEL_VERSION=0.2.21 PANEL_PROXY=http://127.0.0.1:7890 bash
 ```
 
 `PANEL_PROXY` 仅作用于安装脚本内部的下载；获取 `install.sh` 本身的 `curl`
@@ -190,8 +190,8 @@ cargo zigbuild --release --target x86_64-unknown-linux-musl
 `.github/workflows/release.yml` 会自动构建并上传 tar.gz：
 
 ```sh
-git tag v0.2.20
-git push origin v0.2.20
+git tag v0.2.21
+git push origin v0.2.21
 ```
 
 标签版本必须与 `Cargo.toml` 一致。每个 Release 仅提供一个资产：
