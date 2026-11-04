@@ -630,3 +630,11 @@
   和面板界面中。每次发布前更新 workflow body 的版本号和更新条目。
 - 后果：Release 页面更简洁；发布前必须人工更新 body；v0.2.22 的历史说明
   保存在 `.github/release-notes/v0.2.22.md`。
+
+## D047 Release 更新内容标题不带版本号
+- 日期：2026-11-04
+- 背景：用户要求 Release 页面的“更新内容”标题前面不要显示版本号。
+- 决策：Release body 标题固定为 `## 更新内容`，版本由 Release 标题/标签
+  （`v0.2.22`）体现；workflow body 与 `.github/release-notes/v0.2.22.md`
+  同步修改。
+- 后果：后续发布只更新标题下的条目，不再写 `## X.Y.Z 更新内容`。

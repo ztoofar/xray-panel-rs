@@ -136,8 +136,8 @@ GitHub 发布：同步 `Cargo.toml` 版本后推 `v*` 标签，`.github/workflow
   提交并推送 `main` → 推送 `v*` 标签；`.github/workflows/release.yml` 自动
   构建 musl、打包、创建 Release。本地不需要 `cargo zigbuild` 或手工 tar。
 - **发布前更新 Release 说明**：修改 `.github/workflows/release.yml` 的 `body`，
-  只保留本次版本的更新内容列表；不要在 Release 写安装/更新说明，也不要启用
-  `generate_release_notes`（DECISIONS D046）。
+  标题固定为 `## 更新内容`（不带版本号），只列本次更新条目；不要在 Release
+  写安装/更新说明，也不要启用 `generate_release_notes`（DECISIONS D046/D047）。
 - 本地仍负责：前端构建（本地运行）、`cargo fmt/test/clippy`、版本号与文档。
 - 只有用户要求本地备用包或 Actions 不可用时，才在本机生成
   `dist/xray-panel-rs-linux-amd64-lumen.tar.gz` 并记录 SHA256。

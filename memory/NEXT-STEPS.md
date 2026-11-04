@@ -28,7 +28,7 @@
 - 已发布：GitHub `v0.2.22`（tag → `99612d0`，唯一资产
   `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，digest
   `sha256:c3a60555...44e9`）。内容为纯真主源 + 可选 IP数据云 + 独立设置页；
-  Release 页面只显示更新内容（CURRENT-STATUS §2.32–§2.35）。
+  Release 页面只显示“更新内容”（标题不带版本号，§2.32–§2.36）。
 - 上一版：GitHub `v0.2.21`（tag → `85f85da`，5,465,980 字节，
   digest `sha256:143e27bf...f101a`）。
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过、前端 build 成功；
@@ -46,8 +46,9 @@
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
-3. 更新 `.github/workflows/release.yml` 的 `body`：只写本次版本的更新内容，
-   不写安装/更新说明，不启用 `generate_release_notes`（D046）。
+3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
+   （不带版本号），只列本次更新条目；不写安装/更新说明，不启用
+   `generate_release_notes`（D046/D047）。
 4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
 5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**

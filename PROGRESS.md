@@ -1251,3 +1251,8 @@ Linux `/proc` 实时采集：
 - Release 页面只显示“0.2.22 更新内容”；安装/代理/在线更新说明不再写入 Release
   （DECISIONS D046）。
 - 未验证：有效 IP数据云 Key 成功响应、真实 Linux/musl、真实公网客户端。
+
+## 2026-11-04 23:14 — Release 标题调整
+
+- v0.2.22 Release 的更新内容标题改为 `## 更新内容`，不再带版本号前缀。
+- 发布 workflow 与 notes 存档同步；临时更新 workflow 已删除。
