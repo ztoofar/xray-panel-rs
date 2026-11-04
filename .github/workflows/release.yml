@@ -68,6 +68,16 @@ jobs:
             dist/xray-panel-rs-linux-amd64-lumen.tar.gz
           generate_release_notes: true
           body: |
+            ## 0.2.22 更新内容
+
+            - 修复 IP 归属地不准确：主数据源改为纯真库（zxinc），失败回退
+              ipwho.is，移除经常限流的 ipapi.co
+            - 新增可选「IP数据云」高精归属地查询：在「设置 → IP数据云」填写
+              API Key 后，客户端“位置”显示“纯真 + IP数据云”两行结果
+            - 新增独立设置页 `/settings#ipdata`，与「高级」中的出站连接检测分开
+            - 未配置 API Key 时只显示纯真结果；IP数据云查询失败不会影响纯真结果
+            - 版本号策略改为每次代码修改都递增
+
             ## 一键安装（Linux x86_64，需 root）
 
             ```sh
