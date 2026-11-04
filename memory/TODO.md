@@ -104,10 +104,10 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 - 验收：测试在未实现 guard 时会失败；`cargo test` 通过。
 
 ### T9. 在真实 Linux + 真实 Xray 上验证 0.2.24 统计/速度模型
-- 现状：0.2.24 的 3x-ui 模型（只清 DB 累计值、保留基准、后端速率）已用
-  fake Xray（`tmp/e2e-traffic-accuracy`，13/13）和真实 Xray 26.10.31
-  （`tmp/e2e-traffic-real`，15/15，Windows，真实 SOCKS→VLESS）验证；仍缺
-  真实 Linux/musl、真实公网网络抖动、gRPC 故障注入、MASQUE 混合附着实测。
+- 现状：0.2.25 的 3x-ui 模型（重置只清 DB 累计值、保留基准；`/ws` 实时
+  traffic 帧）已用 fake Xray（13/13）、无客户端入站（4/4）、真实 Xray
+  26.10.31（15/15）和无头 Chrome UI+WS（10/10）验证；仍缺真实 Linux/musl、
+  真实公网网络抖动、gRPC 故障注入、MASQUE 混合附着实测。
 - 内容（至少覆盖）：
   - Xray 正常运行时上传/下载各 1 GB，核对入站与客户端累计（预期差值为协议开销）；
   - 客户端/入站重置后继续传输，确认只计新字节、不重复计旧累计；

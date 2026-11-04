@@ -226,6 +226,22 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/clients/import` | 已实现：接受 `data` 字符串数组，创建客户端、恢复流量；已存在邮箱跳过 |
 | 其他 | `/clients/happLink`、`/clients/hwids`、`/clients/ips`、`/clients/clearIps`、`/{email}/externalLinks` | 入口与后端路由已移除；未列路径走 catch-all（不应再依赖） |
 
+#### WebSocket `/ws`（0.2.25 起，3x-ui 兼容）
+
+- 路径：`<basePath>ws`（默认 `/ws`），需要登录会话 Cookie。
+- 服务端每个流量采集周期推送：
+  `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
+  onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
+  time}`。
+  - `traffics`: `[{Tag, Up, Down, IsInbound, IsOutbound}]`，本轮入站增量；
+  - `clientTraffics`: `[{email, up, down}]`，本轮客户端增量；
+  - `clientTrafficIntervalMs`: 本轮增量对应的采集间隔（2–300 秒）；
+  - `lastOnlineMap`: `email -> 毫秒时间戳`；在线集合按本地上送。
+- 前端按 `clientTrafficIntervalMs` 换算速度；帧中缺失的实体视为空闲并清空
+  速度。统计接口失败时推送空增量以清空旧速度。
+- 连接断开后浏览器自动重连；重连前/WS 不可用时，前端继续使用 REST 列表中的
+  `upSpeed/downSpeed` 兜底。
+
 #### 流量字段与重置语义（0.2.24 起）
 
 - `/panel/api/inbounds/list/slim` 的每个入站行带 `upSpeed`/`downSpeed`

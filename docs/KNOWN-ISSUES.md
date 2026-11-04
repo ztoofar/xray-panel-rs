@@ -228,6 +228,14 @@ generation 变化只负责清在线集合与在线 API 探测缓存。验证：�
   outbound 配 `settings.finalRules: [{"action":"allow","ip":["geoip:private"]}]`。
   3x-ui 使用同一个 Xray 核心，行为相同，不是面板统计问题。
 
+### G9 0.2.25：恢复 3x-ui 实时 WS 推送，无客户端入站速度已验证
+- `/ws` 每轮推送 `traffic` 帧（入站/客户端增量、在线集合、最后在线、采集
+  间隔）；前端按真实间隔换算，缺失实体清空速度，统计失败时推空增量。
+- 无关联客户端的入站速度只依赖 `inbound>>>tag>>>traffic` 增量；fake 与
+  无头 Chrome 均验证：Solo（无客户端）行显示速度并在空闲后清除。
+- 真实 Xray、fake Xray 与 UI+WS 回归均通过（详见 `CURRENT-STATUS.md`
+  §2.40）。仍未验证：真实 Linux/musl、公网网络抖动、gRPC 故障注入。
+
 ### G8 重置边界仍有一个采集周期的残差 —— 与 3x-ui 相同
 手动重置与采集并发时，重置前刚采样到的增量可能落在重置之后写入，最多
 一个 `traffic_poll_secs` 的流量会留在重置后的累计值里。3x-ui 的

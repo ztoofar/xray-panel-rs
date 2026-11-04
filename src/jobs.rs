@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
+use serde_json::{json, Value};
 
 use crate::{
     db::{
@@ -181,6 +182,18 @@ async fn tick(
                 refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
             refresh_active_inbounds(state, now, grace, &[]).await;
             persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
+            // Empty deltas clear the live speed in the browser while keeping
+            // the connection-based online set accurate.
+            broadcast_traffic(
+                state,
+                poll_secs,
+                Vec::new(),
+                Vec::new(),
+                &online_emails,
+                &clients,
+                now,
+            )
+            .await;
             return Ok(());
         }
     };
@@ -209,6 +222,10 @@ async fn tick(
         .unwrap_or(0);
     let mut inbound_speeds: HashMap<String, SpeedSample> = HashMap::new();
     let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
+    // 3x-ui's WS traffic frame carries this poll's deltas by tag/email; the
+    // browser divides them by `clientTrafficIntervalMs`.
+    let mut ws_traffics: Vec<Value> = Vec::new();
+    let mut ws_client_traffics: Vec<Value> = Vec::new();
     let restart_on_client_disable = db::settings::ui_settings(&state.db)
         .await
         .ok()
@@ -317,6 +334,11 @@ async fn tick(
             .unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
             moved_emails.insert(client.email.clone());
+            ws_client_traffics.push(json!({
+                "email": client.email,
+                "up": delta_up,
+                "down": delta_down,
+            }));
         }
         if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
             client_speeds.insert(client.email.clone(), sample);
@@ -368,6 +390,13 @@ async fn tick(
         );
         if delta_up > 0 || delta_down > 0 {
             active_tags.push(inbound.tag.clone());
+            ws_traffics.push(json!({
+                "Tag": inbound.tag,
+                "Up": delta_up,
+                "Down": delta_down,
+                "IsInbound": true,
+                "IsOutbound": false,
+            }));
         }
         if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
             inbound_speeds.insert(inbound.tag.clone(), sample);
@@ -413,6 +442,17 @@ async fn tick(
     refresh_active_inbounds(state, now, grace, &active_tags).await;
 
     persist_online_heartbeat(state, &clients, &online_emails, &moved_emails, now).await?;
+
+    broadcast_traffic(
+        state,
+        poll_secs,
+        ws_traffics,
+        ws_client_traffics,
+        &online_emails,
+        &clients,
+        now,
+    )
+    .await;
 
     update_outbound_traffic(state, &outbound_up, &outbound_down).await?;
 
@@ -675,6 +715,46 @@ async fn refresh_active_inbounds(state: &AppState, now: i64, grace: i64, moved_t
     }
     active.retain(|_, seen_at| now.saturating_sub(*seen_at) < grace);
     *state.active_inbounds.lock().await = active.keys().cloned().collect();
+}
+
+// 3x-ui pushes one `traffic` frame per poll. The browser's existing handlers
+// divide these deltas by the sample interval and clear tags absent from the
+// frame, so the live speed no longer depends on when its REST poll lands.
+async fn broadcast_traffic(
+    state: &AppState,
+    poll_secs: u64,
+    traffics: Vec<Value>,
+    client_traffics: Vec<Value>,
+    online_emails: &HashSet<String>,
+    clients: &[Client],
+    now: i64,
+) {
+    let online: Vec<&String> = online_emails.iter().collect();
+    let active = state.active_inbounds.lock().await.clone();
+    // Only clients seen online this tick need a fresh timestamp; the browser
+    // merges the map, and the REST endpoint returns milliseconds, so keep the
+    // same unit here or the inbound info modal renders a 1970 timestamp.
+    let last_online: HashMap<&str, i64> = clients
+        .iter()
+        .filter(|client| online_emails.contains(&client.email))
+        .map(|client| (client.email.as_str(), now.saturating_mul(1000)))
+        .collect();
+    let payload = json!({
+        "traffics": &traffics,
+        "clientTraffics": &client_traffics,
+        "onlineClients": &online,
+        "onlineByGuid": { "": &online },
+        "activeInbounds": { "": &active },
+        "lastOnlineMap": &last_online,
+        "clientTrafficIntervalMs": poll_secs.saturating_mul(1000),
+    });
+    let message = json!({
+        "type": "traffic",
+        "payload": payload,
+        "time": chrono::Utc::now().timestamp_millis(),
+    });
+    // Err only means nobody is connected; the next tick tries again.
+    let _ = state.ws_events.send(message.to_string());
 }
 
 async fn reset_inbound_traffic(

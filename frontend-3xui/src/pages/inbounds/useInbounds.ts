@@ -493,6 +493,7 @@ export function useInbounds() {
       onlineByGuid?: Record<string, string[]>;
       activeInbounds?: Record<string, string[]>;
       lastOnlineMap?: Record<string, number>;
+      clientTrafficIntervalMs?: number;
     };
     if (Array.isArray(p.onlineClients)) {
       setOnlineClients(p.onlineClients);
@@ -508,7 +509,16 @@ export function useInbounds() {
     if (p.lastOnlineMap && typeof p.lastOnlineMap === 'object') {
       setLastOnlineMap((prev) => ({ ...prev, ...p.lastOnlineMap! }));
     }
-    // Speed arrives from two independent 5s polls: the local Xray poll sends
+    // The backend poll interval is configurable, so use the interval carried
+    // by the frame instead of a fixed 5s divisor.
+    const sampleIntervalMs =
+      typeof p.clientTrafficIntervalMs === 'number' &&
+      Number.isFinite(p.clientTrafficIntervalMs) &&
+      p.clientTrafficIntervalMs > 0
+        ? p.clientTrafficIntervalMs
+        : TRAFFIC_POLL_INTERVAL_S * 1000;
+    const sampleIntervalSeconds = sampleIntervalMs / 1000;
+    // Speed arrives from two independent polls: the local Xray poll sends
     // `traffics` (local inbounds) and the node sync sends `nodeTraffics` (node
     // inbounds). Each replaces speed only within its own scope so the two don't
     // clobber each other; an idle in-scope inbound — absent from its payload —
@@ -530,8 +540,8 @@ export function useInbounds() {
           const delta = byTag.get(ib.tag);
           if (delta) {
             next[ib.id] = {
-              up: (delta.Up || 0) / TRAFFIC_POLL_INTERVAL_S,
-              down: (delta.Down || 0) / TRAFFIC_POLL_INTERVAL_S,
+              up: (delta.Up || 0) / sampleIntervalSeconds,
+              down: (delta.Down || 0) / sampleIntervalSeconds,
             };
           } else {
             delete next[ib.id];

@@ -3,7 +3,9 @@ import { getSharedWebSocketClient } from '@/api/websocket';
 
 type Handler = (payload: unknown) => void;
 
-const REALTIME_ENABLED = false;
+// The Rust backend now serves the 3x-ui `/ws` endpoint and pushes the same
+// `traffic` frames; live speed no longer waits for a REST polling phase.
+const REALTIME_ENABLED = true;
 
 export function useWebSocket(handlers: Record<string, Handler>) {
   useEffect(() => {

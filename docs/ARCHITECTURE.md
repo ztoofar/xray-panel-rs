@@ -245,10 +245,27 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
   Rust 用 `rust-embed` 嵌入。
 - 路由仅 7 个：`/`（系统状态）、`/inbounds`、`/clients`、`/outbound`、`/routing`、
   `/xray`、`/settings`；登录页与独立设置页是单独的 HTML 入口。
-- 数据层：TanStack Query + `HttpUtil`；WebSocket 已禁用，靠轮询/操作后失效缓存。
+- 数据层：TanStack Query + `HttpUtil`；REST 轮询负责状态兜底，`/ws` 推送
+  3x-ui 同款 `traffic` 帧（入站/客户端增量、在线集合、最后在线、采集间隔），
+  驱动实时速度。WS 断开时前端自动重连，期间仍由 REST 快照显示速率。
 - `frontend/` 与 `web/dist-custom-v2/` 是早期自研前端，保留但**不参与构建**。
 - 前端 CLAUDE.md（`frontend-3xui/CLAUDE.md`）来自上游 3x-ui，其中
   `internal/web/dist` 等描述不适用于本项目；构建输出以根 `CLAUDE.md` 为准。
+
+### 6.1 实时通道 `/ws`
+
+- 受会话 Cookie 保护的 WebSocket；base path 由现有 guard 重写
+  （`/secret/ws` → `/ws`）。
+- 流量 job 每个采集周期广播一帧
+  `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
+  onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
+  time}`；`traffics` 是入站 tag 的 `{Tag,Up,Down,IsInbound}` 增量，
+  `clientTraffics` 是 `{email,up,down}` 增量。
+- 前端用 `clientTrafficIntervalMs`（2–300s）换算字节/秒，不再写死 5 秒；
+  帧中缺失的入站/客户端在本轮视为空闲并清除速度。
+- 统计查询失败时同样广播一帧空增量，清空浏览器里的旧速度；在线集合保持
+  本轮连接信号。慢客户端由 `broadcast` 的 `Lagged` 跳过旧帧。
+- 独立的 `upSpeed/downSpeed` REST 字段仍保留，作为 WS 不可用时的兜底。
 
 ## 9. 后台任务
 

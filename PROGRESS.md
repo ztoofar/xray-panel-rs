@@ -1305,3 +1305,18 @@ SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=
 空闲 3 秒归零；客户端重置后只再下载 2 MiB，新增 `2,097,269`；入站重置清
 成员客户端。另记录：Xray 26 的 freedom 默认黑洞来自 VLESS 等入站的私有/
 回环目标（SSRF 防护），测试通过 `finalRules allow geoip:private` 放开。
+
+## 恢复 3x-ui 实时流量 WS 推送（2026-11-05，0.2.25）
+
+用户反馈无关联客户端的入站速度错误、实时速度不对，要求以 3x-ui 为准。
+
+- 新增 `src/api/ws.rs`：会话保护的 `/ws`（axum `ws`），转发
+  `{type,payload,time}` 帧；base path guard 负责 `/secret/ws` → `/ws`。
+- 流量 job 每轮广播 3x-ui 同款 `traffic` 帧：`traffics`（入站增量）、
+  `clientTraffics`（客户端增量）、online 集合、lastOnlineMap（毫秒）、
+  `clientTrafficIntervalMs`（2–300s）。统计失败广播空增量清旧速度。
+- 前端重新启用 `useWebSocket`，按帧内真实间隔换算速度；WS 值覆盖 REST
+  兜底，避免重复相加。REST `upSpeed/downSpeed` 保留给 WS 不可用场景。
+- 验证：`cargo test` 113/113、clippy/fmt、前端 build；fake 13/13、
+  无客户端入站 4/4、真实 Xray 15/15、无头 Chrome UI+WS 10/10（两个入站行
+  均显示速度，其中 Solo 无客户端；WS 帧含该入站增量与 2s 间隔；空闲清零）。

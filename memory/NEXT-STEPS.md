@@ -18,30 +18,28 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 113/113、clippy 零警告、Cargo 版本 `0.2.24`、
+   期望：`cargo test` 113/113、clippy 零警告、Cargo 版本 `0.2.25`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-05）
 
-- 源码 **0.2.24**（未打包/未打 tag）：流量计量改为 3x-ui 模型——重置只清
-  数据库 `up/down`、不重置 Xray 计数器、保留 `last_up/last_down` 基准；
-  速度由后端在流量 tick 内按真实 `Instant` 间隔计算，经
-  `/inbounds/list/slim`（`upSpeed/downSpeed`）与客户端 `traffic` 下发，
-  前端不再差分快照。详见 `CURRENT-STATUS.md` §2.39、`DECISIONS.md` D049。
-- 上一发布：GitHub `v0.2.23`（tag → `a0aa557`，资产 5,473,227 字节，
-  digest `sha256:9bd16e84...3811`）。
-- 验证：`cargo test` 113/113、clippy 零警告、fmt 通过、前端 build 成功；
-  `tmp/e2e-traffic-accuracy/e2e.py` 13/13 PASS；真实 Xray 26.10.31 的
-  `tmp/e2e-traffic-real/e2e.py` 15/15 PASS（8 MiB 下载、速度/空闲/重置不重计）。
+- 源码 **0.2.25**：在 0.2.24 的 3x-ui 计量模型上恢复 `/ws` 实时 `traffic`
+  推送；前端按帧内真实采集间隔换算速度，无客户端入站也由入站计数器显示
+  实时速度；REST `upSpeed/downSpeed` 保留为 WS 不可用兜底。详见
+  `CURRENT-STATUS.md` §2.39/§2.40、`DECISIONS.md` D049/D050。
+- 发布：GitHub `v0.2.25`（tag 指向本次修复提交；资产与 digest 见 §2.41）。
+- 验证：`cargo test` 113/113、clippy 零警告、fmt、前端 build；
+  fake e2e 13/13；无客户端入站 4/4；真实 Xray 15/15；无头 Chrome UI+WS
+  10/10（两个入站行均显示速度、WS 帧含无客户端入站增量、空闲清零）。
 - 未验证：真实 Linux/musl 网络抖动与故障注入（T9/T26）；有效 IP数据云 Key
   （T28）；真实公网客户端（T27）。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.24`；新改动须先按
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.25`；新改动须先按
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
@@ -64,10 +62,13 @@
   `IpDataCloudTab.tsx`、`/settings#advanced`、`AllSetting.ipDataCloudKey`、
   `src/api/ip_location.rs` 的 `ip_data_cloud_lookup`。
 - 流量/速度：`src/jobs.rs`（tick、`speed_sample`、`client_samples`、
-  `traffic_speeds`）、`src/db/client_traffic.rs`、`src/api/compat.rs` 的
-  `inbounds_slim`/`client_record`、前端 `useInbounds.ts`/`useClients.ts`；
-  回归脚本 `tmp/e2e-traffic-accuracy/e2e.py`（需先 `cargo build` 与
-  `tmp/fake_stats` 构建）。
+  `traffic_speeds`、`broadcast_traffic`）、`src/api/ws.rs`（`/ws` 实时帧）、
+  `src/db/client_traffic.rs`、`src/api/compat.rs` 的
+  `inbounds_slim`/`client_record`、前端 `useWebSocket.ts` /
+  `useInbounds.ts` / `useClients.ts`；回归脚本：
+  `tmp/e2e-traffic-accuracy/e2e.py`、`noclient.py`（需先 `cargo build` 与
+  `tmp/fake_stats` 构建）、`tmp/e2e-traffic-real/e2e.py`、
+  `tmp/e2e-traffic-ui/ui_run.py`。
 - 每次功能完成按 TODO 验收标准自测，追加 `DEVELOPMENT-LOG.md`；未验证项必须
   写“已实现，未验证”。
 

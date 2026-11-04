@@ -10,6 +10,7 @@ pub mod outbound_subs;
 pub mod outbound_test;
 pub mod public_ip;
 pub mod settings;
+pub mod ws;
 pub mod xray;
 pub mod xray_settings;
 
@@ -35,6 +36,9 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(compat::logout));
 
     let protected = Router::new()
+        // 3x-ui's browser client connects to `<basePath>ws`; the base-path
+        // guard rewrites it to `/ws` before routing.
+        .route("/ws", get(ws::handler))
         .route("/api/logout", post(auth::logout))
         .route("/api/credentials", post(auth::change_credentials))
         .route("/api/dashboard", get(dashboard::dashboard))

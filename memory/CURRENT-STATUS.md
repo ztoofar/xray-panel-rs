@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.24`（未打包/未打 tag） |
+| `Cargo.toml` 版本 | `0.2.25`（发布 v0.2.25） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.23`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,227 字节，SHA256 `9bd16e84...3811`（GitHub asset digest）；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.24`（未打包）：流量重置改为 3x-ui 模型（只清 DB 累计值、不重置 Xray 计数器、保留基准），速度改由后端按真实采样间隔计算并经列表接口下发；详见 §2.39 |
+| 当前源码 | `0.2.25`：在 §2.39 的 3x-ui 计量模型上恢复 `/ws` 实时 `traffic` 推送，前端按真实采集间隔换算速度；无关联客户端的入站也由入站计数器实时显示速度。详见 §2.40 |
 | 上一版 | GitHub Release `v0.2.22`：tar 5,473,730 字节，asset digest `sha256:c3a60555...44e9` |
 | 0.2.23 SHA256 | `9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`（tar.gz，GitHub asset digest） |
 | 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
@@ -1022,6 +1022,30 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
 HTTP 头/协议帧等少量字节（本次实测 117 B），不要求逐字节相等；3x-ui 相同。
 **未验证**：真实 Linux/musl、真实公网网络速度抖动、MASQUE 混合附着的真实
 计数、gRPC 故障注入。见 `KNOWN-ISSUES.md` G6–G8。
+
+## 2.40 恢复 3x-ui 实时流量 WS 推送（2026-11-05，0.2.25）—— 已验证并发布
+
+用户反馈“入站没有关联客户端时速度显示完全错误”“实时速度显示有问题”，要求
+入站/客户端的流量统计与速度显示以 3x-ui 为准。
+
+- 后端：新增会话保护的 `/ws`（axum `ws` feature），流量 job 每个采集周期广播
+  3x-ui 同款 `traffic` 帧（入站/客户端增量、在线集合、最后在线、采集间隔）。
+  统计查询失败时广播空增量清空旧速度；慢客户端由 `Lagged` 跳过旧帧。
+- 前端：重新启用 `useWebSocket`；入站/客户端速度按帧内
+  `clientTrafficIntervalMs`（2–300s）换算，不再写死 5s；客户端速度合并时
+  WS 覆盖 REST 同邮箱值，避免重复相加。0.2.24 的 REST `upSpeed/downSpeed`
+  保留为 WS 不可用时的兜底。
+- 无客户端入站：速度只依赖 `inbound>>>tag>>>traffic` 增量，已单独验证
+  （API 与 UI 均通过）。
+- 验证：
+  - `cargo test` 113/113、clippy 零警告、fmt、前端 build。
+  - `tmp/e2e-traffic-accuracy/{e2e,noclient}.py`：分别 13/13、4/4 PASS。
+  - `tmp/e2e-traffic-real/e2e.py`：真实 Xray 26.10.31，15/15 PASS。
+  - `tmp/e2e-traffic-ui/ui_run.py`（无头 Chrome + 3x-ui UI）10/10 PASS：
+    两个入站行（其中一个**无客户端**）都出现速度标签；收到真实
+    `type:"traffic"` WS 帧，含无客户端入站增量、客户端增量、
+    `clientTrafficIntervalMs=2000`；空闲后两个速度标签都消失。
+- 已发布：GitHub `v0.2.25`（详见 §2.41）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

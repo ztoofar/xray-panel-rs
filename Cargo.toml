@@ -1,6 +1,6 @@
 [package]
 name = "xray-panel-rs"
-version = "0.2.24"
+version = "0.2.25"
 edition = "2021"
 rust-version = "1.85"
 description = "Low-memory Xray-core web panel (single node)"
@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 argon2 = { version = "0.5", features = ["std"] }
-axum = { version = "0.8", features = ["macros", "json", "multipart"] }
+axum = { version = "0.8", features = ["macros", "json", "multipart", "ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 flate2 = "1"

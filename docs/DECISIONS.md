@@ -669,3 +669,23 @@
   窗口的平均值，慢 tick/漏采不会产生倍率偏差，空闲时速度在一个周期内清空。
   入站与客户端计数器口径仍不同（代理层 vs 用户负载），不要求逐字节相等。
   版本 `0.2.23` → `0.2.24`（未打包/未打 tag）。
+
+## D050 恢复 3x-ui 的实时流量 WebSocket 推送
+- 日期：2026-11-05
+- 背景：0.2.24 把速度改成后端快照 + REST 轮询下发。实测无关联客户端的入站
+  速度虽能由入站计数器产生，但用户仍反馈实时速度不对：REST 轮询与后端采集
+  周期存在相位差，一次轮询可能错过某个采集窗口；3x-ui 则用 WebSocket 每轮
+  推送增量，浏览器收到后立即换算。
+- 决策：
+  1. 后端新增会话保护的 `/ws`（base path 由 guard 重写），流量 job 每轮广播
+     3x-ui 同款 `{type:"traffic", payload:{traffics, clientTraffics,
+     onlineClients, onlineByGuid, activeInbounds, lastOnlineMap,
+     clientTrafficIntervalMs}, time}`。
+  2. 前端重新启用 `useWebSocket`，用帧内的真实采集间隔换算字节/秒；缺失的
+     入站/客户端按空闲清空速度。统计 RPC 失败时广播空增量，避免旧速度停留。
+  3. 保留 0.2.24 的后端 `upSpeed/downSpeed` REST 字段作为 WS 不可用时的
+     兜底；客户端速度合并时 WS 覆盖 REST 同邮箱值，避免重复相加。
+  4. 慢客户端由 `broadcast` 的 `Lagged` 跳过旧帧；帧内 `lastOnlineMap` 只带
+     本轮在线客户端，控制负载大小。
+- 后果：实时速度与 3x-ui 一致，不再依赖 REST 轮询相位；无客户端入站的
+  入站计数器速度也能实时显示。版本 `0.2.24` → `0.2.25`（发布 v0.2.25）。

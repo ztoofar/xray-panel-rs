@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{broadcast, Mutex, Notify};
 
 use crate::{
     config::Config,
@@ -23,6 +23,10 @@ pub struct AppState {
     pub stats: StatsClient,
     pub xray_logs: LogBuffer,
     pub panel_logs: PanelLogBuffer,
+    // Serialized 3x-ui WebSocket frames (`{type,payload,time}`). The traffic
+    // job broadcasts once per poll; connected browsers get the same deltas
+    // 3x-ui pushes, so the live speed does not depend on REST polling phase.
+    pub ws_events: broadcast::Sender<String>,
     pub online_clients: Arc<Mutex<HashMap<String, OnlineUser>>>,
     // email -> last sign of life (traffic delta or live connection), seconds.
     // The online set is every entry still inside the grace window.

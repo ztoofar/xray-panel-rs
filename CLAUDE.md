@@ -85,7 +85,8 @@
   已移除入口：路由测试、REALITY 目标扫描、系统历史、面板自更新、客户端 IP 日志、
   Happ/订阅链接 UI。入站支持 11 种 Xray 原生协议（含 WireGuard/Hysteria/
   Tunnel/TUN/MASQUE）；MTProto/AmneziaWG/TUIC 依赖 sidecar，不提供。
-- **前端实时通道**：3x-ui WebSocket 已禁用，全部改为轮询 + 操作后刷新。
+- **前端实时通道**：`/ws` 提供 3x-ui 兼容的 `traffic` 推送（入站/客户端
+  增量，驱动实时速度与在线集合）；页面仍保留 REST 轮询作为兜底。
 - **单管理员**：只有一个用户；Argon2id 口令哈希、会话 Cookie、CSRF、登录限流。
 - **面板不提供 TLS/证书管理**；公网部署必须自行加 HTTPS 反代并设置
   `PANEL_SECURE_COOKIE=true`。

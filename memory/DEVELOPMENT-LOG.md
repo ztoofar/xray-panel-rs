@@ -1112,3 +1112,24 @@
   目标（SSRF 防护），e2e 通过 direct outbound 的
   `settings.finalRules:[{action:allow,ip:[geoip:private]}]` 放开；已记录到
   `KNOWN-ISSUES.md` G7。
+
+## 2026-11-05 02:10 — 恢复 3x-ui 实时流量 WS（0.2.25，发布）
+
+- 用户反馈：无关联客户端的入站速度显示错误、实时速度显示有问题，要求以
+  3x-ui 为准。
+- 修改：
+  - `Cargo.toml`：axum 加 `ws` feature；版本 0.2.24 → 0.2.25。
+  - `src/state.rs` / `src/main.rs`：`AppState.ws_events` broadcast 通道。
+  - `src/api/ws.rs`：会话保护的 `/ws`，转发 `{type,payload,time}` 帧；
+    `src/api/mod.rs` 注册路由（base path guard 负责 `/secret/ws` 重写）。
+  - `src/jobs.rs`：每轮收集入站/客户端增量，广播 3x-ui `traffic` 帧
+    （含 online 集合、lastOnlineMap 毫秒、clientTrafficIntervalMs）；
+    统计 RPC 失败时广播空增量清速度。
+  - 前端 `useWebSocket.ts` 重新启用；`useInbounds` 用帧内真实间隔换算；
+    `useClients` 的 WS 速度覆盖 REST 兜底，避免重复相加。
+  - 文档：`docs/ARCHITECTURE.md` §6.1、`docs/API.md`、`CLAUDE.md`、
+    `DECISIONS.md` D050。
+- 验证：`cargo test` 113/113、clippy/fmt、前端 build；fake e2e 13/13；
+  无客户端入站 4/4；真实 Xray 15/15；无头 Chrome UI+WS 10/10（两个入站行
+  均显示速度，其中 Solo 无客户端；WS 帧含无客户端入站增量与 2s 间隔；
+  空闲后两行速度均消失）。

@@ -118,6 +118,9 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     let xray_logs = Arc::new(Mutex::new(VecDeque::new()));
     let xray = xray::XrayHandle::spawn(Arc::new(cfg.clone()), xray_logs.clone());
     let stats = xray::StatsClient::new(cfg.xray_api_url());
+    // Slow browsers may lag; the newest traffic frame is the only one that
+    // matters, so a tiny buffer plus Lagged-skip is enough.
+    let (ws_events, _) = tokio::sync::broadcast::channel(8);
     let state = AppState {
         db: db.clone(),
         cfg: Arc::new(cfg.clone()),
@@ -125,6 +128,7 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
         stats,
         xray_logs,
         panel_logs,
+        ws_events,
         online_clients: Arc::new(Mutex::new(HashMap::new())),
         online_last_seen: Arc::new(Mutex::new(HashMap::new())),
         active_inbounds: Arc::new(Mutex::new(Vec::new())),

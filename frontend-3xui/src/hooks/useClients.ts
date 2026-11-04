@@ -290,17 +290,17 @@ export function useClients(options: UseClientsOptions = {}) {
   }, [clients]);
 
   const clientSpeed = useMemo(() => {
-    const combined: Record<string, ClientSpeedEntry> = { ...serverSpeed };
-    // WS sources are additive among themselves (e.g. TUIC + Xray); this
-    // trimmed build has no WebSocket, so normally only the server map exists.
+    // WS sources add among themselves (e.g. TUIC + Xray) and replace the
+    // REST-derived fallback for the same email; adding both would double it.
+    const fromWs: Record<string, ClientSpeedEntry> = {};
     for (const source of Object.values(clientSpeedBySource)) {
       if (!source) continue;
       for (const [email, speed] of Object.entries(source)) {
-        const current = combined[email] ?? { up: 0, down: 0 };
-        combined[email] = { up: current.up + speed.up, down: current.down + speed.down };
+        const current = fromWs[email] ?? { up: 0, down: 0 };
+        fromWs[email] = { up: current.up + speed.up, down: current.down + speed.down };
       }
     }
-    return combined;
+    return { ...serverSpeed, ...fromWs };
   }, [clientSpeedBySource, serverSpeed]);
 
   useEffect(
