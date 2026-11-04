@@ -1272,3 +1272,36 @@ Linux `/proc` 实时采集：
 - 内容：IP数据云移入“高级”页标签，与出站检测同页切换；Release 只显示
   不带版本号的“更新内容”。
 - 未验证：真实 Linux/musl、有效 IP数据云 Key 成功响应。
+
+## 流量统计与速度精度重做（2026-11-05，0.2.24，未打包）
+
+用户反馈入站/客户端流量算得不对、速度与实际使用对不上，要求以 3x-ui 为基准。
+逐行对比后确认三处问题并修复：
+
+- **重置重复计费**：原实现手动/定时/出站重置都调用
+  `QueryStats(reset=true)` 清零 Xray 计数器，3x-ui 兼容层还忽略失败后清 DB；
+  重置失败/超时/并发时下一轮把整段累计值重计。现改为 3x-ui 模型：只清数据库
+  `up/down`，保留 `last_up/last_down` 基准，永不重置 Xray 计数器。删除
+  `reset_client_verified`、`mark_reconcile`、`needs_reconcile` 逻辑、
+  `StatsClient::reset_pattern`、`identity::traffic_pattern`。
+- **速度不准/永久停留**：原前端对两次列表快照差分，全部空闲时数据不变，
+  effect 不执行，速度永久停在最后值。现在流量 job 用本轮增量 ÷ 单调时钟
+  真实间隔计算速率，写入 `AppState.traffic_speeds`；slim 入站行和客户端
+  `traffic` 返回 `upSpeed/downSpeed`，前端直接显示；空闲一个周期内归零。
+- **MASQUE 混合附着漏计**：裸邮箱计数器现在按 MASQUE attachment 计入，
+  同时关联普通入站时不再被 per-attachment 路径吞掉。
+- **重启竞态**：采样前后比较 `start_epoch`，期间重启则丢弃样本，避免新进程
+  计数器减旧基准。
+
+验证：`cargo test` 113/113、clippy 零警告、fmt、前端 build；
+`tmp/e2e-traffic-accuracy/e2e.py`（真面板 + fake xray + fake StatsService）
+13/13 PASS。未验证真实 Xray 计数器口径、真实网络速度抖动、真实 Linux/musl。
+
+### 追加：真实 Xray 验证（2026-11-05）
+
+`tmp/e2e-traffic-real/e2e.py` 用真实 Xray 26.10.31 搭建
+SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=8,388,725`
+（响应体 + 117 B HTTP 头），入站 `down=8,388,608`；速度 2,158,371 B/s；
+空闲 3 秒归零；客户端重置后只再下载 2 MiB，新增 `2,097,269`；入站重置清
+成员客户端。另记录：Xray 26 的 freedom 默认黑洞来自 VLESS 等入站的私有/
+回环目标（SSRF 防护），测试通过 `finalRules allow geoip:private` 放开。

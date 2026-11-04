@@ -13,7 +13,6 @@ use crate::{
     error::{AppError, AppResult},
     service,
     state::AppState,
-    xray::identity::traffic_pattern,
 };
 
 #[derive(Debug, Deserialize)]
@@ -216,23 +215,12 @@ pub async fn toggle(
 }
 
 pub async fn reset(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
-    let client = db::clients::get(&state.db, id)
+    db::clients::get(&state.db, id)
         .await?
         .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
 
-    let mut inbound_ids = db::client_inbounds::ids_for_client(&state.db, id).await?;
-    if inbound_ids.is_empty() {
-        inbound_ids.push(client.inbound_id);
-    }
-    for inbound_id in inbound_ids {
-        let pattern = traffic_pattern(inbound_id, &client.email);
-        if let Err(err) = state.stats.reset_pattern(&pattern).await {
-            if state.xray.status().await.running {
-                return Err(AppError::Apply(format!("重置 Xray 流量统计失败：{err}")));
-            }
-            tracing::debug!(error = %err, "xray down, resetting database counters only");
-        }
-    }
+    // Only the stored total is cleared. Xray's counter keeps running and its
+    // baseline stays, which is the same accounting model as 3x-ui.
     db::clients::reset_traffic(&state.db, id).await?;
     let client = db::clients::get(&state.db, id)
         .await?

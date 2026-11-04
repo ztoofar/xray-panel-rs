@@ -37,26 +37,22 @@ pub async fn upsert_traffic(
     Ok(())
 }
 
+// Like client/inbound resets: only the total is cleared, the Xray counter
+// baseline stays, so subsequent bytes are billed once (3x-ui's model).
 pub async fn reset_traffic(db: &SqlitePool, tag: &str) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE outbound_traffics SET up = 0, down = 0, last_up = 0, last_down = 0,
-         updated_at = ? WHERE tag = ?",
-    )
-    .bind(now())
-    .bind(tag)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE outbound_traffics SET up = 0, down = 0, updated_at = ? WHERE tag = ?")
+        .bind(now())
+        .bind(tag)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
 pub async fn reset_all(db: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE outbound_traffics SET up = 0, down = 0, last_up = 0, last_down = 0,
-         updated_at = ?",
-    )
-    .bind(now())
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE outbound_traffics SET up = 0, down = 0, updated_at = ?")
+        .bind(now())
+        .execute(db)
+        .await?;
     Ok(())
 }
 

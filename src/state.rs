@@ -32,6 +32,10 @@ pub struct AppState {
     pub active_inbound_last_seen: Arc<Mutex<HashMap<String, i64>>>,
     pub login_limiter: Arc<Mutex<HashMap<IpAddr, Vec<i64>>>>,
     pub traffic_history: Arc<Mutex<VecDeque<TrafficPoint>>>,
+    // Rates derived by the traffic job from this poll's deltas and the real
+    // elapsed time since the previous sample. Replaced every successful tick,
+    // so an idle entity simply has no entry (the UI shows no speed).
+    pub traffic_speeds: Arc<Mutex<TrafficSpeeds>>,
     // Wakes the traffic job early when the admin changes the poll interval.
     pub refresh_notify: Arc<Notify>,
     // Latest periodic outbound connectivity check, for the advanced settings page.
@@ -66,4 +70,19 @@ pub struct TrafficPoint {
     pub ts: i64,
     pub up: i64,
     pub down: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeedSample {
+    pub up: i64,
+    pub down: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TrafficSpeeds {
+    // Inbound tag -> bytes/second.
+    pub inbounds: HashMap<String, SpeedSample>,
+    // Panel client email -> bytes/second across every attachment.
+    pub clients: HashMap<String, SpeedSample>,
 }

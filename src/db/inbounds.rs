@@ -158,29 +158,18 @@ pub async fn add_traffic(
     Ok(())
 }
 
+// Zero only the accumulated total: the Xray inbound counter and its stored
+// baseline stay, so nothing already counted is billed a second time.
 pub async fn reset_traffic(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE inbounds SET up = 0, down = 0, last_up = 0, last_down = 0,
-         last_traffic_reset_time = ?, updated_at = ? WHERE id = ?",
+        "UPDATE inbounds SET up = 0, down = 0, last_traffic_reset_time = ?,
+         updated_at = ? WHERE id = ?",
     )
     .bind(now())
     .bind(now())
     .bind(id)
     .execute(db)
     .await?;
-    Ok(())
-}
-
-// Record a scheduled reset attempt without clearing traffic. Used when a
-// member reset failed: nothing is zeroed and the next attempt waits for the
-// next reset period instead of retrying on every poll.
-pub async fn touch_reset_time(db: &SqlitePool, id: i64, ts: i64) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE inbounds SET last_traffic_reset_time = ?, updated_at = ? WHERE id = ?")
-        .bind(ts)
-        .bind(ts)
-        .bind(id)
-        .execute(db)
-        .await?;
     Ok(())
 }
 

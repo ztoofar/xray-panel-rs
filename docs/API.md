@@ -226,6 +226,17 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/clients/import` | 已实现：接受 `data` 字符串数组，创建客户端、恢复流量；已存在邮箱跳过 |
 | 其他 | `/clients/happLink`、`/clients/hwids`、`/clients/ips`、`/clients/clearIps`、`/{email}/externalLinks` | 入口与后端路由已移除；未列路径走 catch-all（不应再依赖） |
 
+#### 流量字段与重置语义（0.2.24 起）
+
+- `/panel/api/inbounds/list/slim` 的每个入站行带 `upSpeed`/`downSpeed`
+  （字节/秒）；`/panel/api/clients/list`、`/list/paged`、`/get/{email}` 的
+  `traffic` 对象带 `upSpeed`/`downSpeed`。速率由流量 job 用本轮增量和真实
+  采样间隔计算，空闲时为 0/缺省；前端直接展示，不再自行差分。
+- `/panel/api/clients/resetTraffic/{email}`、`resetAllTraffics`、
+  `/inbounds/{id}/resetTraffic`、`resetAllTraffics`、`/xray/resetOutboundsTraffic`
+  只清数据库累计值，**不重置 Xray 计数器、不清基准**（3x-ui 模型），因此不会
+  在下一轮把整段累计值重复计费。
+
 ### Xray
 
 | 方法 | 路径 | 状态 |

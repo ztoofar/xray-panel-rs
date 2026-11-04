@@ -131,6 +131,7 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
         active_inbound_last_seen: Arc::new(Mutex::new(HashMap::new())),
         login_limiter: Arc::new(Mutex::new(HashMap::new())),
         traffic_history: Arc::new(Mutex::new(VecDeque::with_capacity(240))),
+        traffic_speeds: Arc::new(Mutex::new(state::TrafficSpeeds::default())),
         refresh_notify: Arc::new(Notify::new()),
         outbound_check: Arc::new(Mutex::new(None)),
         outbound_check_notify: Arc::new(Notify::new()),
@@ -314,6 +315,11 @@ async fn release_memory(state: &AppState) {
         logs.shrink_to_fit();
     }
     state.traffic_history.lock().await.shrink_to_fit();
+    {
+        let mut speeds = state.traffic_speeds.lock().await;
+        speeds.inbounds.shrink_to_fit();
+        speeds.clients.shrink_to_fit();
+    }
     {
         let mut limiter = state.login_limiter.lock().await;
         let cutoff = now() - 60;

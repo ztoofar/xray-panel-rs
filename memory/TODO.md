@@ -103,20 +103,22 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
   `/x/assets/*` 可加载、`/x/api/health` 与根 `/api/health`、查询串保留。
 - 验收：测试在未实现 guard 时会失败；`cargo test` 通过。
 
-### T9. 在真实 Linux + 真实 Xray 上验证 v0.2.7 统计修复
-- 现状：0.2.7 修复只在 Windows debug + in-memory SQLite 单测中验证；真实
-  Xray 的 `QueryStats` 缺失行为、`reset_pattern` 部分失败、gRPC 超时均未注入。
+### T9. 在真实 Linux + 真实 Xray 上验证 0.2.24 统计/速度模型
+- 现状：0.2.24 的 3x-ui 模型（只清 DB 累计值、保留基准、后端速率）已用
+  fake Xray（`tmp/e2e-traffic-accuracy`，13/13）和真实 Xray 26.10.31
+  （`tmp/e2e-traffic-real`，15/15，Windows，真实 SOCKS→VLESS）验证；仍缺
+  真实 Linux/musl、真实公网网络抖动、gRPC 故障注入、MASQUE 混合附着实测。
 - 内容（至少覆盖）：
-  - Xray 正常运行，上传/下载各累计 1 GB；
-  - 重启 Xray：新进程计数大于旧基准、小于旧基准两种情况；
-  - 面板重启：累计流量不丢失、首轮不重复计；
-  - 一客户端关联三个入站，分别产生流量；
-  - 只重置一个 attachment；多个 attachment 重置时一个 RPC 失败；
+  - Xray 正常运行时上传/下载各 1 GB，核对入站与客户端累计（预期差值为协议开销）；
+  - 客户端/入站重置后继续传输，确认只计新字节、不重复计旧累计；
+  - 重启 Xray（新进程计数小于/大于旧基准）与面板重启，确认首轮不重复计；
+  - 一客户端关联三个入站分别产生流量；只重置其中一个；
   - `QueryStats` 临时缺一个方向；只有下载计数器回绕；
-  - 旧核心升级到支持 `GetUsersStats` 的新核心；
-  - gRPC 超时后恢复，统计继续正常。
+  - 采样期间重启 Xray，确认该样本被丢弃而非错计；
+  - 速度与 `iperf`/实际下载速率对比误差、空闲一个周期内归零；
+  - 旧核心升级到支持 `GetUsersStats` 的新核心；gRPC 超时后恢复。
 - 验收：有可复现命令与日志证据；结果写入 `DEVELOPMENT-LOG.md` 与
-  `KNOWN-ISSUES.md` G6。
+  `KNOWN-ISSUES.md` G6–G8。
 
 ### T3. 修复前端 devDependencies 缺失导致的 typecheck/test 失败
 - 现状：`npm run typecheck` 有大量 vitest/storybook/@testing-library 模块缺失错误；

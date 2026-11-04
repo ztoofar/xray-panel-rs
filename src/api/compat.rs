@@ -24,9 +24,9 @@ use crate::{
     },
     error::AppResult,
     service,
-    state::AppState,
+    state::{AppState, SpeedSample},
     sys,
-    xray::{identity::traffic_pattern, link::client_link},
+    xray::link::client_link,
 };
 
 const CSRF_COOKIE: &str = "xpanel_csrf";
@@ -1048,12 +1048,18 @@ pub async fn inbounds_slim(State(state): State<AppState>) -> AppResult<Json<Valu
             members.entry(id).or_default().push(client);
         }
     }
+    let speeds = state.traffic_speeds.lock().await;
     Ok(ok(Value::Array(
         inbounds
             .iter()
             .map(|inbound| {
                 let members = members.get(&inbound.id).cloned().unwrap_or_default();
                 let settings = inject_clients(inbound, &members);
+                let speed = speeds
+                    .inbounds
+                    .get(&inbound.tag)
+                    .copied()
+                    .unwrap_or_default();
                 let stats: Vec<Value> = members
                     .iter()
                     .map(|client| {
@@ -1080,6 +1086,8 @@ pub async fn inbounds_slim(State(state): State<AppState>) -> AppResult<Json<Valu
                     "enable": inbound.enable,
                     "up": inbound.up,
                     "down": inbound.down,
+                    "upSpeed": speed.up,
+                    "downSpeed": speed.down,
                     "total": inbound.total,
                     "expiryTime": inbound.expiry_time,
                     "settings": settings.to_string(),
@@ -1228,8 +1236,12 @@ pub async fn clients_list(State(state): State<AppState>) -> AppResult<Json<Value
             .cloned()
             .unwrap_or_else(|| vec![client.inbound_id]);
     }
+    let speeds = state.traffic_speeds.lock().await;
     Ok(ok(Value::Array(
-        clients.iter().map(client_record).collect(),
+        clients
+            .iter()
+            .map(|client| client_record(client, speeds.clients.get(&client.email).copied()))
+            .collect(),
     )))
 }
 
@@ -1406,11 +1418,12 @@ pub async fn clients_paged(
     let total = clients.len();
     let filtered_count = sorted.len();
     let start = (page - 1) * page_size;
+    let speeds = state.traffic_speeds.lock().await;
     let items: Vec<Value> = sorted
         .iter()
         .skip(start)
         .take(page_size)
-        .map(|client| client_record(client))
+        .map(|client| client_record(client, speeds.clients.get(&client.email).copied()))
         .collect();
 
     let active = clients.iter().filter(|client| client.enable).count();
@@ -2049,7 +2062,7 @@ fn inject_clients(inbound: &Inbound, clients: &[&Client]) -> Value {
     settings
 }
 
-fn client_record(client: &Client) -> Value {
+fn client_record(client: &Client, speed: Option<SpeedSample>) -> Value {
     let creds = client.settings.0.as_object();
     let mut record = Map::new();
     record.insert("id".into(), json!(client.id));
@@ -2081,6 +2094,11 @@ fn client_record(client: &Client) -> Value {
         json!({
             "up": client.up,
             "down": client.down,
+            // Rates from the last traffic tick (bytes/s); 0 when idle. The
+            // frontend no longer has to diff successive list snapshots, which
+            // used to freeze the speed display on an all-idle panel.
+            "upSpeed": speed.map(|value| value.up).unwrap_or(0),
+            "downSpeed": speed.map(|value| value.down).unwrap_or(0),
             "total": client.total,
             "expiryTime": client.expiry_time,
             "enable": client.enable,
@@ -3519,11 +3537,8 @@ pub async fn xray_reset_outbound_traffic(
 ) -> AppResult<Json<Value>> {
     let params = read_params(req).await?;
     if let Some(tag) = params.get("tag").filter(|value| !value.trim().is_empty()) {
-        let pattern = format!("outbound>>>{tag}>>>traffic>>>");
-        let _ = state.stats.reset_pattern(&pattern).await;
         db::outbounds::reset_traffic(&state.db, tag).await?;
     } else {
-        let _ = state.stats.reset_pattern("outbound>>>").await;
         db::outbounds::reset_all(&state.db).await?;
     }
     Ok(ok(Value::Null))
@@ -3576,8 +3591,15 @@ pub async fn client_get(
     if !ids.is_empty() {
         client.inbound_ids = ids;
     }
+    let speed = state
+        .traffic_speeds
+        .lock()
+        .await
+        .clients
+        .get(&client.email)
+        .copied();
     Ok(ok(json!({
-        "client": client_record(&client),
+        "client": client_record(&client, speed),
         "inboundIds": client.inbound_ids,
         "tunnelAllowedIPs": {},
     })))
@@ -3590,34 +3612,12 @@ pub async fn client_reset_traffic(
     let Some(client) = db::clients::find_by_email(&state.db, &email).await? else {
         return Ok(fail("客户端不存在"));
     };
-    let mut inbound_ids = db::client_inbounds::ids_for_client(&state.db, client.id).await?;
-    if inbound_ids.is_empty() {
-        inbound_ids.push(client.inbound_id);
-    }
-    for inbound_id in inbound_ids {
-        let _ = state
-            .stats
-            .reset_pattern(&traffic_pattern(inbound_id, &client.email))
-            .await;
-    }
     db::clients::reset_traffic(&state.db, client.id).await?;
     Ok(ok(Value::Null))
 }
 
 pub async fn clients_reset_all_traffic(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let clients = db::clients::list_all(&state.db).await?;
-    let associations = db::client_inbounds::all(&state.db).await?;
-    for client in clients {
-        let ids = associations
-            .get(&client.id)
-            .cloned()
-            .unwrap_or_else(|| vec![client.inbound_id]);
-        for inbound_id in ids {
-            let _ = state
-                .stats
-                .reset_pattern(&traffic_pattern(inbound_id, &client.email))
-                .await;
-        }
+    for client in db::clients::list_all(&state.db).await? {
         db::clients::reset_traffic(&state.db, client.id).await?;
     }
     Ok(ok(Value::Null))
@@ -3934,26 +3934,13 @@ pub async fn inbound_reset_traffic(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
-    let Some(inbound) = db::inbounds::get(&state.db, id).await? else {
+    if db::inbounds::get(&state.db, id).await?.is_none() {
         return Ok(fail("入站不存在"));
-    };
-    let _ = state
-        .stats
-        .reset_pattern(&format!("inbound>>>{}>>>traffic>>>", inbound.tag))
-        .await;
+    }
+    // A client's stored total aggregates every inbound it is attached to, so
+    // an inbound reset clears the whole total (3x-ui does the same); the
+    // baselines stay and only new bytes are billed afterwards.
     for client in db::clients::list_by_inbound(&state.db, id).await? {
-        // The DB counter is an aggregate; reset every attachment together or
-        // the next tick mistakes the drop for a counter wrap.
-        let mut inbound_ids = db::client_inbounds::ids_for_client(&state.db, client.id).await?;
-        if inbound_ids.is_empty() {
-            inbound_ids.push(client.inbound_id);
-        }
-        for inbound_id in inbound_ids {
-            let _ = state
-                .stats
-                .reset_pattern(&traffic_pattern(inbound_id, &client.email))
-                .await;
-        }
         db::clients::reset_traffic(&state.db, client.id).await?;
     }
     db::inbounds::reset_traffic(&state.db, id).await?;
@@ -3993,25 +3980,9 @@ pub async fn inbounds_bulk_del(
 
 pub async fn inbounds_reset_all_traffic(State(state): State<AppState>) -> AppResult<Json<Value>> {
     for inbound in db::inbounds::list(&state.db).await? {
-        let _ = state
-            .stats
-            .reset_pattern(&format!("inbound>>>{}>>>traffic>>>", inbound.tag))
-            .await;
         db::inbounds::reset_traffic(&state.db, inbound.id).await?;
     }
-    let clients = db::clients::list_all(&state.db).await?;
-    let associations = db::client_inbounds::all(&state.db).await?;
-    for client in clients {
-        let ids = associations
-            .get(&client.id)
-            .cloned()
-            .unwrap_or_else(|| vec![client.inbound_id]);
-        for inbound_id in ids {
-            let _ = state
-                .stats
-                .reset_pattern(&traffic_pattern(inbound_id, &client.email))
-                .await;
-        }
+    for client in db::clients::list_all(&state.db).await? {
         db::clients::reset_traffic(&state.db, client.id).await?;
     }
     Ok(ok(Value::Null))

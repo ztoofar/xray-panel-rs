@@ -99,7 +99,10 @@ impl StatsClient {
         self.online_api_checked_at.store(0, Ordering::Relaxed);
     }
 
-    pub async fn query(&self, pattern: &str, reset: bool) -> anyhow::Result<Vec<Stat>> {
+    // Counters are never reset through this RPC (3x-ui does the same). The
+    // panel derives deltas from stored baselines instead, so a failed or
+    // racing reset can never make the same bytes count twice.
+    pub async fn query(&self, pattern: &str) -> anyhow::Result<Vec<Stat>> {
         let mut guard = self.client.lock().await;
         if guard.is_none() {
             let client = self.connect().await?;
@@ -113,7 +116,7 @@ impl StatsClient {
         let client = guard.as_mut().expect("client connected");
         let request = QueryStatsRequest {
             pattern: pattern.to_string(),
-            reset,
+            reset: false,
             regexp: false,
         };
 
@@ -129,10 +132,6 @@ impl StatsClient {
                 Err(anyhow!("统计查询超时"))
             }
         }
-    }
-
-    pub async fn reset_pattern(&self, pattern: &str) -> anyhow::Result<()> {
-        self.query(pattern, true).await.map(|_| ())
     }
 
     /// Connection-level online users (email + source IPs), like 3x-ui's

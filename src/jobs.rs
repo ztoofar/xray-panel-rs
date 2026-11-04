@@ -12,9 +12,9 @@ use crate::{
         models::{Client, Inbound},
     },
     service,
-    state::{AppState, TrafficPoint},
+    state::{AppState, SpeedSample, TrafficPoint, TrafficSpeeds},
     traffic::counter_delta,
-    xray::identity::{stat_email, traffic_pattern},
+    xray::identity::stat_email,
 };
 
 const MAX_HISTORY: usize = 240;
@@ -36,6 +36,11 @@ pub fn spawn(state: AppState) {
         // The generation also moves on stop, so it cannot tell "a new process
         // started" from "the old one is going away"; this only moves on start.
         let mut stats_epoch: Option<u64> = None;
+        // Monotonic timestamp of the previous committed stats sample. Rates
+        // are billed deltas divided by this real interval, not by the
+        // configured poll length: a slow tick or a missed RPC must not skew
+        // the speed, and a wall-clock jump must not either.
+        let mut last_stats_at: Option<std::time::Instant> = None;
         loop {
             // Xray restarts (manual, config apply, crash) drop every live
             // connection. 3x-ui keeps its online map inside the Xray process;
@@ -45,6 +50,7 @@ pub fn spawn(state: AppState) {
             if generation != Some(current) {
                 clear_online_state(&state).await;
                 state.stats.invalidate_online_api_probe();
+                *state.traffic_speeds.lock().await = TrafficSpeeds::default();
                 generation = Some(current);
             }
 
@@ -58,6 +64,9 @@ pub fn spawn(state: AppState) {
                 match db::client_traffic::reset_all_baselines(&state.db).await {
                     Ok(()) => {
                         stats_epoch = Some(epoch);
+                        // The first sample after a restart only establishes the
+                        // new process's counters; there is no interval to rate.
+                        last_stats_at = None;
                         tracing::info!(epoch, "xray started; traffic baselines reset");
                     }
                     Err(err) => {
@@ -73,8 +82,11 @@ pub fn spawn(state: AppState) {
             // Tick before sleeping so a freshly started panel knows who is
             // online without waiting a full interval first.
             let started = std::time::Instant::now();
-            if let Err(err) = tick(&state, secs).await {
+            if let Err(err) = tick(&state, secs, &mut last_stats_at).await {
                 tracing::warn!(error = %err, "traffic tick failed");
+                // Never leave a rate from an earlier, unrelated sample on the
+                // panel after a failed accounting round.
+                *state.traffic_speeds.lock().await = TrafficSpeeds::default();
             }
             // Keep the configured cadence when a tick ran slow (e.g. an
             // unreachable stats API): sleep only the remainder of the period.
@@ -111,9 +123,17 @@ async fn clear_online_state(state: &AppState) {
     state.active_inbound_last_seen.lock().await.clear();
 }
 
-async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
+async fn tick(
+    state: &AppState,
+    poll_secs: u64,
+    last_stats_at: &mut Option<std::time::Instant>,
+) -> anyhow::Result<()> {
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
+    // Captured before any work: a restart anywhere between the loop's epoch
+    // check and the stats query means the sample may belong to a different
+    // process than the stored baselines.
+    let epoch_before = state.xray.start_epoch();
 
     // Per-attachment identities are what let us attribute an online email to
     // the inbound it is connected through. They have to exist before the
@@ -147,10 +167,14 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
         })
         .unwrap_or_default();
 
-    let stats = match state.stats.query("", false).await {
+    let sample_at = std::time::Instant::now();
+    let stats = match state.stats.query("").await {
         Ok(stats) => stats,
         Err(err) => {
             tracing::debug!(error = %err, "xray stats unavailable");
+            // A rate from an older sample would be stale; drop it instead of
+            // pinning the last value in the UI.
+            *state.traffic_speeds.lock().await = TrafficSpeeds::default();
             // No traffic deltas this round, but the online API may still work;
             // either way let both windows age out instead of pinning clients.
             let online_emails =
@@ -160,6 +184,31 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
             return Ok(());
         }
     };
+    // The supervisor may restart Xray between the epoch check at the top of
+    // the loop and this query. Those counters belong to another process than
+    // the stored baselines; billing them would misreport one window. Discard
+    // the sample and let the loop reset the baselines first.
+    if state.xray.start_epoch() != epoch_before {
+        tracing::debug!("xray restarted during the stats sample; discarding it");
+        *state.traffic_speeds.lock().await = TrafficSpeeds::default();
+        let online_emails =
+            refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
+        refresh_active_inbounds(state, now, grace, &[]).await;
+        persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
+        return Ok(());
+    }
+    // Deltas and rates share one window: baselines only advance when a sample
+    // is applied, so a missed RPC makes the next delta span the whole gap.
+    let elapsed_ms = last_stats_at
+        .map(|last| {
+            sample_at
+                .saturating_duration_since(last)
+                .as_millis()
+                .min(i64::MAX as u128) as i64
+        })
+        .unwrap_or(0);
+    let mut inbound_speeds: HashMap<String, SpeedSample> = HashMap::new();
+    let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
     let restart_on_client_disable = db::settings::ui_settings(&state.db)
         .await
         .ok()
@@ -196,6 +245,15 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
     // attachments into one baseline, so a single reset attachment corrupted
     // the deltas of the others. Samples are applied in one transaction that
     // also advances the per-attachment baselines.
+    // MASQUE rejects `:` in emails, so its clients are metered under the bare
+    // panel email. Knowing which inbounds those are lets a client attached to
+    // both MASQUE and a normal inbound bill both counters instead of silently
+    // dropping the MASQUE half with the legacy fallback below.
+    let masque_inbounds: HashSet<i64> = inbounds
+        .iter()
+        .filter(|inbound| inbound.protocol == "masque")
+        .map(|inbound| inbound.id)
+        .collect();
     let mut plans: Vec<ClientSamples> = Vec::with_capacity(clients.len());
     let mut legacy_deltas: HashMap<i64, (i64, i64)> = HashMap::new();
     for client in &clients {
@@ -203,17 +261,7 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
             .get(&client.id)
             .cloned()
             .unwrap_or_else(|| vec![client.inbound_id]);
-        let mut samples = Vec::with_capacity(ids.len());
-        for inbound_id in ids {
-            let identity = stat_email(inbound_id, &client.email);
-            if let Some(&(up, down)) = user_stats.get(&identity) {
-                samples.push(AttachmentSample {
-                    inbound_id,
-                    up,
-                    down,
-                });
-            }
-        }
+        let samples = client_samples(&client.email, &ids, &masque_inbounds, &user_stats);
         if !samples.is_empty() {
             plans.push(ClientSamples {
                 client_id: client.id,
@@ -270,6 +318,9 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
         if delta_up > 0 || delta_down > 0 {
             moved_emails.insert(client.email.clone());
         }
+        if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
+            client_speeds.insert(client.email.clone(), sample);
+        }
 
         let used = client.up + delta_up + client.down + delta_down;
         let over_quota = client.total > 0 && used >= client.total;
@@ -297,41 +348,12 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
             let due = client.last_reset_time == 0
                 || now.saturating_sub(client.last_reset_time) >= interval;
             if due {
-                let ids = associations
-                    .get(&client.id)
-                    .cloned()
-                    .unwrap_or_else(|| vec![client.inbound_id]);
-                let mut all_ok = true;
-                for inbound_id in &ids {
-                    if let Err(err) = state
-                        .stats
-                        .reset_pattern(&traffic_pattern(*inbound_id, &client.email))
-                        .await
-                    {
-                        tracing::warn!(
-                            error = %err,
-                            email = %client.email,
-                            inbound_id,
-                            "reset client stats failed"
-                        );
-                        all_ok = false;
-                    }
-                }
-                if all_ok {
-                    db::client_traffic::reset_client_verified(&state.db, client.id, now).await?;
-                    tracing::info!(email = %client.email, days = client.reset_days, "client traffic reset");
-                } else {
-                    // Never zero the database when an Xray counter may still
-                    // hold its old value: the next sample would bill it
-                    // again. Adopt the current counters as the new baseline
-                    // on the next full sample instead.
-                    db::client_traffic::mark_reconcile(&state.db, client.id, &ids, now).await?;
-                    db::clients::touch_reset_time(&state.db, client.id, now).await?;
-                    tracing::warn!(
-                        email = %client.email,
-                        "client traffic reset deferred; baselines flagged for reconcile"
-                    );
-                }
+                // 3x-ui zeroes only the stored total: Xray keeps counting and
+                // the per-attachment baselines stay, so the bytes that follow
+                // are billed exactly once and a reset can never re-bill the
+                // pre-reset counter.
+                db::clients::reset_traffic(&state.db, client.id).await?;
+                tracing::info!(email = %client.email, days = client.reset_days, "client traffic reset");
             }
         }
     }
@@ -346,6 +368,9 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
         );
         if delta_up > 0 || delta_down > 0 {
             active_tags.push(inbound.tag.clone());
+        }
+        if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
+            inbound_speeds.insert(inbound.tag.clone(), sample);
         }
 
         if (inbound_up.contains_key(&inbound.tag) || inbound_down.contains_key(&inbound.tag))
@@ -370,9 +395,18 @@ async fn tick(state: &AppState, poll_secs: u64) -> anyhow::Result<()> {
         }
 
         if inbound.enable && reset_due(inbound, now) {
-            reset_inbound_traffic(state, inbound, &clients, &associations, now).await?;
+            reset_inbound_traffic(state, inbound, &clients, &associations).await?;
         }
     }
+
+    *state.traffic_speeds.lock().await = TrafficSpeeds {
+        inbounds: inbound_speeds,
+        clients: client_speeds,
+    };
+    // Client/inbound baselines are committed at this point; the next rate uses
+    // this sample as its start even if a later step (online view, outbound
+    // rows, history) fails.
+    *last_stats_at = Some(sample_at);
 
     let online_emails =
         refresh_online(state, now, grace, api_snapshot.as_ref(), &moved_emails).await;
@@ -487,6 +521,45 @@ fn decode_online_users(
             .map(|(email, tags)| (email, tags.into_iter().collect()))
             .collect(),
     }
+}
+
+// Per-attachment samples for one client. Xray meters each normal attachment
+// under `<inbound id>:<email>`; MASQUE rejects that identity and uses the raw
+// email instead, so it is looked up once and attributed to one MASQUE
+// attachment. Without that split a client on both inbound kinds lost the
+// MASQUE counter whenever the other attachment reported first.
+fn client_samples(
+    email: &str,
+    inbound_ids: &[i64],
+    masque_inbounds: &HashSet<i64>,
+    user_stats: &HashMap<String, (Option<i64>, Option<i64>)>,
+) -> Vec<AttachmentSample> {
+    let mut samples = Vec::with_capacity(inbound_ids.len());
+    let mut masque_inbound: Option<i64> = None;
+    for inbound_id in inbound_ids {
+        if masque_inbounds.contains(inbound_id) {
+            masque_inbound.get_or_insert(*inbound_id);
+            continue;
+        }
+        let identity = stat_email(*inbound_id, email);
+        if let Some(&(up, down)) = user_stats.get(&identity) {
+            samples.push(AttachmentSample {
+                inbound_id: *inbound_id,
+                up,
+                down,
+            });
+        }
+    }
+    if let Some(inbound_id) = masque_inbound {
+        if let Some(&(up, down)) = user_stats.get(email) {
+            samples.push(AttachmentSample {
+                inbound_id,
+                up,
+                down,
+            });
+        }
+    }
+    samples
 }
 
 // Raw counters per stat identity: identity -> (uplink, downlink). A direction
@@ -609,7 +682,6 @@ async fn reset_inbound_traffic(
     inbound: &Inbound,
     clients: &[Client],
     associations: &HashMap<i64, Vec<i64>>,
-    now: i64,
 ) -> anyhow::Result<()> {
     let members: Vec<&Client> = clients
         .iter()
@@ -621,48 +693,11 @@ async fn reset_inbound_traffic(
         })
         .collect();
 
-    // Reset every attachment of the client, not just this inbound: the DB
-    // counter is an aggregate, and a partial reset would look like a counter
-    // wrap and double-count the surviving attachments.
-    let mut plans: Vec<(i64, Vec<i64>)> = Vec::with_capacity(members.len());
-    let mut all_ok = true;
+    // A client's stored total is an aggregate across every attachment, so an
+    // inbound-level reset must clear it whole; the baselines stay so the next
+    // sample bills only what happened after this point (3x-ui's model).
     for client in &members {
-        let ids = associations
-            .get(&client.id)
-            .cloned()
-            .unwrap_or_else(|| vec![client.inbound_id]);
-        for inbound_id in &ids {
-            if let Err(err) = state
-                .stats
-                .reset_pattern(&traffic_pattern(*inbound_id, &client.email))
-                .await
-            {
-                tracing::warn!(error = %err, email = %client.email, inbound_id, "reset stats failed");
-                all_ok = false;
-            }
-        }
-        plans.push((client.id, ids));
-    }
-    if all_ok {
-        let pattern = format!("inbound>>>{}>>>traffic>>>", inbound.tag);
-        if let Err(err) = state.stats.reset_pattern(&pattern).await {
-            tracing::warn!(error = %err, tag = %inbound.tag, "reset inbound stats failed");
-            all_ok = false;
-        }
-    }
-    if !all_ok {
-        // Nothing may be zeroed while an Xray counter still holds its old
-        // value. Adopt the current counters on the next full sample instead.
-        for (client_id, ids) in &plans {
-            db::client_traffic::mark_reconcile(&state.db, *client_id, ids, now).await?;
-        }
-        db::inbounds::touch_reset_time(&state.db, inbound.id, now).await?;
-        tracing::warn!(tag = %inbound.tag, "scheduled traffic reset deferred; baselines flagged for reconcile");
-        return Ok(());
-    }
-
-    for (client_id, _) in &plans {
-        db::client_traffic::reset_client_verified(&state.db, *client_id, now).await?;
+        db::clients::reset_traffic(&state.db, client.id).await?;
     }
     db::inbounds::reset_traffic(&state.db, inbound.id).await?;
     tracing::info!(tag = %inbound.tag, "scheduled traffic reset");
@@ -711,6 +746,27 @@ fn expired_at(expiry: i64, now_secs: i64) -> bool {
         expiry
     };
     expiry_ms <= now_secs.saturating_mul(1000)
+}
+
+// Bytes per second for one poll window. `elapsed_ms` is the real time between
+// the two samples the deltas were measured over, so a delayed tick does not
+// inflate the rate the way a fixed divisor would.
+fn speed_sample(up: i64, down: i64, elapsed_ms: i64) -> Option<SpeedSample> {
+    if elapsed_ms <= 0 {
+        return None;
+    }
+    let rate = |delta: i64| -> i64 {
+        if delta <= 0 {
+            0
+        } else {
+            delta.saturating_mul(1000) / elapsed_ms
+        }
+    };
+    let sample = SpeedSample {
+        up: rate(up),
+        down: rate(down),
+    };
+    (sample.up > 0 || sample.down > 0).then_some(sample)
 }
 
 // One inbound/outbound tag reports uplink and downlink independently. A
@@ -792,6 +848,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn speed_divides_the_delta_by_the_real_sample_interval() {
+        assert_eq!(
+            speed_sample(1_000, 2_000, 5_000),
+            Some(SpeedSample { up: 200, down: 400 })
+        );
+        // A delayed tick spans a longer window, so the same bytes are a lower
+        // rate rather than the old fixed-divisor inflation.
+        assert_eq!(
+            speed_sample(1_000, 0, 10_000),
+            Some(SpeedSample { up: 100, down: 0 })
+        );
+        // Idle or unmeasured windows produce no entry, which clears the UI.
+        assert_eq!(speed_sample(0, 0, 5_000), None);
+        assert_eq!(speed_sample(100, 100, 0), None);
+    }
+
+    #[test]
     fn grace_scales_with_poll_and_never_undercuts_xui() {
         // 3x-ui's 5s poll uses a 20s window.
         assert_eq!(online_grace_secs(5), 20);
@@ -856,6 +929,32 @@ mod tests {
         // Downlink was not reported for this attachment: None, not zero.
         assert_eq!(parsed.get("2:alice"), Some(&(Some(5), None)));
         assert_eq!(parsed.get("bob"), Some(&(None, Some(3))));
+    }
+
+    #[test]
+    fn masque_bare_email_counter_survives_a_normal_attachment() {
+        let user_stats = HashMap::from([
+            ("1:alice".to_string(), (Some(10_i64), Some(20_i64))),
+            ("alice".to_string(), (Some(7_i64), Some(3_i64))),
+        ]);
+        let masque = HashSet::from([9_i64]);
+        let samples = client_samples("alice", &[1, 9], &masque, &user_stats);
+
+        assert_eq!(samples.len(), 2);
+        assert_eq!(
+            (samples[0].inbound_id, samples[0].up, samples[0].down),
+            (1, Some(10), Some(20))
+        );
+        assert_eq!(
+            (samples[1].inbound_id, samples[1].up, samples[1].down),
+            (9, Some(7), Some(3))
+        );
+
+        // Two MASQUE attachments share one bare-email counter, so it must be
+        // billed once, not once per attachment.
+        let samples = client_samples("alice", &[9, 10], &HashSet::from([9, 10]), &user_stats);
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].inbound_id, 9);
     }
 
     #[test]

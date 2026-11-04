@@ -25,7 +25,6 @@ pub struct ClientSamples {
 struct Baseline {
     last_up: i64,
     last_down: i64,
-    needs_reconcile: bool,
 }
 
 /// Apply one poll for every client in a single SQLite transaction.
@@ -49,22 +48,14 @@ pub async fn apply_tick(
     }
 
     let mut tx = db.begin().await?;
-    let rows: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
-        "SELECT client_id, inbound_id, last_up, last_down, needs_reconcile
-         FROM client_inbound_traffic",
+    let rows: Vec<(i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT client_id, inbound_id, last_up, last_down FROM client_inbound_traffic",
     )
     .fetch_all(&mut *tx)
     .await?;
     let mut baselines = HashMap::with_capacity(rows.len());
-    for (client_id, inbound_id, last_up, last_down, needs_reconcile) in rows {
-        baselines.insert(
-            (client_id, inbound_id),
-            Baseline {
-                last_up,
-                last_down,
-                needs_reconcile: needs_reconcile != 0,
-            },
-        );
+    for (client_id, inbound_id, last_up, last_down) in rows {
+        baselines.insert((client_id, inbound_id), Baseline { last_up, last_down });
     }
 
     for plan in clients {
@@ -78,40 +69,18 @@ pub async fn apply_tick(
             let mut next_down = base.last_down.max(0);
             let mut changed = false;
 
-            if base.needs_reconcile {
-                // The last scheduled reset only partly succeeded (or timed
-                // out): adopt the current counters as the new baseline and
-                // never bill the gap, so an unknown reset outcome cannot be
-                // counted twice. Wait for at least one real direction before
-                // dropping the flag, otherwise a later sample would be billed
-                // against the pre-reset baseline.
-                let mut adopted = false;
-                if let Some(up) = sample.up.filter(|value| *value >= 0) {
-                    next_up = up;
-                    adopted = true;
+            if let Some((delta, next)) = counter_delta(sample.up, base.last_up) {
+                total_up = total_up.saturating_add(delta);
+                if next != next_up {
+                    next_up = next;
+                    changed = true;
                 }
-                if let Some(down) = sample.down.filter(|value| *value >= 0) {
-                    next_down = down;
-                    adopted = true;
-                }
-                if !adopted {
-                    continue;
-                }
-                changed = true;
-            } else {
-                if let Some((delta, next)) = counter_delta(sample.up, base.last_up) {
-                    total_up = total_up.saturating_add(delta);
-                    if next != next_up {
-                        next_up = next;
-                        changed = true;
-                    }
-                }
-                if let Some((delta, next)) = counter_delta(sample.down, base.last_down) {
-                    total_down = total_down.saturating_add(delta);
-                    if next != next_down {
-                        next_down = next;
-                        changed = true;
-                    }
+            }
+            if let Some((delta, next)) = counter_delta(sample.down, base.last_down) {
+                total_down = total_down.saturating_add(delta);
+                if next != next_down {
+                    next_down = next;
+                    changed = true;
                 }
             }
 
@@ -122,7 +91,6 @@ pub async fn apply_tick(
                     sample.inbound_id,
                     next_up,
                     next_down,
-                    false,
                     ts,
                 )
                 .await?;
@@ -155,24 +123,21 @@ async fn upsert_baseline(
     inbound_id: i64,
     last_up: i64,
     last_down: i64,
-    needs_reconcile: bool,
     ts: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO client_inbound_traffic
-           (client_id, inbound_id, last_up, last_down, needs_reconcile, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+           (client_id, inbound_id, last_up, last_down, updated_at)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(client_id, inbound_id) DO UPDATE SET
            last_up = excluded.last_up,
            last_down = excluded.last_down,
-           needs_reconcile = excluded.needs_reconcile,
            updated_at = excluded.updated_at",
     )
     .bind(client_id)
     .bind(inbound_id)
     .bind(last_up)
     .bind(last_down)
-    .bind(needs_reconcile)
     .bind(ts)
     .execute(&mut **tx)
     .await?;
@@ -190,68 +155,6 @@ pub async fn reset_all_baselines(db: &SqlitePool) -> Result<(), sqlx::Error> {
         "UPDATE client_inbound_traffic SET last_up = 0, last_down = 0, needs_reconcile = 0",
     ] {
         sqlx::query(statement).execute(&mut *tx).await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-/// Clear one client's totals and attachment baselines after every attachment
-/// reset was confirmed by Xray. Callers must not use this on a partial reset:
-/// zeroing the database while a counter still holds its old value would bill
-/// that value again.
-pub async fn reset_client_verified(
-    db: &SqlitePool,
-    client_id: i64,
-    ts: i64,
-) -> Result<(), sqlx::Error> {
-    let mut tx = db.begin().await?;
-    sqlx::query(
-        "UPDATE clients SET up = 0, down = 0, last_up = 0, last_down = 0,
-         last_reset_time = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(ts)
-    .bind(ts)
-    .bind(client_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE client_inbound_traffic SET last_up = 0, last_down = 0,
-         needs_reconcile = 0, updated_at = ? WHERE client_id = ?",
-    )
-    .bind(ts)
-    .bind(client_id)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-/// Flag every attachment of a client for reconciliation without touching the
-/// stored baselines or totals.
-pub async fn mark_reconcile(
-    db: &SqlitePool,
-    client_id: i64,
-    inbound_ids: &[i64],
-    ts: i64,
-) -> Result<(), sqlx::Error> {
-    if inbound_ids.is_empty() {
-        return Ok(());
-    }
-    let mut tx = db.begin().await?;
-    for inbound_id in inbound_ids {
-        sqlx::query(
-            "INSERT INTO client_inbound_traffic
-               (client_id, inbound_id, last_up, last_down, needs_reconcile, updated_at)
-             VALUES (?, ?, 0, 0, 1, ?)
-             ON CONFLICT(client_id, inbound_id) DO UPDATE SET
-               needs_reconcile = 1,
-               updated_at = excluded.updated_at",
-        )
-        .bind(client_id)
-        .bind(inbound_id)
-        .bind(ts)
-        .execute(&mut *tx)
-        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -398,39 +301,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn partial_reset_is_reconciled_without_billing_the_gap() {
-        let pool = setup().await;
-        apply_tick(&pool, &plan(&[(1, Some(500), Some(500))]), 1_000)
-            .await
-            .unwrap();
-
-        mark_reconcile(&pool, 1, &[1, 2], 1_010).await.unwrap();
-
-        // A missing sample must keep the reconcile flag.
-        apply_tick(&pool, &plan(&[(1, None, None)]), 1_015)
-            .await
-            .unwrap();
-        assert_eq!(baselines(&pool).await[0].3, 1);
-
-        // First real sample after the failed reset: adopt it, bill nothing,
-        // clear the flag.
-        let applied = apply_tick(&pool, &plan(&[(1, Some(900), Some(950))]), 1_020)
-            .await
-            .unwrap();
-        assert!(applied.is_empty());
-        // Attachment 1 adopted its sample; attachment 2 was not reported this
-        // round, so its flag stays until it has a real sample to adopt.
-        assert_eq!(baselines(&pool).await, vec![(1, 900, 950, 0), (2, 0, 0, 1)]);
-        assert_eq!(totals(&pool).await, (500, 500));
-
-        // Normal accounting resumes from the adopted baseline.
-        let applied = apply_tick(&pool, &plan(&[(1, Some(950), Some(1_000))]), 1_025)
-            .await
-            .unwrap();
-        assert_eq!(applied.get(&1), Some(&(50, 50)));
-    }
-
-    #[tokio::test]
     async fn reset_all_baselines_keeps_accumulated_totals() {
         let pool = setup().await;
         apply_tick(&pool, &plan(&[(1, Some(100), Some(100))]), 1_000)
@@ -449,23 +319,31 @@ mod tests {
         assert_eq!((last_up, last_down), (0, 0));
     }
 
+    // 3x-ui's reset model: zero the accumulated total, keep the counter
+    // baselines. Billing the whole Xray counter again after a reset (the old
+    // behaviour) is the double-count this test locks out.
     #[tokio::test]
-    async fn verified_reset_clears_totals_and_baselines() {
+    async fn resetting_totals_keeps_baselines_and_bills_only_new_bytes() {
         let pool = setup().await;
-        apply_tick(&pool, &plan(&[(1, Some(100), Some(100))]), 1_000)
+        apply_tick(&pool, &plan(&[(1, Some(500), Some(600))]), 1_000)
             .await
             .unwrap();
-        mark_reconcile(&pool, 1, &[1], 1_010).await.unwrap();
 
-        reset_client_verified(&pool, 1, 1_020).await.unwrap();
+        crate::db::clients::reset_traffic(&pool, 1).await.unwrap();
 
         assert_eq!(totals(&pool).await, (0, 0));
-        assert_eq!(baselines(&pool).await, vec![(1, 0, 0, 0)]);
-        let (last_reset, last_up): (i64, i64) =
-            sqlx::query_as("SELECT last_reset_time, last_up FROM clients WHERE id = 1")
+        assert_eq!(baselines(&pool).await, vec![(1, 500, 600, 0)]);
+        let last_reset: i64 =
+            sqlx::query_scalar("SELECT last_reset_time FROM clients WHERE id = 1")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!((last_reset, last_up), (1_020, 0));
+        assert!(last_reset > 0);
+
+        let applied = apply_tick(&pool, &plan(&[(1, Some(560), Some(650))]), 1_005)
+            .await
+            .unwrap();
+        assert_eq!(applied.get(&1), Some(&(60, 50)));
+        assert_eq!(totals(&pool).await, (60, 50));
     }
 }

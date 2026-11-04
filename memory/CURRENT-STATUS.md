@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 23:42（本地时间）
+> 最后更新：2026-11-05 01:35（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,16 +8,16 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.23` |
+| `Cargo.toml` 版本 | `0.2.24`（未打包/未打 tag） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.23`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,227 字节，SHA256 `9bd16e84...3811`（GitHub asset digest）；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.23`（tag `v0.2.23` → `a0aa557`，已发布）：IP数据云移入“高级”页标签，与出站检测同页切换（§2.37/§2.38） |
+| 当前源码 | `0.2.24`（未打包）：流量重置改为 3x-ui 模型（只清 DB 累计值、不重置 Xray 计数器、保留基准），速度改由后端按真实采样间隔计算并经列表接口下发；详见 §2.39 |
 | 上一版 | GitHub Release `v0.2.22`：tar 5,473,730 字节，asset digest `sha256:c3a60555...44e9` |
 | 0.2.23 SHA256 | `9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`（tar.gz，GitHub asset digest） |
 | 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-04 23:3x 由当前 `frontend-3xui/` 源码重建（含高级页标签） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-05 01:1x 由当前 `frontend-3xui/` 源码重建（速度改读后端字段） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
 | musl 产物 | 0.2.23 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
@@ -970,6 +970,58 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
   `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome 验证高级页两个标签可切换。
 - **未验证**：真实 Linux/musl 运行；发布包本地下载校验（网络受限）；
   有效 IP数据云 Key 成功响应（T28）。
+
+## 2.39 流量统计与速度精度（2026-11-05，0.2.24）—— 已用假 StatsService e2e 验证
+
+用户反馈入站/客户端流量“算得不对”、速度与实际使用对不上，要求以 3x-ui 为基准
+核对。逐行对比后确认并修复：
+
+**发现的问题**
+1. 手动/定时/出站重置会调用 `QueryStats(reset=true)` 清零 Xray 计数器，且兼容层
+   忽略失败后照样清 DB。重置失败/超时/并发时，下一轮把整段累计值重新计一遍。
+2. 速度由前端对两次列表快照做差分。全部空闲时列表数据不变，effect 不执行，
+   速度永久停留在最后一次值；采样相位与后端落库不对齐时刷新呈一档一档。
+3. 客户端同时关联 MASQUE 与普通入站时，裸邮箱计数器被 per-attachment 路径
+   吞掉（仅当没有任何 attachment 样本时才走旧聚合路径）。
+
+**实现（对齐 3x-ui）**
+- 所有重置（客户端/入站/全部/出站）只清数据库 `up/down`，**不重置 Xray 计数器、
+  不清 `last_up/last_down` 基准**；删除 `needs_reconcile` 写入/读取、
+  `reset_client_verified`、`mark_reconcile`、`StatsClient::reset_pattern`、
+  `identity::traffic_pattern`。旧列保留兼容。
+- 流量 job 每次成功采样后用本轮增量 ÷ 单调时钟真实间隔（`Instant`）计算
+  `AppState.traffic_speeds`（入站 tag + 客户端邮箱，字节/秒）；空闲实体无条目。
+  采样前/后比较 `start_epoch`，若期间 Xray 重启则丢弃该样本，避免新进程计数器
+  减旧基准。
+- API：`/inbounds/list/slim` 每行加 `upSpeed/downSpeed`；
+  `/clients/list`、`/list/paged`、`/get/{email}` 的 `traffic` 加同名字段。
+- 前端 `useInbounds`/`useClients` 删除差分/缓存逻辑，直接展示后端速率；
+  DBInbound / ClientTraffic schema 增加对应字段。空闲时后端返回 0，速度标签
+  在一个采集周期内消失。
+- MASQUE 裸邮箱样本按 MASQUE attachment 统计；多 MASQUE 入站共享一个裸邮箱
+  计数，只计一次。
+
+**验证**
+- `cargo test` 113/113（新增 `speed_divides_the_delta_by_the_real_sample_interval`、
+  `masque_bare_email_counter_survives_a_normal_attachment`、
+  `resetting_totals_keeps_baselines_and_bills_only_new_bytes`；移除 reconcile 测试）。
+- `cargo clippy --all-targets -- -D warnings` 零警告；`cargo fmt --check` 通过。
+- 前端 `npm run build` 成功；`tsc --noEmit` 改动文件无报错（全套仍有 429 个
+  既有 devDependencies 缺失报错）。
+- `tmp/e2e-traffic-accuracy/e2e.py`（真面板 + fake xray + fake StatsService）
+  13 项全通过：首次计费、速度存在且上下行比例正确、空闲清速度、客户端重置
+  不重复计费、入站重置不重复计费且清成员客户端累计。
+- `tmp/e2e-traffic-real/e2e.py`（真实 Xray 26.10.31 + 真实
+  SOCKS→VLESS→本地 HTTP，限速 ~2 MB/s）15 项全通过：8 MiB 下载后客户端
+  `down=8,388,725`（响应体 + 117 字节 HTTP 头），入站 `down=8,388,608`
+  （响应体），差 117 字节/0.0014%；观测速度 `2,158,371 B/s` 与限速一致；
+  空闲 3 秒速度归零；客户端重置后仅再下载 2 MiB，只新增 `2,097,269`；
+  入站重置同时清零成员客户端且随后只计新字节。
+
+**已知口径**：入站计数器与客户端（user）计数器在 Xray 中不同层采集，可能相差
+HTTP 头/协议帧等少量字节（本次实测 117 B），不要求逐字节相等；3x-ui 相同。
+**未验证**：真实 Linux/musl、真实公网网络速度抖动、MASQUE 混合附着的真实
+计数、gRPC 故障注入。见 `KNOWN-ISSUES.md` G6–G8。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

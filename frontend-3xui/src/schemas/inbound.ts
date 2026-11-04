@@ -4,6 +4,9 @@ export const SlimInboundSchema = z
   .object({
     id: z.number(),
     protocol: z.string(),
+    // Bytes/s from the backend traffic tick; 0 when the inbound is idle.
+    upSpeed: z.number().optional(),
+    downSpeed: z.number().optional(),
   })
   .loose();
 

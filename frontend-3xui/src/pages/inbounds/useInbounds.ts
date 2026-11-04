@@ -29,32 +29,6 @@ export interface SubSettings {
 
 type DBInboundInstance = InstanceType<typeof DBInbound>;
 
-// Speed is delta-derived, so it can't be recomputed until the first poll after
-// mount; navigating away and back would otherwise blank the column for up to one
-// poll. Cache the last speed map across mounts (module scope) and reseed from it
-// while recent, so returning to the page shows the last throughput immediately
-// and the next poll refreshes it.
-const SPEED_CACHE_TTL_MS = 15000;
-let inboundSpeedCache: { at: number; data: Record<number, InboundSpeedEntry> } = {
-  at: 0,
-  data: {},
-};
-
-function sameInboundSpeedMap(
-  a: Record<number, InboundSpeedEntry>,
-  b: Record<number, InboundSpeedEntry>,
-): boolean {
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  for (const rawKey of keys) {
-    const key = Number(rawKey);
-    const left = a[key];
-    const right = b[key];
-    if (!right || left.up !== right.up || left.down !== right.down) return false;
-  }
-  return true;
-}
-
 interface TrafficDelta {
   Tag: string;
   Up: number;
@@ -260,55 +234,29 @@ export function useInbounds() {
     dbInboundsRef.current = dbInbounds;
   });
 
-  const [inboundSpeed, setInboundSpeed] = useState<Record<number, InboundSpeedEntry>>(() =>
-    Date.now() - inboundSpeedCache.at < SPEED_CACHE_TTL_MS ? inboundSpeedCache.data : {},
-  );
-  useEffect(() => {
-    inboundSpeedCache = { at: Date.now(), data: inboundSpeed };
-  }, [inboundSpeed]);
+  // The backend computes each inbound's rate from the same deltas it bills,
+  // over the real sample interval. Idle inbounds carry 0, so the tag clears
+  // instead of freezing on the last measured value as the old snapshot diff
+  // did. This state remains for the (currently disabled) WS push path.
+  const [wsInboundSpeed, setWsInboundSpeed] = useState<Record<number, InboundSpeedEntry>>({});
 
-  // Without the WS traffic push, derive speed from successive slim polls'
-  // cumulative inbound counters (5s apart, held briefly so a quiet poll does
-  // not blank the column).
-  const inboundSpeedSamples = useRef<
-    Record<number, { up: number; down: number; at: number }>
-  >({});
-  const lastInboundSample = useRef<{
-    at: number;
-    data: Map<number, [number, number]>;
-  } | null>(null);
-  useEffect(() => {
-    if (dbInbounds.length === 0) return;
-    const now = Date.now();
-    const previous = lastInboundSample.current;
-    const seconds = previous ? Math.max((now - previous.at) / 1000, 0.5) : 0;
-    const data = new Map<number, [number, number]>();
+  const serverInboundSpeed = useMemo(() => {
+    const speeds: Record<number, InboundSpeedEntry> = {};
     for (const inbound of dbInbounds) {
-      const up = inbound.up || 0;
-      const down = inbound.down || 0;
-      data.set(inbound.id, [up, down]);
-      const last = previous?.data.get(inbound.id);
-      if (last && seconds > 0) {
-        const deltaUp = Math.max(0, up - last[0]);
-        const deltaDown = Math.max(0, down - last[1]);
-        if (deltaUp > 0 || deltaDown > 0) {
-          inboundSpeedSamples.current[inbound.id] = {
-            up: deltaUp / seconds,
-            down: deltaDown / seconds,
-            at: now,
-          };
-        }
-      }
+      const up = inbound.upSpeed || 0;
+      const down = inbound.downSpeed || 0;
+      if (up > 0 || down > 0) speeds[inbound.id] = { up, down };
     }
-    lastInboundSample.current = { at: now, data };
-    const fresh: Record<number, InboundSpeedEntry> = {};
-    for (const [rawId, entry] of Object.entries(inboundSpeedSamples.current)) {
-      const id = Number(rawId);
-      if (now - entry.at > 15_000) delete inboundSpeedSamples.current[id];
-      else fresh[id] = { up: entry.up, down: entry.down };
-    }
-    setInboundSpeed((prev) => (sameInboundSpeedMap(prev, fresh) ? prev : fresh));
+    return speeds;
   }, [dbInbounds]);
+
+  const inboundSpeed = useMemo(
+    () =>
+      Object.keys(wsInboundSpeed).length === 0
+        ? serverInboundSpeed
+        : { ...serverInboundSpeed, ...wsInboundSpeed },
+    [serverInboundSpeed, wsInboundSpeed],
+  );
 
   const [onlineClients, setOnlineClients] = useState<string[]>([]);
 
@@ -575,7 +523,7 @@ export function useInbounds() {
         if (tr.IsInbound === false) continue;
         byTag.set(tr.Tag, tr);
       }
-      setInboundSpeed((prev) => {
+      setWsInboundSpeed((prev) => {
         const next = { ...prev };
         for (const ib of dbInboundsRef.current) {
           if (!inScope(ib)) continue;

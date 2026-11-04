@@ -16,10 +16,6 @@ pub fn split_stat_email(identity: &str) -> Option<(i64, &str)> {
     Some((inbound_id, email))
 }
 
-pub fn traffic_pattern(inbound_id: i64, email: &str) -> String {
-    format!("user>>>{}>>>traffic>>>", stat_email(inbound_id, email))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

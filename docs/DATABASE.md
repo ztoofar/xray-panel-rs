@@ -105,7 +105,7 @@
 | email | TEXT NOT NULL UNIQUE | 客户端唯一标识，也是统计邮箱 |
 | enable | INTEGER NOT NULL DEFAULT 1 | |
 | up / down | INTEGER NOT NULL DEFAULT 0 | 累计字节（跨全部 attachment 汇总） |
-| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 旧版聚合基准；0.2.7 起仅用于裸邮箱外部配置，面板生成的统计按 `client_inbound_traffic` 逐 attachment 计算 |
+| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 旧版聚合基准；0.2.7 起仅用于裸邮箱外部配置与 MASQUE 裸邮箱计量，面板生成的常规统计按 `client_inbound_traffic` 逐 attachment 计算 |
 | total | INTEGER NOT NULL DEFAULT 0 | 配额，0=不限 |
 | expiry_time | INTEGER NOT NULL DEFAULT 0 | Unix 时间；UI 以毫秒写，旧数据可能是秒，代码统一归一化 |
 | settings | TEXT NOT NULL DEFAULT '{}' | 协议凭据 JSON + `subId` |
@@ -138,8 +138,8 @@
 | --- | --- | --- |
 | client_id | FK clients(id) ON DELETE CASCADE | 主键之一 |
 | inbound_id | FK inbounds(id) ON DELETE CASCADE | 主键之一 |
-| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 该 attachment 上次采集值 |
-| needs_reconcile | INTEGER NOT NULL DEFAULT 0 | 1 = 上次定时重置部分失败，下一份样本只接管基准、不计增量 |
+| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 该 attachment 上次采集值；**重置流量时不清零** |
+| needs_reconcile | INTEGER NOT NULL DEFAULT 0 | 0.2.24 起不再写入（保留列兼容旧库）；重置不再触碰 Xray 计数器，因此无需 reconcile |
 | updated_at | INTEGER NOT NULL DEFAULT 0 | 秒 |
 
 主键 `(client_id, inbound_id)`，索引 `idx_client_inbound_traffic_inbound(inbound_id)`。
@@ -152,7 +152,7 @@
 | --- | --- | --- |
 | tag | TEXT PK | 出站 tag |
 | up / down | INTEGER NOT NULL DEFAULT 0 | 累计字节 |
-| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 上次累计 |
+| last_up / last_down | INTEGER NOT NULL DEFAULT 0 | 上次累计；重置流量时不清零 |
 | updated_at | INTEGER NOT NULL DEFAULT 0 | 秒 |
 
 ### outbound_subscriptions
@@ -202,13 +202,15 @@ schema 默认值（2026-11-01 起），因此 0007 及更早的备份仍可导�
 1. `clients.email` 全局唯一；`inbounds.tag` 全局唯一。
 2. 每个客户端至少有一条 `client_inbounds` 关系；读取时若无关联则回退到
    `clients.inbound_id`。
-3. 客户端/入站累计值必须与 Xray 统计身份对应：任何清零数据库累计值的操作，
-   必须同时重置该客户端**全部** attachment 的 Xray 计数，否则下一轮会被
-   计数器回绕逻辑当作新增量而重复计流量。定时重置在任一 attachment 失败时
-   不清零累计值，只把基准标记为 `needs_reconcile`。
+3. 重置流量只清零 `clients.up/down`、`inbounds.up/down`、
+   `outbound_traffics.up/down`，**绝不重置 Xray 计数器，也不清零
+   `last_up/last_down` 基准**（与 3x-ui 一致）。后续采样只计基准之后的新字节，
+   因此重置 RPC 失败、超时或与采集并发都不会把整段累计值再计一次。
 4. 面板生成的配置按 attachment 计量，增量基准以 `client_inbound_traffic` 为准；
-   `clients.last_up/last_down` 只服务裸邮箱外部配置，不再代表聚合基准。
-5. `last_up/last_down`、`needs_reconcile` 是内部字段，不通过 API 序列化。
+   `clients.last_up/last_down` 只服务裸邮箱外部配置（以及 MASQUE 的裸邮箱计量），
+   不再代表聚合基准。Xray 新进程启动时两者一并清零，累计值不动。
+5. `last_up/last_down`、`needs_reconcile` 是内部字段，不通过 API 序列化；
+   `needs_reconcile` 自 0.2.24 起仅为旧库兼容列。
 6. 删除入站会级联删除客户端（外键）及 `client_inbounds` / `client_inbound_traffic`
    关系。
 

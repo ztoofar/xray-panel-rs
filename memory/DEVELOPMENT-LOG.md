@@ -1066,3 +1066,49 @@
   高级页标签切换检查通过。发布包本机下载校验因网络受限未完成。
 - 未验证：有效 IP数据云 Key 成功响应（T28）、真实 Linux/musl（T26）、
   真实公网客户端（T27）。
+
+## 2026-11-05 01:35 — 流量统计/速度对齐 3x-ui（0.2.24，未打包）
+
+- 起因：用户反馈入站/客户端流量计算不对、速度与实际使用对不上，要求对比
+  3x-ui 并做到准确。
+- 对比结论：3x-ui 的流量 job 只用 `reset=false` 的累计计数 + 内存基准算增量；
+  重置流量只清数据库累计值，从不清零 Xray 计数器。本项目多处调用
+  `reset_pattern(reset=true)` 且兼容层忽略失败，存在重复计费路径；速度由前端
+  差分列表快照，全部空闲时永远不更新。
+- 修改：
+  - `src/db/{clients,inbounds,outbounds}.rs`：重置只清 `up/down`，保留
+    `last_up/last_down` 基准。
+  - `src/db/client_traffic.rs`：删除 reconcile 机制与 `reset_client_verified`/
+    `mark_reconcile`；新增“重置后只计新字节”测试。
+  - `src/xray/stats.rs`：`query` 不再带 reset，删除 `reset_pattern`。
+  - `src/xray/identity.rs`：删除 `traffic_pattern`。
+  - `src/jobs.rs`：定时重置改为只清 DB；新增 `AppState.traffic_speeds`
+    速率快照（真实 `Instant` 间隔）、`speed_sample`、`client_samples`
+    （MASQUE 裸邮箱）、采样前后 `start_epoch` 防重启竞态；错误/重启时清速度。
+  - `src/state.rs` / `src/main.rs`：新增 `TrafficSpeeds`/`SpeedSample` 状态及
+    维护期 shrink。
+  - `src/api/compat.rs`：slim 入站与客户端 `traffic` 下发 `upSpeed/downSpeed`；
+    所有兼容重置接口改为 DB-only。
+  - 前端 `useInbounds.ts`/`useClients.ts`/`dbinbound.ts`/schemas：删除快照差分
+    与 15 秒缓存，直接展示后端速率。
+  - 文档：`docs/{ARCHITECTURE,DATABASE,API,KNOWN-ISSUES,DECISIONS}.md`
+    （D049；G7/G8）。
+- 版本：0.2.23 → **0.2.24**（未打包/未打 tag）。
+- 验证：`cargo test` 113/113、clippy 零警告、fmt 通过、前端 build 成功；
+  `tmp/e2e-traffic-accuracy/e2e.py` 13/13 PASS（首次计费、速度上下行比例、
+  空闲清速度、客户端/入站重置不重复计费）。
+- 未验证：真实 Xray 计数器口径、真实网络速度抖动、MASQUE 混合附着真实计数、
+  真实 Linux/musl。
+
+### 2026-11-05 01:34 — 追加真实 Xray 验证
+
+- `tmp/e2e-traffic-real/e2e.py`：真实 Xray 26.10.31（Windows），客户端
+  SOCKS→VLESS→本地限速 HTTP 服务器，15/15 PASS。
+- 关键数据：8 MiB 下载，客户端 `down=8,388,725`，入站 `down=8,388,608`
+  （差 117 字节 HTTP 头）；速度观测 `2,158,371 B/s`；空闲 3 秒归零；
+  重置后再下载 2 MiB，只新增 `2,097,269`，未重计旧累计；入站重置清成员
+  客户端。
+- 测试环境注意：Xray 26 的 freedom 默认黑洞来自 VLESS 等入站的私有/回环
+  目标（SSRF 防护），e2e 通过 direct outbound 的
+  `settings.finalRules:[{action:allow,ip:[geoip:private]}]` 放开；已记录到
+  `KNOWN-ISSUES.md` G7。

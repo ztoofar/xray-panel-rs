@@ -214,29 +214,20 @@ pub async fn set_traffic(
     Ok(())
 }
 
+// Zero only the accumulated total. Xray's counters keep running and the
+// stored baselines stay, so the next sample bills exactly the bytes after
+// this point: resetting the counters used to re-bill everything already
+// counted whenever the Xray reset failed (3x-ui never resets them either).
 pub async fn reset_traffic(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE clients SET up = 0, down = 0, last_up = 0, last_down = 0,
-         last_reset_time = ?, updated_at = ? WHERE id = ?",
+        "UPDATE clients SET up = 0, down = 0, last_reset_time = ?, updated_at = ?
+         WHERE id = ?",
     )
     .bind(now())
     .bind(now())
     .bind(id)
     .execute(db)
     .await?;
-    Ok(())
-}
-
-// Record a scheduled reset attempt without clearing traffic. Used when at
-// least one attachment reset failed: the totals stay, attachments are flagged
-// for reconciliation, and the next attempt waits for the next reset period.
-pub async fn touch_reset_time(db: &SqlitePool, id: i64, ts: i64) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE clients SET last_reset_time = ?, updated_at = ? WHERE id = ?")
-        .bind(ts)
-        .bind(ts)
-        .bind(id)
-        .execute(db)
-        .await?;
     Ok(())
 }
 

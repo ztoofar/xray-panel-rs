@@ -57,12 +57,12 @@
 | `src/auth.rs` | Argon2id、会话 Cookie、CSRF 校验、认证中间件 |
 | `src/notify.rs` | 登录失败的企业微信 webhook 通知、真实 IP 头解析、文本消息清理 |
 | `src/service.rs` | 由 DB 生成 Xray 配置、写盘、测试、应用/重启 |
-| `src/jobs.rs` | 周期流量/在线采集、配额与到期执行、重置、历史记录 |
+| `src/jobs.rs` | 周期流量/在线采集、后端速率计算、配额与到期执行、重置、历史记录 |
 | `src/traffic.rs` | 纯计数器增量：缺失/负数保留基准、回绕按当前值计新增 |
-| `src/db/client_traffic.rs` | per-attachment 基准的事务写入、全量/确认重置、reconcile 标记 |
+| `src/db/client_traffic.rs` | per-attachment 基准的事务写入；重置只清累计值、保留基准 |
 | `src/xray/supervisor.rs` | Xray 子进程生命周期、日志读取、退避重启 |
 | `src/xray/config.rs` | 生成最终 Xray 配置，强制 `stats/api/policy/routing` 约束 |
-| `src/xray/identity.rs` | 统计身份 `<inbound_id>:<email>` 与流量 pattern |
+| `src/xray/identity.rs` | 统计身份 `<inbound_id>:<email>`（MASQUE 用裸邮箱） |
 | `src/xray/stats.rs` | gRPC StatsService 客户端、在线用户解码、超时与重连 |
 | `src/xray/link.rs` | 分享链接生成 |
 | `src/xray/subscription.rs` | 订阅正文解析、分享链接→出站、标签稳定分配 |
@@ -198,11 +198,15 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
      计数器回绕时把当前值视为新增量。缺失或负数样本保留原基准。
   5. 在**一个 SQLite 事务**内写回客户端累计值、per-attachment 基准和
      `last_online`；inbounds/outbound_traffics 同样按方向独立判断。
-  6. 执行配额、到期、`limitIp` 超限禁用；按 `reset_days`/入站定时策略重置。
-     只有全部 Xray 计数器都确认重置成功才清数据库；部分失败时只标记
-     `needs_reconcile`，下一轮取到样本后“只更新基准、不记增量”。
-  7. 更新在线集合（连接信号 ∪ 本轮流量信号），窗口 = `2×poll` 并限制在 20–60 秒。
-  8. 记录全局流量历史（最多 240 点）。
+  6. 用本轮增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
+     每个客户端邮箱的字节/秒，写入 `AppState.traffic_speeds`；空闲实体没有条目，
+     UI 因此清空速度。`/panel/api/inbounds/list/slim` 返回 `upSpeed/downSpeed`，
+     客户端列表在 `traffic` 内返回同名速率。
+  7. 执行配额、到期、`limitIp` 超限禁用；按 `reset_days`/入站定时策略重置。
+     **重置只清数据库累计值**（`up/down`），不清 Xray 计数器和 `last_*` 基准，
+     与 3x-ui 一致；随后只计新字节，重置 RPC 失败或并发也不会重复计费。
+  8. 更新在线集合（连接信号 ∪ 本轮流量信号），窗口 = `2×poll` 并限制在 20–60 秒。
+  9. 记录全局流量历史（最多 240 点）。
 - Xray 子进程**新启动**时（supervisor 的 `start_epoch` 增加，首次启动也算），
   先在一个事务里把 clients/inbounds/outbound_traffics/client_inbound_traffic
   的 `last_*` 基准清零（不动累计 `up/down`），再开始采样。generation 变化
@@ -212,7 +216,12 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 - 统计身份是 `<inbound_id>:<email>`：同一客户端关联多个入站时，Xray 的每个
   attachment 有独立计数器；面板逐 attachment 计算增量后汇总回客户端，并用身份
   反查入站 tag。配置写盘时 routing 的 `user` 规则会从面板邮箱展开为这些身份；
-  API 返回仍用邮箱。外部配置直接使用裸邮箱时保留旧聚合路径（clients.last_*）。
+  API 返回仍用邮箱。MASQUE 不接受含 `:` 的邮箱，改为裸邮箱计量；同一客户端
+  同时关联 MASQUE 和普通入站时，两条计数器都会计入。外部配置直接使用裸邮箱时
+  保留旧聚合路径（clients.last_*）。
+- 入站计数器与客户端（user）计数器统计位置不同：前者在代理层，包含协议
+  握手/加密开销和未认证流量；后者是已认证用户的有效负载。两者不要求逐字节
+  相等，3x-ui 也是同样的口径。
 - 配额/到期禁用后是否重启 Xray 由 `restartXrayOnClientDisable` 控制（默认 true）。
 
 ## 7. 认证与安全

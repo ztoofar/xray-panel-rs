@@ -25,6 +25,8 @@ export type DBInboundInit = Partial<{
   userId: number;
   up: number;
   down: number;
+  upSpeed: number;
+  downSpeed: number;
   total: number;
   remark: string;
   enable: boolean;
@@ -74,6 +76,9 @@ export class DBInbound {
   userId: number;
   up: number;
   down: number;
+  // Bytes/s computed by the backend traffic job for the last sample window.
+  upSpeed: number;
+  downSpeed: number;
   total: number;
   remark: string;
   enable: boolean;
@@ -106,6 +111,8 @@ export class DBInbound {
     this.userId = 0;
     this.up = 0;
     this.down = 0;
+    this.upSpeed = 0;
+    this.downSpeed = 0;
     this.total = 0;
     this.remark = '';
     this.enable = true;

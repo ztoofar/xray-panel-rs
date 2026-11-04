@@ -13,6 +13,9 @@ const nullableNumberArray = z
 export const ClientTrafficSchema = z.object({
   up: z.number().optional(),
   down: z.number().optional(),
+  // Bytes/s from the backend traffic tick; absent/0 when the client is idle.
+  upSpeed: z.number().optional(),
+  downSpeed: z.number().optional(),
   total: z.number().optional(),
   expiryTime: z.number().optional(),
   enable: z.boolean().optional(),

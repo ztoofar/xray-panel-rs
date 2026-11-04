@@ -176,11 +176,12 @@ glibc 下调用 `malloc_trim(0)`；musl 的 mallocng 自行归还空闲页，没
 generation 变化只负责清在线集合与在线 API 探测缓存。验证：单元测试
 `reset_all_baselines_keeps_accumulated_totals`；真机重启场景未验证（见 G6）。
 
-### G2 已修复：定时重置失败仍清零数据库 —— 已修复（2026-10-31）
+### G2 已修复：定时重置失败仍清零数据库 —— 已修复（2026-10-31，0.2.24 起由 G7 取代）
 客户端/入站的定时重置现在要求全部 Xray 计数器确认成功才清零数据库；任一失败
 只把该客户端全部 attachment 标记 `needs_reconcile` 并记录本次尝试，不清累计
 流量。验证：`partial_reset_is_reconciled_without_billing_the_gap`、
-`verified_reset_clears_totals_and_baselines`。
+`verified_reset_clears_totals_and_baselines`。0.2.24 起不再重置 Xray 计数器，
+这两个测试与 reconcile 机制一起删除，模型见 G7。
 
 ### G3 已修复：缺失统计项被当作 0 —— 已修复（2026-10-31）
 `QueryStats` 缺失的方向现在是 `None`，保留原基准；负数样本同样被忽略。
@@ -200,8 +201,37 @@ generation 变化只负责清在线集合与在线 API 探测缓存。验证：�
 
 ### G6 尚未在真实 Xray 上做故障注入 —— 未验证
 以上结论来自源码审查与 SQLite 单元测试；尚未在真实 Debian + Xray 上验证：
-真实重启后计数、真实 `GetUsersStats` 缺失行为、真实 `reset_pattern` 部分失败、
-gRPC 超时恢复。建议按 `TODO.md` T9 的清单执行。
+真实重启后计数、真实 `GetUsersStats` 缺失行为、gRPC 超时恢复。建议按
+`TODO.md` T9 的清单执行。`reset_pattern` 已于 0.2.24 从代码中移除。
+
+### G7 0.2.24：重置改为 3x-ui 模型，速率改由后端计算 —— 假/真 Xray 均已验证
+- 重置不再调用 `QueryStats(reset=true)`，只清数据库 `up/down`，保留
+  `last_*` 基准；原先“重置失败后下一轮重复计整段累计值”的路径消失，
+  `needs_reconcile` 不再写入。
+- 速率在每个成功采样周期内由后端计算（本轮增量 ÷ 单调时钟真实间隔），
+  通过入站 slim 的 `upSpeed/downSpeed` 和客户端 `traffic.upSpeed/downSpeed`
+  下发；空闲实体无条目，前端不再差分快照，也不会永久停留在旧速度。
+- 验证：
+  - `tmp/e2e-traffic-accuracy/e2e.py`（假 Xray + 假 StatsService）13 项全通过；
+  - `tmp/e2e-traffic-real/e2e.py`（真实 Xray 26.10.31，Windows；真实
+    SOCKS→VLESS→本地 HTTP，限速 ~2 MB/s）15 项全通过：
+    8 MiB 下载后客户端 `down=8,388,725`（响应体 + 117 字节 HTTP 头），
+    入站 `down=8,388,608`（响应体）；两者相差 117 字节（0.0014%）。
+    观测速度 2,158,371 B/s，与限速一致；空闲 3 秒后速度归零；
+    重置后只再下载 2 MiB，客户端只新增 `2,097,269`，未重计旧累计。
+  - `cargo test` 113/113、clippy 零警告。
+- 仍未验证：真实 Linux/musl、真实网络抖动、MASQUE 混合附着的真实计数、
+  gRPC 故障注入（见 G6）。
+- 上游行为记录：Xray 26 的 freedom 对来自 VLESS/VMess/Trojan/Hysteria/
+  WireGuard/Shadowsocks 入站的**私有/回环目标默认黑洞 30–90 秒**
+  （SSRF 防护，`defaultBlockPrivateRule`）。需要访问内网时，必须给 direct
+  outbound 配 `settings.finalRules: [{"action":"allow","ip":["geoip:private"]}]`。
+  3x-ui 使用同一个 Xray 核心，行为相同，不是面板统计问题。
+
+### G8 重置边界仍有一个采集周期的残差 —— 与 3x-ui 相同
+手动重置与采集并发时，重置前刚采样到的增量可能落在重置之后写入，最多
+一个 `traffic_poll_secs` 的流量会留在重置后的累计值里。3x-ui 的
+`submitTrafficWrite` 也有同样的边界，属于“重置瞬间”口径而非重复计费。
 
 ## H. 日志查看器
 

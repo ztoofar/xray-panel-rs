@@ -276,49 +276,24 @@ export function useClients(options: UseClientsOptions = {}) {
   >({});
   const clientSpeedExpiryTimers = useRef<Partial<Record<ClientSpeedSource, number>>>({});
   const clientSpeedSourceVersions = useRef<Record<ClientSpeedSource, number>>({ xray: 0, tuic: 0 });
-  // The backend has no WebSocket bridge, so derive per-client speed from the
-  // 5s paged-list poll by diffing the cumulative counters instead.
-  const [polledSpeed, setPolledSpeed] = useState<Record<string, ClientSpeedEntry>>({});
-  const polledSpeedSamples = useRef<Record<string, { up: number; down: number; at: number }>>({});
-  const lastPollSample = useRef<{
-    at: number;
-    data: Map<string, { up: number; down: number }>;
-  } | null>(null);
-  useEffect(() => {
-    if (clients.length === 0) return;
-    const now = Date.now();
-    const previous = lastPollSample.current;
-    const seconds = previous ? Math.max((now - previous.at) / 1000, 0.5) : 0;
-    const data = new Map<string, { up: number; down: number }>();
+  // Per-client rates come from the backend traffic tick, which measures each
+  // delta over the real sample interval. Idle clients report 0, so the tag
+  // clears instead of freezing on the last diffed snapshot.
+  const serverSpeed = useMemo(() => {
+    const speeds: Record<string, ClientSpeedEntry> = {};
     for (const client of clients) {
-      const up = client.traffic?.up || 0;
-      const down = client.traffic?.down || 0;
-      data.set(client.email, { up, down });
-      const last = previous?.data.get(client.email);
-      if (last && seconds > 0) {
-        const deltaUp = Math.max(0, up - last.up);
-        const deltaDown = Math.max(0, down - last.down);
-        if (deltaUp > 0 || deltaDown > 0) {
-          polledSpeedSamples.current[client.email] = {
-            up: deltaUp / seconds,
-            down: deltaDown / seconds,
-            at: now,
-          };
-        }
-      }
+      const up = client.traffic?.upSpeed || 0;
+      const down = client.traffic?.downSpeed || 0;
+      if (up > 0 || down > 0) speeds[client.email] = { up, down };
     }
-    lastPollSample.current = { at: now, data };
-    const fresh: Record<string, ClientSpeedEntry> = {};
-    for (const [email, entry] of Object.entries(polledSpeedSamples.current)) {
-      if (now - entry.at > 15_000) delete polledSpeedSamples.current[email];
-      else fresh[email] = { up: entry.up, down: entry.down };
-    }
-    setPolledSpeed((prev) => (sameSpeedMap(prev, fresh) ? prev : fresh));
+    return speeds;
   }, [clients]);
 
   const clientSpeed = useMemo(() => {
-    const combined: Record<string, ClientSpeedEntry> = {};
-    for (const source of [...Object.values(clientSpeedBySource), polledSpeed]) {
+    const combined: Record<string, ClientSpeedEntry> = { ...serverSpeed };
+    // WS sources are additive among themselves (e.g. TUIC + Xray); this
+    // trimmed build has no WebSocket, so normally only the server map exists.
+    for (const source of Object.values(clientSpeedBySource)) {
       if (!source) continue;
       for (const [email, speed] of Object.entries(source)) {
         const current = combined[email] ?? { up: 0, down: 0 };
@@ -326,7 +301,7 @@ export function useClients(options: UseClientsOptions = {}) {
       }
     }
     return combined;
-  }, [clientSpeedBySource, polledSpeed]);
+  }, [clientSpeedBySource, serverSpeed]);
 
   useEffect(
     () => () => {

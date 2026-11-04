@@ -153,27 +153,11 @@ pub async fn reset_outbound(
     State(state): State<AppState>,
     Path(tag): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let running = state.xray.status().await.running;
-    if let Err(err) = state
-        .stats
-        .reset_pattern(&format!("outbound>>>{tag}>>>traffic>>>"))
-        .await
-    {
-        if running {
-            return Err(AppError::Apply(format!("重置出站流量统计失败：{err}")));
-        }
-    }
     db::outbounds::reset_traffic(&state.db, &tag).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
 pub async fn reset_outbound_all(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    let running = state.xray.status().await.running;
-    if let Err(err) = state.stats.reset_pattern("outbound>>>").await {
-        if running {
-            return Err(AppError::Apply(format!("重置出站流量统计失败：{err}")));
-        }
-    }
     db::outbounds::reset_all(&state.db).await?;
     Ok(Json(json!({ "ok": true })))
 }
