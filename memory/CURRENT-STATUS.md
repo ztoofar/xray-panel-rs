@@ -9,17 +9,19 @@
 | 项目 | 状态 |
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.25`（发布 v0.2.25） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.23`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,227 字节，SHA256 `9bd16e84...3811`（GitHub asset digest）；Release 页面只显示更新内容 |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.25`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,516,624 字节**，asset digest `sha256:d9128d0c...92a5`；Release 页面只显示更新内容 |
 | 当前源码 | `0.2.25`：在 §2.39 的 3x-ui 计量模型上恢复 `/ws` 实时 `traffic` 推送，前端按真实采集间隔换算速度；无关联客户端的入站也由入站计数器实时显示速度。详见 §2.40 |
-| 上一版 | GitHub Release `v0.2.22`：tar 5,473,730 字节，asset digest `sha256:c3a60555...44e9` |
+| 上一版 | GitHub Release `v0.2.24`：tar 5,467,602 字节，asset digest `sha256:88471d1f...30eb` |
+| 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
+| 0.2.24 SHA256 | `88471d1f81d1e287c069c10b2753702dc2da7b177fa27cd3bb7cecde897330eb`（tar.gz，GitHub asset digest） |
 | 0.2.23 SHA256 | `9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`（tar.gz，GitHub asset digest） |
 | 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-05 01:1x 由当前 `frontend-3xui/` 源码重建（速度改读后端字段） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-05 02:1x 由当前 `frontend-3xui/` 源码重建（启用实时 WS） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.23 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
+| musl 产物 | 0.2.25 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -1046,6 +1048,20 @@ HTTP 头/协议帧等少量字节（本次实测 117 B），不要求逐字节�
     `type:"traffic"` WS 帧，含无客户端入站增量、客户端增量、
     `clientTrafficIntervalMs=2000`；空闲后两个速度标签都消失。
 - 已发布：GitHub `v0.2.25`（详见 §2.41）。
+
+## 2.41 v0.2.25 发布（2026-11-05）—— 已验证
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.25`；提交 `ade85bd`，
+  tag `v0.2.25`。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.25>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,516,624 字节**，
+  GitHub asset digest
+  `sha256:d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`。
+- Actions：release run `41884947044` 成功；main CI run `41884941034` 成功。
+- 发布前验证：`cargo test` 113/113、clippy 零警告、fmt、前端 build；
+  fake e2e 13/13、无客户端入站 4/4、真实 Xray 15/15、无头 Chrome UI+WS
+  10/10。
+- **未验证**：真实 Linux/musl 运行、真实公网网络抖动、gRPC 故障注入。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

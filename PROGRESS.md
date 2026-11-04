@@ -1320,3 +1320,10 @@ SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=
 - 验证：`cargo test` 113/113、clippy/fmt、前端 build；fake 13/13、
   无客户端入站 4/4、真实 Xray 15/15、无头 Chrome UI+WS 10/10（两个入站行
   均显示速度，其中 Solo 无客户端；WS 帧含该入站增量与 2s 间隔；空闲清零）。
+
+### v0.2.25 发布（2026-11-05）
+
+- 提交 `ade85bd`，tag `v0.2.25`。
+- Release 资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,516,624 字节，
+  asset digest `sha256:d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`。
+- Actions run `41884947044` 成功；main CI run `41884941034` 成功。

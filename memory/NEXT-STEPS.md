@@ -29,7 +29,8 @@
   推送；前端按帧内真实采集间隔换算速度，无客户端入站也由入站计数器显示
   实时速度；REST `upSpeed/downSpeed` 保留为 WS 不可用兜底。详见
   `CURRENT-STATUS.md` §2.39/§2.40、`DECISIONS.md` D049/D050。
-- 发布：GitHub `v0.2.25`（tag 指向本次修复提交；资产与 digest 见 §2.41）。
+- 发布：GitHub `v0.2.25`（tag → `ade85bd`，资产 5,516,624 字节，
+  digest `sha256:d9128d0c...92a5`；Actions run `41884947044` 成功）。
 - 验证：`cargo test` 113/113、clippy 零警告、fmt、前端 build；
   fake e2e 13/13；无客户端入站 4/4；真实 Xray 15/15；无头 Chrome UI+WS
   10/10（两个入站行均显示速度、WS 帧含无客户端入站增量、空闲清零）。

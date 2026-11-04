@@ -1133,3 +1133,14 @@
   无客户端入站 4/4；真实 Xray 15/15；无头 Chrome UI+WS 10/10（两个入站行
   均显示速度，其中 Solo 无客户端；WS 帧含无客户端入站增量与 2s 间隔；
   空闲后两行速度均消失）。
+
+## 2026-11-05 02:18 — v0.2.25 发布
+
+- 版本 0.2.25；提交 `ade85bd`，tag `v0.2.25`。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.25>
+  资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,516,624 字节，
+  GitHub asset digest
+  `sha256:d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`。
+- Actions：release run `41884947044` 成功；main CI run `41884941034` 成功。
+- 内容：恢复 3x-ui `/ws` 实时 traffic 推送；无客户端入站速度由入站计数器
+  实时显示；REST 速率保留兜底。
