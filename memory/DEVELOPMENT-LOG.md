@@ -949,3 +949,48 @@
   二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb`，
   12,861,232 字节，x86-64 静态 ELF、已 strip，内含 `LUMEN_VERSION=0.2.21`。
 - 未验证：真实 Linux/musl 运行（TODO T26）。
+
+## 2026-11-04 22:37 — 位置查询改用纯真库（zxinc）
+
+- 背景：用户反馈 IP 位置查询与 tool.lu/ip 不一致。复现：ipwho.is 将
+  `115.193.109.37`（浙江杭州电信）定位为江苏南京；zxinc/淘宝均返回浙江杭州。
+- 改动：`src/api/ip_location.rs`
+  - 主源 ipwho.is → zxinc（`ip.zxinc.org/api.php?type=json`，纯真库，免 key）；
+  - 新增 `parse_zxinc`：拆分 `data.country` 的 `–`/Tab 层级（兼容 IPv6 的空层），
+    `data.local` 作为运营商并折叠多余空白，多出的层级并入城市；
+  - 回退链改为 zxinc → ipwho.is；移除 ipapi.co（常返回 RateLimited）；
+  - 单元测试：新增 3 个 zxinc 用例，移除 2 个 ipapi 用例。
+- 文档：`docs/API.md`、`docs/ARCHITECTURE.md`、`docs/KNOWN-ISSUES.md` H5、
+  `docs/DECISIONS.md` D043、`memory/CURRENT-STATUS.md` §2.32。
+- 验证：`cargo fmt`、`cargo test` 109/109、`cargo clippy --all-targets -- -D warnings`
+  零警告；联网实测杭州电信 IP、Google DNS、IPv6 地址解析正确。
+- 未打包、未 bump 版本（仍 0.2.21）。
+
+## 2026-11-04 22:50 — IP数据云高精查询（独立设置页）
+
+- 背景：用户要求显示 tool.lu 的“高精归属地定位（IP数据云）”字段；该接口
+  需要自有 API Key，不能直接抓 tool.lu（返回 204 且页面禁止作为 API）。
+- 后端：
+  - `src/api/ip_location.rs`：`ip_location` 改为读 `State`，从
+    `settings.x3ui_settings` 取 `ipDataCloudKey`；配置后与纯真并行查询
+    `api.ipdatacloud.com/v2/query`，成功附加 `ipDataCloud`，失败附加
+    `ipDataCloudError`，不影响主结果；新增 `parse_ipdatacloud` 与 3 个单测。
+  - `src/api/compat.rs`：`setting/all` 默认值加入 `ipDataCloudKey`；保存时
+    去空白、拒绝空白字符并按字符串存储（避免纯数字 Key 被转成 number）。
+- 前端：
+  - 新增 `pages/settings/IpDataCloudTab.tsx`，路由 `/settings#ipdata`，侧栏
+    “IP数据云”入口，与“高级”连接检测分开；
+  - `AllSetting`/`setting` Zod 增加 `ipDataCloudKey`；
+  - `ClientInfoModal` 位置结果分“纯真/ipwho.is”和“IP数据云”两行显示，
+    未配置 Key 只显示第一行，Key 错误显示第二行错误；新增标签文案。
+- i18n：`internal/web/translation/en-US.json`、`zh-CN.json`、`zh-TW.json`
+  增加 `pages.settings.ipDataCloud*` 与 `pages.clients.ipLocationPure/
+  ipLocationIpDataCloud`，其余 locale 走 en-US fallback。
+- 文档：`docs/API.md`、`docs/ARCHITECTURE.md`、`docs/KNOWN-ISSUES.md` H5、
+  `docs/DECISIONS.md` D044、`memory/CURRENT-STATUS.md` §2.33。
+- 验证：`cargo fmt --check`、`cargo test` **112/112**、clippy 零警告、
+  `npm run build` 成功；`tsc` 改动文件无新增报错；oxlint 仅剩 `ClientInfoModal`
+  既有 `set-state-in-effect`；假 Key 实测接口返回 `key不正确`；
+  `tmp/e2e-advanced/ipdc-check.py`、`ipdc-ui.py` 全部通过。
+- 未验证：有效 Key 的成功响应/真实精度、真实 Linux、额度耗尽提示。
+- 未打包、未 bump 版本（仍 0.2.21）。

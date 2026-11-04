@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 19:10（本地时间）
+> 最后更新：2026-11-04 23:00（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,14 +8,14 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.21` |
+| `Cargo.toml` 版本 | `0.2.22` |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.21`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,465,980 字节，SHA256 `143e27bf...f101a`（GitHub asset digest） |
-| 当前源码 | `0.2.21`（提交 `85f85da`，已推送 main 与 tag `v0.2.21`） |
+| 当前源码 | `0.2.22`（已推送 `main`，未打包/未打 tag）：位置查询改用纯真 + 可选 IP数据云，版本策略改为每次代码修改都 bump（§2.32–§2.34） |
 | 上一版 | GitHub Release `v0.2.20`：tar 5,426,606 字节，asset digest `sha256:61f1a69f...9269` |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-04 18:4x 由当前 `frontend-3xui/` 源码重建（含本次增强） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-04 22:5x 由当前 `frontend-3xui/` 源码重建（含 IP数据云设置页） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
 | musl 产物 | 0.2.21 Release tar 内含静态 ELF 二进制（12,861,232 字节，已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
@@ -856,6 +856,60 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
 - 发布前验证：`cargo test` 107/107、clippy 零警告、fmt、前端构建；
   `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
 - **未验证**：未在真实 Linux/musl 环境运行该二进制（见 TODO T26）。
+
+## 2.32 位置查询主源改为纯真库（2026-11-04）—— 已实现，单测与联网实测；未打包
+
+- 问题：用户反馈位置查询与 <https://tool.lu/ip/> 不一致。实测 ipwho.is 把
+  `115.193.109.37`（浙江杭州电信）定位为“江苏南京”，而 tool.lu 的纯真/淘宝
+  库、zxinc、淘宝 API 均返回“浙江杭州 电信”。
+- 改动：`src/api/ip_location.rs` 主数据源改为 zxinc 免费 JSON API
+  `https://ip.zxinc.org/api.php?type=json&ip={ip}`（纯真库），解析
+  `data.country`（`–`/Tab 分隔的层级）与 `data.local`（运营商），多余层级
+  并入城市；失败回退 ipwho.is；移除经常 `RateLimited` 的 ipapi.co。
+- 返回 JSON 结构不变；zxinc 无时区/经纬度，`timezone` 为空字符串、
+  经纬度为 `null`（前端未用）。
+- 验证：`cargo test` **109/109**、clippy 零警告、fmt 通过；联网实测
+  `115.193.109.37` → 中国/浙江/杭州/电信，`8.8.8.8` →
+  美国/加利福尼亚州/圣克拉拉 山景城/谷歌公司DNS服务器，IPv6 正常。
+- **未验证**：面板实际部署网络的 zxinc 可达性与延迟；未在真实 Linux/musl
+  上运行，未点击前端按钮复测（前端/接口契约未变）。
+- 未打包、未 bump 版本（仍 `0.2.21`）。
+
+## 2.33 IP数据云可选高精查询（2026-11-04）—— 已实现，单测/构建通过；未打包
+
+- 用户要求：显示 tool.lu 上“高精归属地定位（IP数据云）”字段，并在设置里
+  新做一个页面，与“高级”里的出站连接检测分开。
+- 设置：新增 `/settings#ipdata` 页面与侧栏“IP数据云”入口；字段
+  `ipDataCloudKey` 加入 `AllSetting`/Zod/后端默认值，保存时按字符串处理
+  （纯数字 Key 不转 number），去首尾空白并拒绝空白字符。
+- 后端 `src/api/ip_location.rs`：配置 Key 后与纯真并行查询
+  `https://api.ipdatacloud.com/v2/query`；成功附加 `ipDataCloud`
+  （国家/省/市/区县/街道/运营商/场景/时区/经纬度），失败附加
+  `ipDataCloudError`，不影响主结果；纯真失败时可用 IP数据云结果兜底。
+- 前端 `ClientInfoModal`：位置结果分两行显示“纯真”和“IP数据云”；未配置
+  Key 时只显示纯真，Key 错误时第二行显示错误。
+- 验证：`cargo test` **112/112**、clippy 零警告、fmt 通过；前端 `npm run build`
+  成功；`tsc` 无改动文件新增报错（既有 Storybook devDependencies 报错）；
+  oxlint 仅剩 `ClientInfoModal` 既有 `set-state-in-effect`（非本次引入）。
+  用假 Key 实测 IP数据云真实接口返回 `key不正确`，解析为错误；
+  `tmp/e2e-advanced/ipdc-check.py`（设置保存、纯数字 Key 保持字符串、
+  假 Key 返回 `ipDataCloudError`、清空 Key 后不再查询）与
+  `tmp/e2e-advanced/ipdc-ui.py`（无头 Chrome 打开 `/settings#ipdata`，
+  旧“高级”页仍正常）全部通过。
+- **未验证**：用有效 Key 的成功响应与区县/街道精度；真实 Linux/musl 与
+  真实公网客户端；IP数据云额度耗尽时的提示。
+- 未打包、未 bump 版本（仍 `0.2.21`）。
+
+## 2.34 版本策略改为每次修改都 bump + 0.2.22 推送（2026-11-04）
+
+- 用户要求：推送当前代码；以后只要有修改，版本号都要增加。
+- 版本：`Cargo.toml` / `Cargo.lock` 从 `0.2.21` → **`0.2.22`**（未打包、
+  未打 tag）；本次改动包含 §2.32 的纯真主源与 §2.33 的 IP数据云功能。
+- 规则：根 `CLAUDE.md` 规则 3 与会话结束清单已改为“每次代码修改都递增版本”，
+  `docs/DECISIONS.md` 追加 D045；纯文档/记忆同步不单独 bump。
+- 推送：提交并推送 `main`（提交号见 `DEVELOPMENT-LOG.md` 同日记录）。
+- 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；版本号随二进制显示
+  `0.2.22`。**未打包、未创建 Release/tag。**
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

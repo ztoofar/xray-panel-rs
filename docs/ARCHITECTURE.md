@@ -189,7 +189,9 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
    /panel/api/clients/onlineIps` 提供给客户端详情弹窗。Xray 的 OnlineMap
    会丢弃回环地址，因此本机/回环来源的客户端不会显示 IP。
    位置查询是独立的按需接口 `POST /panel/api/clients/ipLocation`，不在轮询
-   中调用；服务端固定访问 ipwho.is，失败回退 ipapi.co。
+   中调用；服务端优先访问 zxinc（纯真库），失败回退 ipwho.is。设置页配置
+   `ipDataCloudKey` 后，同时并行查询 IP数据云，结果放在 `ipDataCloud` 字段，
+   失败只记 `ipDataCloudError`，不影响纯真结果。
   3. `QueryStats("", false)` 拿累计计数，按统计身份拆成
      `identity -> (uplink, downlink)`；缺失的方向保留为 `None`，不当成 0。
   4. 每个 `(client, inbound)` attachment 单独计算增量并与自己的基准比较；

@@ -26,6 +26,7 @@ import AppSidebar from '@/layouts/AppSidebar';
 import GeneralTab from './GeneralTab';
 import SecurityTab from './SecurityTab';
 import AdvancedTab from './AdvancedTab';
+import IpDataCloudTab from './IpDataCloudTab';
 import { normalizePath } from './uriPath';
 import './SettingsPage.css';
 
@@ -33,7 +34,7 @@ interface ApiMsg {
   success?: boolean;
 }
 
-const tabSlugs = ['general', 'security', 'advanced'];
+const tabSlugs = ['general', 'security', 'advanced', 'ipdata'];
 // Dismissed warnings stay hidden until the next successful login clears this.
 const SECURITY_ALERT_KEY = 'lumen-settings-security-alert-dismissed';
 
@@ -187,6 +188,8 @@ export default function SettingsPage() {
         return <SecurityTab />;
       case 'advanced':
         return <AdvancedTab allSetting={allSetting} updateSetting={updateSetting} />;
+      case 'ipdata':
+        return <IpDataCloudTab allSetting={allSetting} updateSetting={updateSetting} />;
       default:
         return <GeneralTab allSetting={allSetting} updateSetting={updateSetting} />;
     }

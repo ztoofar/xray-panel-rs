@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 19:10
+> 最后更新：2026-11-04 22:50
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,10 +18,10 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 107/107、clippy 零警告、Cargo 版本 `0.2.21`、
+   期望：`cargo test` 112/112、clippy 零警告、Cargo 版本 `0.2.22`、
    `web/dist` 不旧于前端源码；工作区干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
-   等用户选择。**不要自动打包、不要自动 bump 版本。**
+   等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-04）
 
@@ -34,12 +34,19 @@
   `tmp/e2e-advanced/e2e.py`、`ui-run.py`、`online-e2e.py` 全通过。
 - 发布包已下载核对：digest 一致、包内 SHA256SUMS 通过、静态 ELF 含
   `LUMEN_VERSION=0.2.21`。
+- **当前未打包源码（版本 `0.2.22`，已推送 `main`）**：
+  1. 位置查询主源改为 zxinc（纯真库），ipwho.is 兜底，移除 ipapi.co
+     （CURRENT-STATUS §2.32、DECISIONS D043）；
+  2. 新增可选 IP数据云高精查询：设置页 `/settings#ipdata` 填 API Key，
+     位置结果显示“纯真 + IP数据云”两行（§2.33、DECISIONS D044）；
+  3. 版本策略改为每次代码修改都 bump（§2.34、DECISIONS D045）。
+  当前 `cargo test` 112/112。下次打包时使用 `0.2.22` 或按新规则继续递增。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 递增 `Cargo.toml` / `Cargo.lock` 版本（下一次预计 `0.2.22`），同步
-   `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.22`；新改动须先按
+   规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
@@ -54,6 +61,9 @@
   `frontend-3xui/src/pages/index/LogModal.tsx`。
 - 在线 IP/位置：`src/xray/stats.rs`、`src/api/compat.rs` 的
   `clients_online_ips`、`src/api/ip_location.rs`、`ClientInfoModal.tsx`。
+- IP数据云设置：`pages/settings/IpDataCloudTab.tsx`、`/settings#ipdata`、
+  `AllSetting.ipDataCloudKey`、`src/api/ip_location.rs` 的
+  `ip_data_cloud_lookup`。
 - 每次功能完成按 TODO 验收标准自测，追加 `DEVELOPMENT-LOG.md`；未验证项必须
   写“已实现，未验证”。
 
@@ -62,6 +72,10 @@
 - **T26**：真实 Linux + systemd + musl 回归本次增强（在线公网 IP、日志目录
   写入/14 天轮转、出站检测临时 Xray 启动、设置保存 PID 不变、restartPanel
   由 systemd 拉起）。
+- **T27**：在真实面板部署网络验证位置查询（zxinc 可达性/准确性/耗时，
+  ipwho.is 兜底），对照 tool.lu 的纯真或淘宝库。
+- **T28**：用有效 IP数据云 Key 验证成功响应、区县/街道精度、额度错误与
+  客户端两行显示（当前只用假 Key 验证了 `key不正确`）。
 - **T21**：真实 Xray 对 11 种原生入站的 `run -test`/实际连接。
 - **T22**：hysteria2/wireguard 服务端订阅链接。
 - **T23/T24**：真实 systemd 在线更新、安装幂等与代理提示。

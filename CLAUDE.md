@@ -25,8 +25,9 @@
 2. **不要每次改动后都打包。** 改完只做自测（`cargo test`、`cargo clippy`、
    前端构建、必要的无头浏览器验证）。只有用户明确要求“打包/发布”时，才生成
    Linux musl 二进制和 `dist/*.tar.gz`。
-3. **版本号只在正式打包时更新**（`Cargo.toml` 的 `version`）。未打包的源码改动
-   不 bump 版本；打包时同步更新 `PROGRESS.md` / `memory` 中的版本和 SHA256。
+3. **每次代码修改都递增版本号**（用户要求，2026-11-04 起）：修改
+   `Cargo.toml` 的 `version` 并同步 `Cargo.lock`，未打包也要 bump；正式打包/
+   发布时再更新 `PROGRESS.md` / `memory` 中的版本、SHA256 和 Release 记录。
 4. **历史只追加，不覆盖。** `docs/DECISIONS.md`、`memory/DEVELOPMENT-LOG.md`
    和 `PROGRESS.md` 的历史条目不得删除或改写；新决定用新条目编号追加。
 5. **每完成一个功能就更新对应文档**：架构变化 → `docs/ARCHITECTURE.md`；
@@ -60,7 +61,9 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.21`（以 `Cargo.toml` 为准），随 GitHub Release 发布。
+- **当前源码版本**：`0.2.22`（以 `Cargo.toml` 为准），源码已推送 `main`，
+  尚未打包/打 tag。0.2.22 将位置查询主源改为纯真库（zxinc），并增加可选的
+  IP数据云高精查询与独立设置页（见 `memory/CURRENT-STATUS.md` §2.32/§2.33）。
   0.2.21 增加客户端在线 IP/按需位置、出站真实连接检测与微信通知、面板日志
   UTC+8/历史、设置保存不重启等（见 `memory/CURRENT-STATUS.md` §2.30/§2.31）。
   0.2.20 将代理/网络类失败统一为中文提示（“代理不可用”），原生错误只写日志。
@@ -112,7 +115,7 @@ npm run build                 # 输出到 ../web/dist
 # 后端（libsqlite3-sys/ring 需要 C 编译器）
 cd ..
 export PATH="/d/ClaudeCode/Tools/mingw64/bin:$PATH"
-cargo test                    # 单元/集成测试（当前 89/89）
+cargo test                    # 单元/集成测试（当前 112/112）
 cargo clippy --all-targets -- -D warnings
 
 # Linux musl 交叉编译（不打包，仅验证）
@@ -161,5 +164,6 @@ GitHub 发布：同步 `Cargo.toml` 版本后推 `v*` 标签，`.github/workflow
 - [ ] `memory/TODO.md`：完成项移走/标记，新发现问题加入。
 - [ ] `memory/NEXT-STEPS.md`：写成下一次可直接执行的具体步骤。
 - [ ] 改到架构/数据库/API/决策/限制时，同步更新 `docs/` 对应文件。
-- [ ] 没有用户明确要求时，**不打包、不 bump 版本**。
+- [ ] 每次修改都已递增 `Cargo.toml` / `Cargo.lock` 版本；没有用户明确要求时，
+      **不打包、不创建 Release/tag**。
 - [ ] 向用户汇报测试真实结果（失败就写失败和输出）。

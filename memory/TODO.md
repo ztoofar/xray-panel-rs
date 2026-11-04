@@ -29,6 +29,25 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
   `restartPanel` 由 systemd 拉起。
 - 验收：日志/命令证据；更新 `KNOWN-ISSUES.md` H5。
 
+### T27. 真实部署网络验证位置查询（zxinc）
+- 现状：2026-11-04 将主源从 ipwho.is 改为 zxinc（纯真库），只在 Windows
+  开发机联网实测；未在面板实际部署网络、真实 Linux/musl 上复测。
+- 内容：在真实面板上对国内电信/联通/移动/境外 IP 各点一次“位置”，确认
+  省/市/运营商与 tool.lu 的纯真或淘宝库一致，并记录响应耗时；确认 zxinc
+  不可达时回退 ipwho.is 且错误提示可读。
+- 验收：记录至少 4 个 IP 的结果与耗时；更新 `KNOWN-ISSUES.md` H5 的
+  “未验证”边界。
+
+### T28. 用有效 Key 验证 IP数据云成功响应
+- 现状：2026-11-04 新增可选的 IP数据云高精查询（`/settings#ipdata`）。
+  仅用假 Key 验证了错误响应 `key不正确`；成功响应字段按官方文档解析，
+  `data` 与 `data.location` 两种层级各有单测，但未用真实 Key 跑通。
+- 内容：填入有效 Key，对国内电信/联通/移动/境外 IP 各查一次，确认
+  `ipDataCloud` 的国家/省/市/区县/街道/运营商/场景字段与 tool.lu 的
+  “高精归属地定位（IP数据云）”一致；确认客户端弹窗两行显示正常。
+- 验收：记录至少 4 个 IP 的结果、响应耗时与剩余额度；若字段层级不同，
+  修正 `parse_ipdatacloud` 并补测试；更新 `KNOWN-ISSUES.md` H5。
+
 ### T24. 真实 Linux 验证安装幂等与更新代理提示
 - 现状：`install.sh` 的版本跳过/哈希跳过与 `network_hint` 只在 Windows 本地
   桩环境、fake xray 和真实本机连接拒绝上验证；未在真实 Linux + musl 二进制

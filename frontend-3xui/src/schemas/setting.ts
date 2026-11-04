@@ -41,6 +41,7 @@ export const AllSettingSchema = z
     sessionMaxAge: z.number().int().min(1).max(525600).optional(),
     trustedProxyCIDRs: z.string().optional(),
     loginNotifyWebhook: z.string().optional(),
+    ipDataCloudKey: z.string().max(256).optional(),
     outboundCheckEnabled: z.boolean().optional(),
     outboundCheckTags: z.string().optional(),
     outboundCheckIntervalMinutes: z.number().int().min(1).max(1440).optional(),

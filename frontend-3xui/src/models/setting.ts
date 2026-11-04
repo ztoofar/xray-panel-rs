@@ -18,6 +18,7 @@ export class AllSetting {
   sessionMaxAge = 360;
   trustedProxyCIDRs = '127.0.0.1/32,::1/128';
   loginNotifyWebhook = '';
+  ipDataCloudKey = '';
   outboundCheckEnabled = false;
   outboundCheckTags = '';
   outboundCheckIntervalMinutes = 5;

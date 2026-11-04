@@ -269,6 +269,7 @@ pub async fn setting_all(State(state): State<AppState>) -> AppResult<Json<Value>
         "outboundCheckEnabled": false,
         "outboundCheckTags": "",
         "outboundCheckIntervalMinutes": 5,
+        "ipDataCloudKey": "",
     });
     if let Some(defaults) = defaults.as_object() {
         for (key, value) in defaults {
@@ -326,6 +327,13 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
             return Ok(fail("微信 Webhook 必须以 http:// 或 https:// 开头"));
         }
     }
+    if let Some(raw) = params.get("ipDataCloudKey") {
+        let key = raw.trim();
+        if key.chars().any(char::is_whitespace) || key.len() > 256 {
+            return Ok(fail("IP数据云 API Key 格式无效"));
+        }
+        params.insert("ipDataCloudKey".into(), key.to_string());
+    }
     if let Some(url) = params.get("updateProxy") {
         if let Err(err) = crate::outbound_subs::validate_proxy(url) {
             return Ok(fail(format!("更新代理设置无效：{err}")));
@@ -378,7 +386,13 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
         if key == "xrayTemplateConfig" {
             continue;
         }
-        object.insert(key, coerce_form_value(&value));
+        // Keep the API key a string even when it is all digits.
+        let stored = if key == "ipDataCloudKey" {
+            json!(value)
+        } else {
+            coerce_form_value(&value)
+        };
+        object.insert(key, stored);
     }
     let serialized = serde_json::to_string(&Value::Object(object)).unwrap_or_else(|_| "{}".into());
     db::settings::set(&state.db, "x3ui_settings", &serialized).await?;

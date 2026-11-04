@@ -580,3 +580,42 @@
   后端固定访问 ipwho.is（失败回退 ipapi.co），前端默认不请求。
 - 后果：第三方服务不可达时返回中文错误，不影响面板其他功能；Xray OnlineMap
   丢弃回环地址，本机来源客户端不会显示 IP（`KNOWN-ISSUES.md` H5）。
+
+## D043 位置查询改用纯真库（zxinc）优先
+- 日期：2026-11-04
+- 背景：D042 使用 ipwho.is 作为主数据源，但国际库对国内 IP 的省市不准。
+  实测 `115.193.109.37`（浙江杭州电信）被 ipwho.is 定位为“江苏南京”，
+  与 tool.lu 的纯真/淘宝库结果不符；ipapi.co 回退还经常返回 `RateLimited`。
+- 决策：主数据源改为 zxinc 的免费 JSON API（基于纯真库，无需 key），
+  失败时回退 ipwho.is；移除 ipapi.co 回退。解析 zxinc 的
+  `data.country`（`–`/Tab 分隔的层级）与 `data.local`（运营商），
+  多出的层级并入城市。
+- 后果：国内 IP 的省/市/运营商更准确；zxinc 不提供时区与经纬度，
+  `timezone` 为空字符串、`latitude`/`longitude` 为 `null`（前端未使用）；单次查询
+  通常 1–5 秒，面板无外网或 zxinc 不可达时仍回退到 ipwho.is。
+
+## D044 IP数据云作为可选第二数据源，独立设置页
+- 日期：2026-11-04
+- 背景：用户要求显示 tool.lu 页面上的“高精归属地定位（IP数据云）”字段。
+  该数据来自 `api.ipdatacloud.com/v2/query`，必须携带用户自己的 API Key；
+  直接调用返回 `key不能为空`。tool.lu 的查询接口返回 204，且页面明确禁止
+  作为 API 使用，不能抓取。
+- 决策：设置页新增独立的“IP数据云”页（`/settings#ipdata`），与“高级”页的
+  出站连接检测分开；管理员填写 `ipDataCloudKey` 后，`ipLocation` 在查询纯真
+  的同时并行查询 IP数据云，结果放在 `ipDataCloud`/`ipDataCloudError` 字段，
+  前端位置结果显示“纯真”和“IP数据云”两行。Key 保存在
+  `settings.x3ui_settings`，按字符串处理（纯数字 Key 不会被转成数字）。
+- 后果：未配置 Key 时行为与 D043 完全一致；IP数据云失败不影响纯真结果；
+  接口返回的区县/街道精度与额度取决于用户套餐；Key 对管理员可见（单管理员
+  面板，与现有微信 Webhook 同等对待）。
+
+## D045 每次代码修改都递增版本号
+- 日期：2026-11-04
+- 背景：用户明确要求“以后只要有修改版本号都增加”。此前规则只在正式打包时
+  bump，源码在不同开发阶段可能共用同一个版本号，难以区分。
+- 决策：每次代码/功能修改都递增 `Cargo.toml` 的 `version` 并同步
+  `Cargo.lock`，即使不打包也 bump；纯文档/记忆同步不单独 bump。正式发布
+  仍由用户确认后推送 `v*` tag，由 GitHub Actions 打包。
+- 后果：源码版本号变成开发进度计数器，不再等于已发布版本；`CLAUDE.md`
+  规则 3、会话结束清单和 `memory/NEXT-STEPS.md` 同步更新。本次将
+  `0.2.21` → `0.2.22`。

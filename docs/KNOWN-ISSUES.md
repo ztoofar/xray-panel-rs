@@ -372,7 +372,18 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   转发来的客户端即使在线也不会显示 IP（真实公网客户端不受影响）。
 - 在线 IP 依赖 Xray 26+ 的 `GetUsersStats`；旧核心或未启用
   `statsUserOnline` 时 `onlineIps` 返回空对象，客户端弹窗只显示在线状态。
-- 位置查询由面板服务器访问 ipwho.is（失败回退 ipapi.co）；面板无外网时按钮
-  返回中文错误。默认不查询，只有点击“位置”才产生外部请求。
+- 位置查询由面板服务器优先访问 zxinc（纯真库），失败回退 ipwho.is；面板
+  无外网时按钮返回中文错误。默认不查询，只有点击“位置”才产生外部请求。
+- zxinc 响应通常需要 1–5 秒，比 ipwho.is 慢；其数据不含时区/经纬度，
+  返回的 `timezone` 为空字符串、`latitude`/`longitude` 为 `null`。zxinc
+  不可用时的 ipwho.is 回退对国内 IP 的省/市可能不准（例如杭州 IP 被定位到
+  南京）。
 - `ipLocation` 只接受 IP 字面量，不接受域名；不查询也不会缓存结果。
+- IP数据云为可选功能，需要自己的 `ipDataCloudKey`（官网注册，有免费额度）。
+  未配置时只查纯真；配置后并行查询，失败只在第二行显示错误，不影响纯真结果。
+  Key 以明文保存在 `settings.x3ui_settings` 并由 `setting/all` 返回给单个管理员，
+  不额外加密。
+- IP数据云的响应解析按官方文档实现（兼容 `data` 与 `data.location` 两种层级），
+  已用假 Key 验证真实接口的错误返回（`key不正确`）；**尚未用有效 Key 验证
+  成功响应**，街道/区县精度和免费额度以账号套餐为准。
 - 未在真实 Linux/musl 与真实公网客户端上验证（Windows + 局域网源 IP 已验证）。

@@ -26,6 +26,25 @@ interface ClientInfoModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
+interface IpDataCloudLocation {
+  country?: string;
+  province?: string;
+  city?: string;
+  district?: string;
+  street?: string;
+  isp?: string;
+  usageType?: string;
+}
+
+interface LocationEntry {
+  loading?: boolean;
+  text?: string;
+  provider?: string;
+  cloudText?: string;
+  cloudError?: string;
+  error?: string;
+}
+
 // Mirrors the simplified create form: email, inbounds, traffic, expiry, UUID,
 // status, plus the record timestamps.
 export default function ClientInfoModal({
@@ -41,9 +60,7 @@ export default function ClientInfoModal({
 
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, number>>({});
   const [onlineIps, setOnlineIps] = useState<string[]>([]);
-  const [locations, setLocations] = useState<
-    Record<string, { loading?: boolean; text?: string; error?: string }>
-  >({});
+  const [locations, setLocations] = useState<Record<string, LocationEntry>>({});
 
   useEffect(() => {
     if (!open || !isOnline || !client?.email) {
@@ -75,7 +92,15 @@ export default function ClientInfoModal({
     )) as {
       success?: boolean;
       msg?: string;
-      obj?: { country?: string; region?: string; city?: string; isp?: string };
+      obj?: {
+        provider?: string;
+        country?: string;
+        region?: string;
+        city?: string;
+        isp?: string;
+        ipDataCloud?: IpDataCloudLocation | null;
+        ipDataCloudError?: string;
+      };
     };
     if (msg?.success && msg.obj) {
       const object = msg.obj;
@@ -83,13 +108,42 @@ export default function ClientInfoModal({
         [object.country, object.region, object.city, object.isp]
           .filter((part): part is string => typeof part === 'string' && part.length > 0)
           .join(' · ') || '-';
-      setLocations((prev) => ({ ...prev, [ip]: { text } }));
+      const cloud = object.ipDataCloud;
+      const cloudText = cloud
+        ? [
+            cloud.country,
+            cloud.province,
+            cloud.city,
+            cloud.district,
+            cloud.street,
+            cloud.isp,
+            cloud.usageType,
+          ]
+            .filter((part): part is string => typeof part === 'string' && part.length > 0)
+            .join(' · ')
+        : '';
+      setLocations((prev) => ({
+        ...prev,
+        [ip]: {
+          text,
+          provider: typeof object.provider === 'string' ? object.provider : '',
+          cloudText,
+          cloudError:
+            typeof object.ipDataCloudError === 'string' ? object.ipDataCloudError : '',
+        },
+      }));
     } else {
       setLocations((prev) => ({
         ...prev,
         [ip]: { error: msg?.msg || t('somethingWentWrong') },
       }));
     }
+  }
+
+  function providerLabel(provider?: string): string {
+    if (provider === 'zxinc') return t('pages.clients.ipLocationPure');
+    if (provider === 'ipdatacloud') return t('pages.clients.ipLocationIpDataCloud');
+    return provider || '';
   }
 
   useEffect(() => {
@@ -156,6 +210,7 @@ export default function ClientInfoModal({
                     <div className="ip-list">
                       {onlineIps.map((ip) => {
                         const location = locations[ip];
+                        const source = providerLabel(location?.provider);
                         return (
                           <div className="ip-item" key={ip}>
                             <Tag>{ip}</Tag>
@@ -167,7 +222,38 @@ export default function ClientInfoModal({
                             >
                               {t('pages.clients.ipLocation')}
                             </Button>
-                            {location?.text && <span className="hint">{location.text}</span>}
+                            {(location?.text ||
+                              location?.cloudText ||
+                              location?.cloudError) && (
+                              <div className="ip-location">
+                                {location?.text && location.provider !== 'ipdatacloud' && (
+                                  <div className="ip-location-line">
+                                    {source && (
+                                      <span className="ip-location-source">{source}</span>
+                                    )}
+                                    <span className="hint">{location.text}</span>
+                                  </div>
+                                )}
+                                {location?.cloudText && (
+                                  <div className="ip-location-line">
+                                    <span className="ip-location-source">
+                                      {t('pages.clients.ipLocationIpDataCloud')}
+                                    </span>
+                                    <span className="hint">{location.cloudText}</span>
+                                  </div>
+                                )}
+                                {location?.cloudError && (
+                                  <div className="ip-location-line">
+                                    <span className="ip-location-source">
+                                      {t('pages.clients.ipLocationIpDataCloud')}
+                                    </span>
+                                    <span className="hint ip-location-error">
+                                      {location.cloudError}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {location?.error && (
                               <span className="hint ip-location-error">{location.error}</span>
                             )}

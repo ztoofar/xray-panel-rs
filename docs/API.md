@@ -141,8 +141,8 @@
 | 方法 | 路径 | 状态 |
 | --- | --- | --- |
 | GET | `/panel/api/status` | 已实现（版本、dbType） |
-| POST | `/panel/api/setting/all` | 已实现（3x-ui 设置全集，含 `webBasePath`） |
-| POST | `/panel/api/setting/update` | 已实现（校验并保存；`webBasePath` 立即生效） |
+| POST | `/panel/api/setting/all` | 已实现（3x-ui 设置全集，含 `webBasePath`、`ipDataCloudKey`） |
+| POST | `/panel/api/setting/update` | 已实现（校验并保存；`webBasePath` 立即生效；`ipDataCloudKey` 按字符串保存，去掉首尾空白并拒绝空白字符） |
 | POST | `/panel/api/setting/defaultSettings` | 已实现（页面默认值） |
 | POST | `/panel/api/setting/factoryDefaults` | 已实现（默认值） |
 | GET/POST | `/panel/api/setting/getDefaultJsonConfig` | 已实现：返回默认可编辑 Xray 模板（含 policy 默认统计开关） |
@@ -218,7 +218,7 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/clients/onlinesByGuid` | 已实现（空映射） |
 | POST | `/panel/api/clients/onlineInbounds` | 已实现（按 attachment 归属） |
 | POST | `/panel/api/clients/onlineIps` | 已实现：`email -> [ip...]`，来自 Xray `GetUsersStats` 连接级在线 IP（回环地址由 Xray 自身丢弃） |
-| POST | `/panel/api/clients/ipLocation` | 已实现：`{ip}`，服务端查询 ipwho.is（失败回退 ipapi.co），返回 `{ip,provider,country,region,city,isp,timezone,latitude,longitude}`；前端默认不调用，仅在点击“位置”时请求 |
+| POST | `/panel/api/clients/ipLocation` | 已实现：`{ip}`，服务端查询 zxinc（纯真库；失败回退 ipwho.is），返回 `{ip,provider,country,region,city,isp,timezone,latitude,longitude}`；zxinc 不提供时区/经纬度（`timezone` 为空字符串，经纬度为 `null`）。配置 `ipDataCloudKey` 后并行查询 IP数据云：成功时附加 `ipDataCloud`（`country/province/city/district/street/isp/usageType/timezone/latitude/longitude`），失败时附加 `ipDataCloudError`；不影响主结果。前端默认不调用，仅在点击“位置”时请求 |
 | POST | `/panel/api/clients/activeInbounds` | 已实现 |
 | POST | `/panel/api/clients/lastOnline` | 已实现 |
 | POST | `/panel/api/clients/delDepleted`、`delOrphans` | 已实现 |
