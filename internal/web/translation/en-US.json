@@ -1968,6 +1968,7 @@
       "secureCookieDesc": "Enable only over HTTPS; adds the Secure flag. Requires signing in again.",
       "loginNotifyWebhook": "WeCom Webhook (default notification method)",
       "loginNotifyWebhookDesc": "Default notification channel. Sends password sign-in failures and outbound connectivity alerts through a WeCom group robot. Leave empty to disable notifications.",
+      "outboundCheckTab": "Outbound check",
       "outboundCheckHint": "Outbound connectivity check",
       "outboundCheckHintDesc": "Periodically tests the selected outbounds with a real request through a temporary Xray instance (SOCKS + HTTP 204). The panel and the running Xray stay untouched.",
       "outboundCheckEnabled": "Enable check",

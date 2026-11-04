@@ -1036,3 +1036,17 @@
   该临时 workflow（提交 `336e346` 及其后续删除）。
 - 验证：GitHub API 确认 v0.2.22 body 首行为 `## 更新内容`，不再包含
   “0.2.22 更新内容”或一键安装段落。
+
+## 2026-11-04 23:30 — IP数据云并入高级标签页
+
+- 用户要求：IP数据云放在“高级”菜单里面，原有功能叫“出站检测”，两者在
+  同一页面切换，样式与常规设置页一致。
+- 前端：
+  - 新增 `AdvancedTabs.tsx`，用 AntD Tabs 分出“出站检测”和“IP数据云”；
+  - `SettingsPage` 的 `#advanced` 改为渲染 `AdvancedTabs`，移除 `#ipdata`；
+  - `AppSidebar` 移除独立“IP数据云”子项；
+  - i18n 增加 `pages.settings.outboundCheckTab`（en/zh-CN/zh-TW）。
+- 版本：`Cargo.toml` / `Cargo.lock` 0.2.22 → **0.2.23**（未打包/未打 tag）。
+- 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；前端构建成功；
+  `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome 验证两个标签可切换、IP数据云
+  API Key 输入存在、旧出站检测内容正常（桌面视口）。

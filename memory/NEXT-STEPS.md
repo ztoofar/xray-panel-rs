@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-04 22:57
+> 最后更新：2026-11-04 23:30
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,7 +18,7 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 112/112、clippy 零警告、Cargo 版本 `0.2.22`、
+   期望：`cargo test` 112/112、clippy 零警告、Cargo 版本 `0.2.23`、
    `web/dist` 不旧于前端源码；工作区干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
@@ -36,13 +36,17 @@
 - 发布 Actions：release run `41853368185` 成功；发布说明更新 run
   `41854912426` 成功。发布包 digest 以 GitHub API 为准；本机下载因网络超时，
   包内校验未完成（见 `CURRENT-STATUS.md` §2.35）。
+- **当前未打包源码（版本 `0.2.23`）**：把 IP数据云从侧栏独立页移入“高级”
+  页标签（出站检测 / IP数据云，样式同常规设置页）；移除 `/settings#ipdata`。
+  前端构建与无头 Chrome 标签切换验证通过（CURRENT-STATUS §2.37、D048）。
+  未打 tag/未发布。
 - 仍未验证：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl（T26）；
   真实公网客户端（T27）。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.22`；新改动须先按
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.23`；新改动须先按
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
@@ -61,9 +65,9 @@
   `frontend-3xui/src/pages/index/LogModal.tsx`。
 - 在线 IP/位置：`src/xray/stats.rs`、`src/api/compat.rs` 的
   `clients_online_ips`、`src/api/ip_location.rs`、`ClientInfoModal.tsx`。
-- IP数据云设置：`pages/settings/IpDataCloudTab.tsx`、`/settings#ipdata`、
-  `AllSetting.ipDataCloudKey`、`src/api/ip_location.rs` 的
-  `ip_data_cloud_lookup`。
+- IP数据云设置：`pages/settings/AdvancedTabs.tsx`（高级页内标签）、
+  `IpDataCloudTab.tsx`、`/settings#advanced`、`AllSetting.ipDataCloudKey`、
+  `src/api/ip_location.rs` 的 `ip_data_cloud_lookup`。
 - 每次功能完成按 TODO 验收标准自测，追加 `DEVELOPMENT-LOG.md`；未验证项必须
   写“已实现，未验证”。
 

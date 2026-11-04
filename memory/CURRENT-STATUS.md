@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 23:15（本地时间）
+> 最后更新：2026-11-04 23:30（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.22` |
+| `Cargo.toml` 版本 | `0.2.23` |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.22`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,473,730 字节，SHA256 `c3a60555...44e9`（GitHub asset digest）；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.22`（tag `v0.2.22` → `99612d0`，已发布；`main` 另有仅 CI/发布说明/记忆文档的后续提交）：位置查询改用纯真 + 可选 IP数据云（§2.32–§2.35） |
+| 当前源码 | `0.2.23`（未打包/未打 tag）：在 0.2.22 基础上把 IP数据云移入“高级”页的标签（§2.37）；最近发布仍为 `v0.2.22` |
 | 上一版 | GitHub Release `v0.2.21`：tar 5,465,980 字节，asset digest `sha256:143e27bf...f101a` |
 | 0.2.22 SHA256 | `c3a60555bd500a17ea52a53fe39ac56436ffe529c404a081e09e2cb1044c44e9`（tar.gz，GitHub asset digest）；包内二进制校验见 §2.35 |
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
@@ -938,6 +938,20 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
 - 验证：GitHub API 确认 v0.2.22 body 首行为 `## 更新内容`，不含
   “0.2.22 更新内容”或一键安装段落；版本由 Release 标题 `v0.2.22` 体现。
 - 未打包/未 bump 版本（仍 `0.2.22`，纯 CI/文档调整）。
+
+## 2.37 IP数据云移入高级标签页（2026-11-04）—— 已实现并 UI 验证；未打包
+
+- 用户要求：IP数据云放在“高级”菜单里面，原有功能叫“出站检测”，两者在
+  同一页面切换，样式与常规设置页一致。
+- 前端：新增 `AdvancedTabs.tsx`（AntD Tabs：出站检测 / IP数据云）；
+  `/settings#advanced` 渲染标签页；移除侧栏独立 IP数据云入口和 `#ipdata`
+  路由；新增 `pages.settings.outboundCheckTab` 文案。
+- 版本：`Cargo.toml` / `Cargo.lock` 0.2.22 → **0.2.23**（未打包/未打 tag）。
+- 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；前端构建成功；
+  `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome（1440×900）验证：高级页显示
+  “出站检测 / IP数据云”两个标签，可来回切换；IP数据云标签显示 API Key
+  输入与提示；出站检测原有内容正常。
+- 未验证：真实 Linux/musl；有效 IP数据云 Key 成功响应（T28）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

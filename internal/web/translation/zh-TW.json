@@ -1847,6 +1847,7 @@
       "secureCookieDesc": "僅 HTTPS 下開啟；開啟後 Cookie 帶 Secure 標記，修改後需重新登入。",
       "loginNotifyWebhook": "微信 Webhook（預設通知方式）",
       "loginNotifyWebhookDesc": "預設通知方式。透過企業微信群機器人發送登入失敗提醒與出站檢測告警。留空則關閉所有通知。",
+      "outboundCheckTab": "出站檢測",
       "outboundCheckHint": "出站真實連線檢測",
       "outboundCheckHintDesc": "依設定頻率，透過臨時 Xray 實例（SOCKS + HTTP 204）對選中的出站執行真實請求測試；不影響面板與正在運行的 Xray。",
       "outboundCheckEnabled": "啟用檢測",

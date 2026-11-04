@@ -61,10 +61,12 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.22`（以 `Cargo.toml` 为准），已随 GitHub Release
-  `v0.2.22` 发布（tag → `99612d0`）。0.2.22 将位置查询主源改为纯真库（zxinc），
-  并增加可选的 IP数据云高精查询与独立设置页；Release 页面只列本次更新内容
-  （见 `memory/CURRENT-STATUS.md` §2.32/§2.33/§2.35、DECISIONS D046）。
+- **当前源码版本**：`0.2.23`（以 `Cargo.toml` 为准），未打包/未打 tag。
+  0.2.23 把 IP数据云移入“高级”页的标签（出站检测 / IP数据云，样式同常规
+  设置页）。0.2.22 已随 GitHub Release `v0.2.22` 发布（tag → `99612d0`），
+  将位置查询主源改为纯真库（zxinc）并增加可选 IP数据云查询；Release 页面
+  只列本次更新内容（见 `memory/CURRENT-STATUS.md` §2.32–§2.37、
+  DECISIONS D046/D048）。
   0.2.21 增加客户端在线 IP/按需位置、出站真实连接检测与微信通知、面板日志
   UTC+8/历史、设置保存不重启等（见 `memory/CURRENT-STATUS.md` §2.30/§2.31）。
   0.2.20 将代理/网络类失败统一为中文提示（“代理不可用”），原生错误只写日志。
