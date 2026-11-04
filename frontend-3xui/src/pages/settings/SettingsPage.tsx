@@ -25,6 +25,7 @@ import { AllSettingSchema } from '@/schemas/setting';
 import AppSidebar from '@/layouts/AppSidebar';
 import GeneralTab from './GeneralTab';
 import SecurityTab from './SecurityTab';
+import AdvancedTab from './AdvancedTab';
 import { normalizePath } from './uriPath';
 import './SettingsPage.css';
 
@@ -32,7 +33,9 @@ interface ApiMsg {
   success?: boolean;
 }
 
-const tabSlugs = ['general', 'security'];
+const tabSlugs = ['general', 'security', 'advanced'];
+// Dismissed warnings stay hidden until the next successful login clears this.
+const SECURITY_ALERT_KEY = 'lumen-settings-security-alert-dismissed';
 
 function isIp(h: string): boolean {
   if (typeof h !== 'string') return false;
@@ -79,7 +82,13 @@ export default function SettingsPage() {
   const [entryPort] = useState(() => window.location.port);
   const [entryIsIP] = useState(() => isIp(window.location.hostname));
 
-  const [alertVisible, setAlertVisible] = useState(true);
+  const [alertVisible, setAlertVisible] = useState(
+    () => localStorage.getItem(SECURITY_ALERT_KEY) !== '1',
+  );
+  function dismissSecurityAlert() {
+    setAlertVisible(false);
+    localStorage.setItem(SECURITY_ALERT_KEY, '1');
+  }
   const location = useLocation();
   const slug = location.hash.replace(/^#/, '');
   const activeSlug = tabSlugs.includes(slug) ? slug : 'general';
@@ -176,6 +185,8 @@ export default function SettingsPage() {
     switch (activeSlug) {
       case 'security':
         return <SecurityTab />;
+      case 'advanced':
+        return <AdvancedTab allSetting={allSetting} updateSetting={updateSetting} />;
       default:
         return <GeneralTab allSetting={allSetting} updateSetting={updateSetting} />;
     }
@@ -204,7 +215,7 @@ export default function SettingsPage() {
                     <Alert
                       type="error"
                       showIcon
-                      closable={{ onClose: () => setAlertVisible(false) }}
+                      closable={{ onClose: dismissSecurityAlert }}
                       className="conf-alert"
                       title={t('pages.settings.securityWarnings')}
                       description={
@@ -229,12 +240,7 @@ export default function SettingsPage() {
                               <Button type="primary" disabled={saveDisabled} onClick={onSave}>
                                 {t('pages.settings.save')}
                               </Button>
-                              <Button
-                                type="primary"
-                                danger
-                                disabled={!saveDisabled}
-                                onClick={restartPanel}
-                              >
+                              <Button type="primary" danger onClick={restartPanel}>
                                 {t('pages.settings.restartPanel')}
                               </Button>
                             </Space>

@@ -1,6 +1,6 @@
 # 架构设计（ARCHITECTURE）
 
-> 最后核对：2026-10-31，对照 `src/`、`migrations/`、`frontend-3xui/`、`deploy/`。
+> 最后核对：2026-11-04，对照 `src/`、`migrations/`、`frontend-3xui/`、`deploy/`。
 > 行为以代码为准；本文描述“为什么这样组织”。
 
 ## 1. 总体形态
@@ -49,9 +49,11 @@
 | 模块 | 职责 |
 | --- | --- |
 | `src/config.rs` | 环境变量解析、Xray API URL/端口推导 |
-| `src/state.rs` | `AppState`：DB、配置、Xray 句柄、统计客户端、内存状态、`base_path` |
+| `src/state.rs` | `AppState`：DB、配置、Xray 句柄、统计客户端、内存状态、`base_path`、出站检测结果与唤醒信号 |
 | `src/db/` | sqlx 轻量查询（无 ORM）；按表拆分模块 |
-| `src/api/` | HTTP 处理器：原生 API、3x-ui 兼容 API、认证、备份、出站测试 |
+| `src/api/` | HTTP 处理器：原生 API、3x-ui 兼容 API、认证、备份、出站测试、IP 位置查询 |
+| `src/panel_log.rs` | 面板日志：内存环形缓冲、UTC+8 时间、按日文件、历史文件列表 |
+| `src/outbound_check.rs` | 高级设置中的出站真实连接周期检测与企业微信告警 |
 | `src/auth.rs` | Argon2id、会话 Cookie、CSRF 校验、认证中间件 |
 | `src/notify.rs` | 登录失败的企业微信 webhook 通知、真实 IP 头解析、文本消息清理 |
 | `src/service.rs` | 由 DB 生成 Xray 配置、写盘、测试、应用/重启 |
@@ -183,6 +185,11 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 - 每 tick：
   1. 读取 clients / client_inbounds / inbounds，构建 attachment 身份映射。
   2. `GetUsersStats`（若核心支持）拿连接级在线用户与 IP；未知统计身份直接丢弃。
+   在线 IP 存在 `AppState.online_clients`，由 `POST
+   /panel/api/clients/onlineIps` 提供给客户端详情弹窗。Xray 的 OnlineMap
+   会丢弃回环地址，因此本机/回环来源的客户端不会显示 IP。
+   位置查询是独立的按需接口 `POST /panel/api/clients/ipLocation`，不在轮询
+   中调用；服务端固定访问 ipwho.is，失败回退 ipapi.co。
   3. `QueryStats("", false)` 拿累计计数，按统计身份拆成
      `identity -> (uplink, downlink)`；缺失的方向保留为 `None`，不当成 0。
   4. 每个 `(client, inbound)` attachment 单独计算增量并与自己的基准比较；
@@ -238,21 +245,28 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 | --- | --- | --- |
 | 流量/在线 job | `traffic_poll_secs`（2–300s，默认 5s） | 统计、在线、配额/到期/重置、历史 |
 | 出站订阅 job | 30 秒检查一次 | 到期的启用订阅拉取/解析/保存；内容变化时重启 Xray |
+| 出站连接检测 job | 10 秒轮询配置；按设置的 1–1440 分钟频率执行 | 用临时 Xray 实例对选中的出站做 SOCKS + HTTP 204 真实探测；不可用/恢复时经企业微信通知 |
 | maintenance | 15 分钟 | 清理过期会话；`PRAGMA shrink_memory`；收缩内存容器；glibc `malloc_trim` |
 | 公网 IP 刷新 | 缓存 10 分钟，按需后台刷新 | 仪表盘 IPv4/IPv6 |
 
 ### 日志来源（日志弹窗）
 
-- 面板日志：`tracing` 同时输出到 stdout 和内存环形缓冲（`src/panel_log.rs`，
-  最多 500 行，进程重启后清空）。接口
-  `POST /panel/api/server/logs/{rows}` + `source=panel`。内容包括启动/运行告警
-  与登录审计（成功、失败、限流、登出、改密，带用户名和来源 IP）。
+- 面板日志：`tracing` 同时输出到 stdout、内存环形缓冲和按日文件
+  （`src/panel_log.rs`）。内存缓冲最多 500 行；文件默认在 DB 同目录
+  `panel-logs/panel-YYYY-MM-DD.log`，可用 `PANEL_LOG_DIR` 覆盖，保留 14 天。
+  所有层固定按 UTC+8 渲染时间（与主机时区无关），缓冲/文件层记录 target、
+  文件与行号。接口 `POST /panel/api/server/logs/{rows}` + `source=panel`
+  读实时缓冲；再加 `file=<name>` 读历史文件。`GET
+  /panel/api/server/panelLogFiles` 列出可用历史文件。内容包括启动/运行告警、
+  登录审计（成功、失败、限流、登出、改密）、设置保存、入站/客户端增删改、
+  Xray 重启/停止、面板重启和出站检测结果。
 - Xray 核心日志：读取当前配置 `log.error` / `log.access` 指向的文件末尾
   （相对路径按面板 cwd 解析，Xray 子进程继承同一 cwd）；tail 最多约 1 MiB。
   `source=xray&file=error|access`。error 未配置时回退到 supervisor 捕获的
   stdout/stderr 环形缓冲；access 未配置时返回空并提示。
 - 前端 `LogModal` 是一个窗口，顶部下拉在“面板日志 / Xray 错误日志 /
-  Xray 访问日志”之间切换，默认显示面板日志。
+  Xray 访问日志”之间切换，默认显示面板日志；面板日志还可选择“实时日志”
+  或某一天的历史文件，历史模式不参与自动刷新。
 
 ## 10. 部署
 

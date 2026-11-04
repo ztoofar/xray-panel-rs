@@ -28,13 +28,13 @@ pub struct BalancerStatus {
 
 async fn channel(api_url: &str) -> Result<RoutingServiceClient<Channel>> {
     let endpoint = Endpoint::from_shared(api_url.to_string())
-        .context("invalid Xray API address")?
+        .context("Xray API 地址无效")?
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(RPC_TIMEOUT);
     let channel = endpoint
         .connect()
         .await
-        .context("connect to Xray gRPC API")?;
+        .context("连接 Xray gRPC API 失败")?;
     Ok(RoutingServiceClient::new(channel))
 }
 
@@ -87,6 +87,6 @@ pub async fn override_balancer(api_url: &str, tag: &str, target: &str) -> Result
             target: target.to_string(),
         })
         .await
-        .context("override balancer target")?;
+        .context("切换负载均衡目标失败")?;
     Ok(())
 }

@@ -892,3 +892,41 @@
   唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,426,606 字节，
   GitHub asset digest
   `sha256:61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`。
+
+## 2026-11-04 18:37 — 客户端 IP/位置、出站检测、日志历史等 7 项增强
+
+- 新增 `src/api/ip_location.rs`：`POST /panel/api/clients/ipLocation` 服务端
+  查询 ipwho.is（失败回退 ipapi.co），输出 country/region/city/isp/timezone。
+- 新增 `src/outbound_check.rs`：按 `x3ui_settings` 的
+  `outboundCheckEnabled/Tags/IntervalMinutes` 周期检测；复用
+  `outbound_test::probe_real`（临时 Xray SOCKS + HTTP 204）；不可用/恢复经
+  `notify::send_text` 发送企业微信通知；`GET /panel/api/xray/outboundCheckStatus`
+  返回最近结果。AppState 增加 `outbound_check` 与 `outbound_check_notify`。
+- `src/panel_log.rs`：新增 UTC+8 固定时区 timer、按日文件 writer
+  （`panel-logs/panel-YYYY-MM-DD.log`，保留 14 天）、文件列表与安全文件名解析。
+  `main.rs` 的 tracing 增加文件 layer，缓冲区/文件记录 target/file/line。
+- `src/config.rs`：新增 `panel_log_dir`（`PANEL_LOG_DIR`，默认 DB 目录下
+  `panel-logs`）。
+- `src/api/compat.rs`：
+  - 新增 `clients_online_ips`、`server_panel_log_files`；日志接口支持
+    `source=panel&file=<name>` 历史读取；
+  - `setting_all` 增加出站检测默认值；`setting_update` 校验检测频率/去重 tags，
+    保存后唤醒检测 job；移除 `xrayTemplateConfig` 的即时 `service::apply`；
+  - 增加入站/客户端增删改、Xray 重启/停止、面板重启、设置保存日志。
+- `src/xray/supervisor.rs`：`parse_version_line` 提取 `26.10.31` 短版本。
+- `src/error.rs` / `src/api/*` / `src/updates.rs` / `src/panel_update.rs` /
+  `src/outbound_subs.rs` / `src/xray/*`：面向用户的英文错误统一中文；Xray
+  原生 stdout/stderr 保持原文。
+- 前端：
+  - `ClientInfoModal` 在线时显示当前 IPv4/IPv6，按 IP 提供“位置”按钮（默认不查）；
+  - `AdvancedTab` 新页面（启用/多选出站/频率/微信 Webhook/最近结果）；
+    侧栏增加“高级”；
+  - `LogModal` 增加实时/历史日志选择；
+  - 设置页安全警告关闭状态持久化到 localStorage，登录成功后清除；
+  - `OverviewActionBar` 显示短版本号；
+  - 设置页“重启面板”按钮始终可用；i18n 新增 en-US/zh-CN/zh-TW 文案。
+- 验证：`cargo test` 107/107、clippy 零警告、fmt 通过、前端构建成功、
+  `tsc` 无新增错误；`tmp/e2e-advanced/e2e.py`、`ui-run.py`、
+  `online-e2e.py` 全部通过（真实 Xray 26.10.31 + mock 微信 + 无头 Chrome +
+  真实 VLESS 客户端连接）。
+- 未打包、未 bump 版本；源码提交见相邻提交。

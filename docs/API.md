@@ -147,13 +147,14 @@
 | POST | `/panel/api/setting/factoryDefaults` | 已实现（默认值） |
 | GET/POST | `/panel/api/setting/getDefaultJsonConfig` | 已实现：返回默认可编辑 Xray 模板（含 policy 默认统计开关） |
 | POST | `/panel/api/setting/updateUser` | 已实现（改管理员账号） |
-| POST | `/panel/api/setting/restartPanel` | 已实现（进程退出，由 systemd 拉起） |
+| POST | `/panel/api/setting/restartPanel` | 已实现（进程退出，由 systemd 拉起）；设置保存本身不会重启 |
+| GET | `/panel/api/server/panelLogFiles` | 已实现：列出面板历史日志文件 `{name,date,size}`（默认保留 14 天） |
 | GET | `/panel/api/server/status` | 已实现（系统指标 + Xray 状态） |
 | GET | `/panel/api/server/getConfigJson` | 已实现 |
 | GET | `/panel/api/server/getXrayVersion` | 已实现：GitHub Release 列表（经更新代理，筛选 ≥26.6.27） |
 | POST | `/panel/api/server/installXray/{version}` | 已实现：下载/校验/解压/替换 Xray 并重启 |
 | POST | `/panel/api/server/updateGeofile`、`/{file}` | 已实现：按白名单下载 Geofiles，SHA-256 校验后原子替换并重启 |
-| POST | `/panel/api/server/logs/{rows}` | 已实现：`source=panel` 返回面板 tracing 环形缓冲（最多 500 行）；`source=xray&file=error\|access` 返回 `log.error`/`log.access` 文件末尾（error 未配置时回退到面板捕获的 Xray 进程输出）；不带参数保持旧行为（进程日志） |
+| POST | `/panel/api/server/logs/{rows}` | 已实现：`source=panel` 返回面板 tracing 环形缓冲（最多 500 行）；`source=panel&file=<panel-YYYY-MM-DD.log>` 读历史文件；`source=xray&file=error\|access` 返回 `log.error`/`log.access` 文件末尾（error 未配置时回退到面板捕获的 Xray 进程输出）；不带参数保持旧行为（进程日志） |
 | POST | `/panel/api/server/restartXrayService` | 已实现 |
 | POST | `/panel/api/server/stopXrayService` | 已实现（只停 Xray 子进程） |
 | GET | `/panel/api/server/panelUpdateCheck` | 已实现：查询 GitHub Releases 最新版本，返回 `current/latest/updateAvailable/releaseUrl` |
@@ -216,6 +217,8 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/clients/onlines` | 已实现 |
 | POST | `/panel/api/clients/onlinesByGuid` | 已实现（空映射） |
 | POST | `/panel/api/clients/onlineInbounds` | 已实现（按 attachment 归属） |
+| POST | `/panel/api/clients/onlineIps` | 已实现：`email -> [ip...]`，来自 Xray `GetUsersStats` 连接级在线 IP（回环地址由 Xray 自身丢弃） |
+| POST | `/panel/api/clients/ipLocation` | 已实现：`{ip}`，服务端查询 ipwho.is（失败回退 ipapi.co），返回 `{ip,provider,country,region,city,isp,timezone,latitude,longitude}`；前端默认不调用，仅在点击“位置”时请求 |
 | POST | `/panel/api/clients/activeInbounds` | 已实现 |
 | POST | `/panel/api/clients/lastOnline` | 已实现 |
 | POST | `/panel/api/clients/delDepleted`、`delOrphans` | 已实现 |
@@ -234,6 +237,7 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/xray/routeTest` | 入口已移除；路径走 catch-all（不再支持） |
 | POST | `/panel/api/xray/resetOutboundsTraffic` | 已实现 |
 | POST | `/panel/api/xray/testOutbounds` | 已实现（TCP / 临时 Xray SOCKS 隧道 HTTP 探测） |
+| GET | `/panel/api/xray/outboundCheckStatus` | 已实现：返回最近一次周期检测 `{checkedAt, results:[{tag,success,delay,error}]}`（未检测时为空） |
 | GET | `/panel/api/xray/getOutboundsTraffic` | 已实现 |
 | GET/POST | `/panel/api/xray/getDefaultJsonConfig` | 已实现：返回默认模板 JSON 字符串 |
 | GET | `/panel/api/xray/outbound-subs` | 已实现：列出出站订阅（不含原始 outbound 文本） |
@@ -266,6 +270,16 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 
 ## 5. 错误与兼容性注意
 
+- 后端面向用户的错误文案统一为中文；Xray 原生输出（如 `xray run -test` 的
+  stdout/stderr）保留原文。前端语言切到英文时，后端错误仍显示中文
+  （`docs/KNOWN-ISSUES.md` H4）。
+- 设置保存（`/panel/api/setting/update`）只持久化，不重启面板或 Xray；
+  `xrayTemplateConfig` 在该接口中被忽略，Xray 模板保存走
+  `/panel/api/xray/update`。需要重启面板时显式调用
+  `/panel/api/setting/restartPanel`。
+- 高级设置键：`outboundCheckEnabled`（bool）、`outboundCheckTags`
+  （逗号分隔 tag）、`outboundCheckIntervalMinutes`（1–1440）、
+  `loginNotifyWebhook`（企业微信机器人，默认通知方式）。
 - 未实现功能一律返回 `success:false`（或 4xx/5xx），**不要**依赖空数据判断成功。
 - 兼容 API 字段命名/结构跟随 3x-ui 前端期望；修改时优先改后端适配而不是改前端
   表单（前端是裁剪副本）。

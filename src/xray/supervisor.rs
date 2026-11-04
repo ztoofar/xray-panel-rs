@@ -249,7 +249,7 @@ async fn start_child(
     status: &mut XrayStatus,
 ) -> Result<Child> {
     if !cfg.xray_bin.exists() {
-        bail!("xray binary not found: {}", cfg.xray_bin.display());
+        bail!("找不到 Xray 可执行文件：{}", cfg.xray_bin.display());
     }
 
     let mut command = Command::new(&cfg.xray_bin);
@@ -374,8 +374,20 @@ async fn probe_version(cfg: &Config) -> Option<String> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
+        .and_then(parse_version_line)
+}
+
+// `xray version` prints `Xray 26.10.31 (Xray, Penetrates Everything.) ...`;
+// the UI wants just `26.10.31`, like the release tags without the leading v.
+fn parse_version_line(line: &str) -> Option<String> {
+    line.split_whitespace()
+        .map(|token| token.trim_start_matches('v'))
+        .find(|token| {
+            !token.is_empty()
+                && token.contains('.')
+                && token.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+                && token.chars().any(|ch| ch != '.')
+        })
         .map(str::to_string)
 }
 
@@ -400,7 +412,7 @@ pub async fn write_config(cfg: &Config, config: &serde_json::Value) -> Result<()
     }
 
     let temp = temp_config_path(path, "tmp");
-    let bytes = serde_json::to_vec_pretty(config).context("serialize xray config")?;
+    let bytes = serde_json::to_vec_pretty(config).context("序列化 Xray 配置失败")?;
     tokio::fs::write(&temp, &bytes)
         .await
         .with_context(|| format!("write {}", temp.display()))?;
@@ -427,7 +439,7 @@ pub async fn write_config(cfg: &Config, config: &serde_json::Value) -> Result<()
 
 pub async fn test_config(cfg: &Config, path: &Path) -> Result<()> {
     if !cfg.xray_bin.exists() {
-        bail!("xray binary not found: {}", cfg.xray_bin.display());
+        bail!("找不到 Xray 可执行文件：{}", cfg.xray_bin.display());
     }
     let output = tokio::time::timeout(
         Duration::from_secs(15),
@@ -439,7 +451,7 @@ pub async fn test_config(cfg: &Config, path: &Path) -> Result<()> {
             .output(),
     )
     .await
-    .context("xray config test timed out")?
+    .context("Xray 配置校验超时")?
     .with_context(|| format!("run {} run -test", cfg.xray_bin.display()))?;
 
     if output.status.success() {
@@ -447,18 +459,25 @@ pub async fn test_config(cfg: &Config, path: &Path) -> Result<()> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!(
-        "xray config test failed: {}{}",
-        stdout.trim(),
-        stderr.trim()
-    )
+    bail!("Xray 配置校验失败：{}{}", stdout.trim(), stderr.trim())
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::temp_config_path;
+    use super::{parse_version_line, temp_config_path};
+
+    #[test]
+    fn version_line_keeps_only_the_short_version() {
+        let line = "Xray 26.10.31 (Xray, Penetrates Everything.) a4a3dff (go1.27.3 windows/amd64)";
+        assert_eq!(parse_version_line(line).as_deref(), Some("26.10.31"));
+        assert_eq!(
+            parse_version_line("Xray v25.3.6 (Xray, Penetrates Everything.)").as_deref(),
+            Some("25.3.6")
+        );
+        assert_eq!(parse_version_line("unknown"), None);
+    }
 
     #[test]
     fn temp_config_path_keeps_json_extension() {

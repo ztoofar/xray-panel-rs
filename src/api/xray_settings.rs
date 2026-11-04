@@ -89,7 +89,7 @@ pub async fn put_dns(
     Json(body): Json<DnsBody>,
 ) -> AppResult<Json<Value>> {
     if !body.dns.is_object() {
-        return Err(AppError::BadRequest("dns must be a JSON object".into()));
+        return Err(AppError::BadRequest("dns 必须为 JSON 对象".into()));
     }
     let mut extra = load_extra(&state).await?;
     extra
@@ -105,7 +105,7 @@ pub async fn put_log(
     Json(body): Json<LogBody>,
 ) -> AppResult<Json<Value>> {
     if !body.log.is_object() {
-        return Err(AppError::BadRequest("log must be a JSON object".into()));
+        return Err(AppError::BadRequest("log 必须为 JSON 对象".into()));
     }
     let mut extra = load_extra(&state).await?;
     extra
@@ -123,11 +123,11 @@ pub async fn put_template(
     let template = body.template;
     let object = template
         .as_object()
-        .ok_or_else(|| AppError::BadRequest("template must be a JSON object".into()))?;
+        .ok_or_else(|| AppError::BadRequest("模板必须为 JSON 对象".into()))?;
     for key in RESERVED_KEYS {
         if object.contains_key(key) {
             return Err(AppError::BadRequest(format!(
-                "\"{key}\" is managed by the panel and cannot appear in the template"
+                "\"{key}\" 由面板管理，不能出现在模板中"
             )));
         }
     }
@@ -160,9 +160,7 @@ pub async fn reset_outbound(
         .await
     {
         if running {
-            return Err(AppError::Apply(format!(
-                "reset xray outbound stats failed: {err}"
-            )));
+            return Err(AppError::Apply(format!("重置出站流量统计失败：{err}")));
         }
     }
     db::outbounds::reset_traffic(&state.db, &tag).await?;
@@ -173,9 +171,7 @@ pub async fn reset_outbound_all(State(state): State<AppState>) -> AppResult<Json
     let running = state.xray.status().await.running;
     if let Err(err) = state.stats.reset_pattern("outbound>>>").await {
         if running {
-            return Err(AppError::Apply(format!(
-                "reset xray outbound stats failed: {err}"
-            )));
+            return Err(AppError::Apply(format!("重置出站流量统计失败：{err}")));
         }
     }
     db::outbounds::reset_all(&state.db).await?;
@@ -195,45 +191,41 @@ async fn load_extra(state: &AppState) -> AppResult<Value> {
 async fn commit_extra(state: &AppState, extra: &Value) -> AppResult<()> {
     service::test_extra(state, extra)
         .await
-        .map_err(|err| AppError::BadRequest(format!("xray config test failed: {err}")))?;
+        .map_err(|err| AppError::BadRequest(format!("Xray 配置校验失败：{err}")))?;
     let serialized = serde_json::to_string(extra)
-        .map_err(|err| AppError::BadRequest(format!("serialize template: {err}")))?;
+        .map_err(|err| AppError::BadRequest(format!("序列化模板失败：{err}")))?;
     db::settings::set(&state.db, "xray_extra", &serialized).await?;
     service::apply(state)
         .await
-        .map_err(|err| AppError::Apply(format!("settings saved but xray apply failed: {err}")))?;
+        .map_err(|err| AppError::Apply(format!("设置已保存，但应用 Xray 配置失败：{err}")))?;
     Ok(())
 }
 
 fn validate_outbounds(outbounds: &Value) -> AppResult<()> {
     let items = outbounds
         .as_array()
-        .ok_or_else(|| AppError::BadRequest("outbounds must be an array".into()))?;
+        .ok_or_else(|| AppError::BadRequest("outbounds 必须为数组".into()))?;
     if items.is_empty() {
-        return Err(AppError::BadRequest(
-            "at least one outbound is required".into(),
-        ));
+        return Err(AppError::BadRequest("至少需要一个出站".into()));
     }
     let mut tags = HashSet::new();
     for (index, item) in items.iter().enumerate() {
         let object = item
             .as_object()
-            .ok_or_else(|| AppError::BadRequest(format!("outbounds[{index}] must be an object")))?;
+            .ok_or_else(|| AppError::BadRequest(format!("outbounds[{index}] 必须为对象")))?;
         let tag = object
             .get("tag")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|tag| !tag.is_empty())
-            .ok_or_else(|| AppError::BadRequest(format!("outbounds[{index}].tag is required")))?;
+            .ok_or_else(|| AppError::BadRequest(format!("outbounds[{index}] 缺少 tag")))?;
         if tag == "api" {
             return Err(AppError::BadRequest(
-                "outbound tag \"api\" is reserved".into(),
+                "outbound 标签 \"api\" 为保留名称".into(),
             ));
         }
         if !tags.insert(tag.to_string()) {
-            return Err(AppError::BadRequest(format!(
-                "duplicate outbound tag: {tag}"
-            )));
+            return Err(AppError::BadRequest(format!("出站标签重复：{tag}")));
         }
         if object
             .get("protocol")
@@ -242,9 +234,7 @@ fn validate_outbounds(outbounds: &Value) -> AppResult<()> {
             .filter(|protocol| !protocol.is_empty())
             .is_none()
         {
-            return Err(AppError::BadRequest(format!(
-                "outbounds[{index}].protocol is required"
-            )));
+            return Err(AppError::BadRequest(format!("outbounds[{index}].缺少协议")));
         }
     }
     Ok(())
@@ -253,11 +243,11 @@ fn validate_outbounds(outbounds: &Value) -> AppResult<()> {
 fn validate_routing(routing: &Value, outbound_tags: &[String]) -> AppResult<()> {
     let object = routing
         .as_object()
-        .ok_or_else(|| AppError::BadRequest("routing must be a JSON object".into()))?;
+        .ok_or_else(|| AppError::BadRequest("routing 必须为 JSON 对象".into()))?;
     let rules = object
         .get("rules")
         .and_then(Value::as_array)
-        .ok_or_else(|| AppError::BadRequest("routing.rules must be an array".into()))?;
+        .ok_or_else(|| AppError::BadRequest("routing.rules 必须为数组".into()))?;
 
     let outbound_tags: HashSet<&str> = outbound_tags.iter().map(String::as_str).collect();
     let balancer_tags: HashSet<&str> = object
@@ -272,32 +262,32 @@ fn validate_routing(routing: &Value, outbound_tags: &[String]) -> AppResult<()> 
         .unwrap_or_default();
 
     for (index, rule) in rules.iter().enumerate() {
-        let rule = rule.as_object().ok_or_else(|| {
-            AppError::BadRequest(format!("routing.rules[{index}] must be an object"))
-        })?;
+        let rule = rule
+            .as_object()
+            .ok_or_else(|| AppError::BadRequest(format!("routing.rules[{index}] 必须为对象")))?;
         let outbound = rule.get("outboundTag").and_then(Value::as_str);
         let balancer = rule.get("balancerTag").and_then(Value::as_str);
         if outbound.is_none() && balancer.is_none() {
             return Err(AppError::BadRequest(format!(
-                "routing.rules[{index}] needs outboundTag or balancerTag"
+                "routing.rules[{index}] 需要 outboundTag 或 balancerTag"
             )));
         }
         if let Some(tag) = outbound {
             if tag == "api" {
                 return Err(AppError::BadRequest(
-                    "routing rule cannot target the reserved \"api\" outbound".into(),
+                    "路由规则不能指向保留的 \"api\" 出站".into(),
                 ));
             }
             if !outbound_tags.contains(tag) {
                 return Err(AppError::BadRequest(format!(
-                    "routing.rules[{index}] references unknown outbound tag: {tag}"
+                    "routing.rules[{index}] 引用了未知的出站标签：{tag}"
                 )));
             }
         }
         if let Some(tag) = balancer {
             if !balancer_tags.contains(tag) {
                 return Err(AppError::BadRequest(format!(
-                    "routing.rules[{index}] references unknown balancer tag: {tag}"
+                    "routing.rules[{index}] 引用了未知的负载均衡标签：{tag}"
                 )));
             }
         }
@@ -307,7 +297,7 @@ fn validate_routing(routing: &Value, outbound_tags: &[String]) -> AppResult<()> 
             .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some("api")))
         {
             return Err(AppError::BadRequest(format!(
-                "routing.rules[{index}] cannot match the reserved \"api\" inbound"
+                "routing.rules[{index}] 不能匹配保留的 \"api\" 入站"
             )));
         }
     }

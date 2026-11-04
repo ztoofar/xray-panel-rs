@@ -85,7 +85,7 @@ fn read_limited(response: &mut ureq::http::Response<ureq::Body>, limit: u64) -> 
         .with_config()
         .limit(limit)
         .read_to_vec()
-        .context("read response body")
+        .context("读取响应内容失败")
 }
 
 pub(crate) fn get_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Vec<u8>> {
@@ -95,7 +95,7 @@ pub(crate) fn get_bytes(agent: &ureq::Agent, url: &str, limit: u64) -> Result<Ve
         .with_context(|| format!("fetch {url}"))?;
     let status = response.status().as_u16();
     if status != 200 {
-        bail!("{url} returned http {status}");
+        bail!("{url} 返回 HTTP {status}");
     }
     read_limited(&mut response, limit).with_context(|| format!("read {url}"))
 }
@@ -139,7 +139,7 @@ pub(crate) fn is_transport_failure(err: &anyhow::Error) -> bool {
     // socket error to a kind; keep a narrow textual fallback.
     let text = format!("{err:#}").to_ascii_lowercase();
     [
-        "connection refused",
+        "连接被拒绝",
         "os error 111",
         "os error 10061",
         "connection reset",
@@ -197,12 +197,13 @@ pub async fn xray_versions(state: &AppState) -> Result<Vec<String>> {
             .get(XRAY_RELEASES_API)
             .header("Accept", "application/vnd.github+json")
             .call()
-            .context("fetch Xray releases")?;
+            .context("获取 Xray 版本列表失败")?;
         if response.status().as_u16() != 200 {
-            bail!("GitHub releases API returned http {}", response.status());
+            bail!("GitHub Release 接口返回 HTTP {}", response.status());
         }
         let body = read_limited(&mut response, 16 << 20)?;
-        let releases: Vec<Value> = serde_json::from_slice(&body).context("parse releases")?;
+        let releases: Vec<Value> =
+            serde_json::from_slice(&body).context("解析 Xray 版本列表失败")?;
         let mut versions = Vec::new();
         for release in releases {
             let Some(tag) = release.get("tag_name").and_then(Value::as_str) else {
@@ -215,7 +216,7 @@ pub async fn xray_versions(state: &AppState) -> Result<Vec<String>> {
         Ok(versions)
     })
     .await
-    .context("release lookup task failed")?;
+    .context("版本查询任务失败")?;
     result.map_err(|err| with_network_hint(err, proxy_hint.as_deref()))
 }
 
@@ -236,13 +237,13 @@ fn xray_asset_name() -> Result<&'static str> {
         "linux" => "linux",
         "windows" => "windows",
         "macos" => "macos",
-        other => bail!("unsupported operating system: {other}"),
+        other => bail!("不支持的操作系统：{other}"),
     };
     let arch = match std::env::consts::ARCH {
         "x86_64" => "64",
         "aarch64" => "arm64-v8a",
         "x86" => "32",
-        other => bail!("unsupported architecture: {other}"),
+        other => bail!("不支持的架构：{other}"),
     };
     Ok(match (os, arch) {
         ("linux", "64") => "Xray-linux-64.zip",
@@ -252,7 +253,7 @@ fn xray_asset_name() -> Result<&'static str> {
         ("windows", "32") => "Xray-windows-32.zip",
         ("macos", "64") => "Xray-macos-64.zip",
         ("macos", "arm64-v8a") => "Xray-macos-arm64-v8a.zip",
-        _ => bail!("unsupported Xray platform"),
+        _ => bail!("不支持的 Xray 平台"),
     })
 }
 
@@ -263,16 +264,16 @@ fn parse_dgst(raw: &[u8]) -> Result<String> {
             if digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Ok(digest);
             }
-            bail!("malformed Xray SHA2-256 digest");
+            bail!("Xray SHA2-256 摘要格式错误");
         }
     }
-    bail!("Xray digest has no SHA2-256 entry")
+    bail!("Xray 摘要中没有 SHA2-256 条目")
 }
 
 pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
     let versions = xray_versions(state).await?;
     if !versions.iter().any(|tag| tag == version) {
-        bail!("xray version {version} is not in the release list");
+        bail!("Xray 版本 {version} 不在发布列表中");
     }
     let asset = xray_asset_name()?;
     let url = format!("https://github.com/XTLS/Xray-core/releases/download/{version}/{asset}");
@@ -294,7 +295,7 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
         let digest = parse_dgst(&get_bytes(&agent, &digest_url, MAX_DIGEST_BYTES)?)?;
         let got = hex::encode(Sha256::digest(&archive));
         if got != digest {
-            bail!("Xray archive SHA-256 mismatch (expected {digest}, got {got})");
+            bail!("Xray 压缩包 SHA-256 校验失败（期望 {digest}，实际 {got}）");
         }
         extract_xray_temp(&archive, &bin_dir)
     })
@@ -304,11 +305,11 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
         Ok(Ok(path)) => path,
         Ok(Err(err)) => {
             return Err(with_network_hint(
-                err.context("download task failed"),
+                err.context("下载任务失败"),
                 proxy_hint.as_deref(),
             ))
         }
-        Err(err) => bail!("download task failed: {err}"),
+        Err(err) => bail!("下载任务失败：{err}"),
     };
 
     state.xray.stop().await;
@@ -320,7 +321,7 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
         return Err(err);
     }
     if let Err(err) = state.xray.restart().await {
-        bail!("xray installed but failed to restart: {err}");
+        bail!("Xray 已安装但重启失败：{err}");
     }
     tracing::info!(version, "xray binary updated");
     Ok(())
@@ -328,30 +329,30 @@ pub async fn install_xray(state: &AppState, version: &str) -> Result<()> {
 
 fn extract_xray_temp(archive: &[u8], bin_dir: &Path) -> Result<PathBuf> {
     let cursor = std::io::Cursor::new(archive);
-    let mut zip = zip::ZipArchive::new(cursor).context("open Xray archive")?;
+    let mut zip = zip::ZipArchive::new(cursor).context("打开 Xray 压缩包失败")?;
     let entry_name = if cfg!(windows) { "xray.exe" } else { "xray" };
     let mut entry = zip
         .by_name(entry_name)
         .with_context(|| format!("archive has no {entry_name}"))?;
     if entry.size() > MAX_ARCHIVE_BYTES {
-        bail!("xray binary exceeds size limit");
+        bail!("Xray 二进制超过大小限制");
     }
     std::fs::create_dir_all(bin_dir).ok();
     let temp = bin_dir.join(format!(".xray-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| -> Result<()> {
-        let mut output = std::fs::File::create(&temp).context("create temporary xray binary")?;
+        let mut output = std::fs::File::create(&temp).context("创建临时 Xray 二进制失败")?;
         let copied = std::io::copy(&mut entry.by_ref().take(MAX_ARCHIVE_BYTES + 1), &mut output)
-            .context("extract xray binary")?;
+            .context("解压 Xray 二进制失败")?;
         output.flush().ok();
         drop(output);
         if copied > MAX_ARCHIVE_BYTES {
-            bail!("xray binary exceeds size limit");
+            bail!("Xray 二进制超过大小限制");
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755))
-                .context("chmod xray binary")?;
+                .context("设置 Xray 二进制权限失败")?;
         }
         Ok(())
     })();
@@ -406,9 +407,9 @@ pub(crate) fn parse_sha256sum(raw: &[u8], asset: &str) -> Result<String> {
         if digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()) {
             return Ok(digest);
         }
-        bail!("malformed SHA-256 entry for {asset}");
+        bail!("{asset} 的 SHA-256 条目格式错误");
     }
-    bail!("checksum file has no entry for {asset}")
+    bail!("校验文件缺少 {asset} 条目")
 }
 
 pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usize> {
@@ -421,7 +422,7 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
         None => GEOFILES.to_vec(),
     };
     if wanted.is_empty() {
-        bail!("unknown geofile: {only:?}");
+        bail!("未知的 Geofile：{only:?}");
     }
     let proxy = update_proxy(state).await;
     let proxy_hint = proxy.clone();
@@ -456,14 +457,14 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
         Ok(installed)
     })
     .await
-    .context("geofile task failed")?;
+    .context("Geofile 任务失败")?;
     let installed = result.map_err(|err| with_network_hint(err, proxy_hint.as_deref()))?;
     if installed > 0 {
         state
             .xray
             .restart()
             .await
-            .map_err(|err| anyhow::anyhow!("restart xray after geofile update: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("更新 Geofile 后重启 Xray 失败：{err}"))?;
         tracing::info!(installed, "geofiles updated");
     }
     Ok(installed)
@@ -482,7 +483,7 @@ fn install_one_geofile(
     let expected = parse_sha256sum(&sums, asset)?;
     let got = hex::encode(Sha256::digest(&bytes));
     if got != expected {
-        bail!("SHA-256 mismatch (expected {expected}, got {got})");
+        bail!("SHA-256 校验失败（期望 {expected}，实际 {got}）");
     }
     std::fs::create_dir_all(bin_dir).ok();
     let temp = bin_dir.join(format!(".{file}.{}.tmp", uuid::Uuid::new_v4()));
@@ -543,7 +544,7 @@ mod tests {
 
     #[test]
     fn parsing_errors_get_no_network_hint() {
-        let err = anyhow::anyhow!("parse GitHub release: expected value");
+        let err = anyhow::anyhow!("解析 GitHub Release 失败：数据格式错误");
         assert!(network_hint(&err, Some("http://127.0.0.1:10813")).is_none());
     }
 

@@ -50,16 +50,16 @@ pub(crate) async fn read_params(req: Request) -> AppResult<HashMap<String, Strin
     // 3x-ui forms (inbound enable switch, backup upload) post multipart, which
     // the urlencoded fallback cannot parse.
     if content_type.contains("multipart/form-data") {
-        let mut multipart = Multipart::from_request(req, &())
-            .await
-            .map_err(|err| crate::error::AppError::BadRequest(format!("read multipart: {err}")))?;
+        let mut multipart = Multipart::from_request(req, &()).await.map_err(|err| {
+            crate::error::AppError::BadRequest(format!("读取 multipart 失败：{err}"))
+        })?;
         let mut params = HashMap::new();
         while let Some(field) = multipart.next_field().await.map_err(|err| {
-            crate::error::AppError::BadRequest(format!("read multipart field: {err}"))
+            crate::error::AppError::BadRequest(format!("读取 multipart 字段失败：{err}"))
         })? {
             let name = field.name().unwrap_or_default().to_string();
             let value = field.text().await.map_err(|err| {
-                crate::error::AppError::BadRequest(format!("read multipart value: {err}"))
+                crate::error::AppError::BadRequest(format!("读取 multipart 值失败：{err}"))
             })?;
             params.insert(name, value);
         }
@@ -67,10 +67,10 @@ pub(crate) async fn read_params(req: Request) -> AppResult<HashMap<String, Strin
     }
     let bytes = to_bytes(req.into_body(), 2 << 20)
         .await
-        .map_err(|err| crate::error::AppError::BadRequest(format!("read body: {err}")))?;
+        .map_err(|err| crate::error::AppError::BadRequest(format!("读取请求内容失败：{err}")))?;
     if content_type.contains("application/json") {
         let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|err| crate::error::AppError::BadRequest(format!("invalid JSON: {err}")))?;
+            .map_err(|err| crate::error::AppError::BadRequest(format!("JSON 格式无效：{err}")))?;
         let mut params = HashMap::new();
         if let Some(object) = value.as_object() {
             for (key, value) in object {
@@ -85,7 +85,7 @@ pub(crate) async fn read_params(req: Request) -> AppResult<HashMap<String, Strin
     } else {
         let text = String::from_utf8_lossy(&bytes);
         serde_urlencoded::from_str(&text)
-            .map_err(|err| crate::error::AppError::BadRequest(format!("invalid form: {err}")))
+            .map_err(|err| crate::error::AppError::BadRequest(format!("表单格式无效：{err}")))
     }
 }
 
@@ -127,18 +127,18 @@ pub async fn login(
     let password = params.get("password").cloned().unwrap_or_default();
     if username.trim().is_empty() || password.is_empty() {
         tracing::debug!(%ip, "compat login rejected: empty credentials");
-        return fail("empty username or password").into_response();
+        return fail("用户名或密码不能为空").into_response();
     }
     if super::auth::is_rate_limited(&state, ip).await {
         tracing::warn!(%ip, "panel login rate limited");
-        return fail("too many login attempts, try again later").into_response();
+        return fail("登录尝试过于频繁，请稍后再试").into_response();
     }
 
     let user = match db::users::find_by_username(&state.db, username.trim()).await {
         Ok(user) => user,
         Err(err) => {
             tracing::error!(error = %err, "compat login lookup failed");
-            return fail("internal error").into_response();
+            return fail("服务器内部错误").into_response();
         }
     };
     // Hash even for an unknown user so latency cannot reveal which usernames exist.
@@ -153,7 +153,7 @@ pub async fn login(
         tracing::warn!(username = ?username.trim(), %ip, "panel login failed");
         super::auth::record_failure(&state, ip).await;
         crate::notify::spawn_failed_login(state.clone(), real_ip, username.trim(), "兼容登录");
-        return fail("wrong username or password").into_response();
+        return fail("用户名或密码错误").into_response();
     };
     super::auth::clear_failures(&state, ip).await;
 
@@ -174,7 +174,7 @@ pub async fn login(
     .await
     {
         tracing::error!(error = %err, "compat session create failed");
-        return fail("internal error").into_response();
+        return fail("服务器内部错误").into_response();
     }
     tracing::info!(username = ?user.username, %ip, "panel login succeeded");
 
@@ -266,6 +266,9 @@ pub async fn setting_all(State(state): State<AppState>) -> AppResult<Json<Value>
         "remarkTemplate": "{{INBOUND}}-{{EMAIL}}",
         "loginNotifyWebhook": "",
         "updateProxy": "",
+        "outboundCheckEnabled": false,
+        "outboundCheckTags": "",
+        "outboundCheckIntervalMinutes": 5,
     });
     if let Some(defaults) = defaults.as_object() {
         for (key, value) in defaults {
@@ -286,33 +289,41 @@ pub async fn setting_all(State(state): State<AppState>) -> AppResult<Json<Value>
 pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppResult<Json<Value>> {
     let mut params = read_params(req).await?;
     let mut base_path_update = None;
+    let mut outbound_check_changed = false;
+    for key in [
+        crate::outbound_check::ENABLED_KEY,
+        crate::outbound_check::TAGS_KEY,
+        crate::outbound_check::INTERVAL_KEY,
+    ] {
+        if params.contains_key(key) {
+            outbound_check_changed = true;
+        }
+    }
     if let Some(raw) = params.get("webBasePath") {
         match crate::web::base_path::normalize(raw) {
             Some(path) => {
                 params.insert("webBasePath".into(), path.clone());
                 base_path_update = Some(path);
             }
-            None => return Ok(fail("webBasePath must look like /secret/")),
+            None => return Ok(fail("面板路径格式必须类似 /secret/")),
         }
     }
     if let Some(port) = params.get("webPort") {
         match port.trim().parse::<u16>() {
             Ok(value) if value > 0 => {}
-            _ => return Ok(fail("webPort must be 1-65535")),
+            _ => return Ok(fail("面板端口必须为 1-65535")),
         }
     }
     if let Some(listen) = params.get("webListen") {
         let listen = listen.trim();
         if !listen.is_empty() && listen.parse::<std::net::IpAddr>().is_err() {
-            return Ok(fail("webListen must be an IP address or empty"));
+            return Ok(fail("监听地址必须为 IP 地址或留空"));
         }
     }
     if let Some(url) = params.get("loginNotifyWebhook") {
         let url = url.trim();
         if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Ok(fail(
-                "loginNotifyWebhook must start with http:// or https://",
-            ));
+            return Ok(fail("微信 Webhook 必须以 http:// 或 https:// 开头"));
         }
     }
     if let Some(url) = params.get("updateProxy") {
@@ -329,9 +340,7 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
             || (address.matches(':').count() == 1 && !bracketed_v6)
             || address.contains("]:")
         {
-            return Ok(fail(
-                "nodeAddress must be a host without scheme, port, path or spaces",
-            ));
+            return Ok(fail("节点地址必须为不含协议、端口、路径和空格的主机名"));
         }
         params.insert("nodeAddress".into(), address.to_string());
     }
@@ -341,39 +350,45 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
                 db::settings::set(&state.db, "traffic_poll_secs", &value.to_string()).await?;
                 state.refresh_notify.notify_one();
             }
-            _ => return Ok(fail("trafficPollSecs must be 2-300")),
+            _ => return Ok(fail("trafficPollSecs 必须为 2-300")),
         }
+    }
+    if let Some(raw) = params.get(crate::outbound_check::INTERVAL_KEY) {
+        match raw.trim().parse::<i64>() {
+            Ok(value) if (1..=1440).contains(&value) => {}
+            _ => return Ok(fail("出站检测频率必须为 1-1440 分钟")),
+        }
+    }
+    if let Some(raw) = params.get(crate::outbound_check::TAGS_KEY) {
+        let mut tags: Vec<String> = Vec::new();
+        for tag in raw.split(',') {
+            let tag = tag.trim();
+            if !tag.is_empty() && !tags.iter().any(|known| known == tag) {
+                tags.push(tag.to_string());
+            }
+        }
+        params.insert(crate::outbound_check::TAGS_KEY.into(), tags.join(","));
     }
     let mut object = stored_settings(&db::settings::get_all(&state.db).await?);
 
-    if let Some(template) = params.get("xrayTemplateConfig") {
-        if !template.trim().is_empty() {
-            let parsed: Value = serde_json::from_str(template).map_err(|err| {
-                crate::error::AppError::BadRequest(format!("invalid xray template: {err}"))
-            })?;
-            if !parsed.is_object() {
-                return Ok(fail("xray template must be an object"));
-            }
-            if let Err(err) = db::settings::set(
-                &state.db,
-                "xray_extra",
-                &serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".into()),
-            )
-            .await
-            {
-                return Ok(fail(format!("save xray template: {err}")));
-            }
-            if let Err(err) = service::apply(&state).await {
-                return Ok(fail(format!("xray apply failed: {err}")));
-            }
-        }
-    }
-
+    // Saving panel settings never restarts anything. The Xray page has its
+    // own save endpoint; here we only persist values that take effect on the
+    // next "restart panel" click or on the next background tick.
     for (key, value) in params {
+        if key == "xrayTemplateConfig" {
+            continue;
+        }
         object.insert(key, coerce_form_value(&value));
     }
     let serialized = serde_json::to_string(&Value::Object(object)).unwrap_or_else(|_| "{}".into());
     db::settings::set(&state.db, "x3ui_settings", &serialized).await?;
+    tracing::info!(
+        outbound_check = outbound_check_changed,
+        "panel settings saved"
+    );
+    if outbound_check_changed {
+        state.outbound_check_notify.notify_one();
+    }
     if let Some(path) = base_path_update {
         state.set_base_path(path);
     }
@@ -501,6 +516,20 @@ pub async fn server_logs(
     // endpoint keeps its historical meaning: the captured Xray process log.
     match params.get("source").map(String::as_str) {
         Some("panel") => {
+            if let Some(name) = params
+                .get("file")
+                .map(String::as_str)
+                .filter(|value| !value.is_empty())
+            {
+                let Some(path) = crate::panel_log::resolve_log_file(&state.cfg.panel_log_dir, name)
+                else {
+                    return fail("日志文件名无效");
+                };
+                return match super::logs::tail_lines(&path, limit).await {
+                    Some(lines) => ok(Value::Array(lines.into_iter().map(Value::String).collect())),
+                    None => fail("日志文件不存在或无法读取"),
+                };
+            }
             return ok(Value::Array(
                 super::logs::panel_lines(&state, limit)
                     .into_iter()
@@ -531,14 +560,22 @@ pub async fn server_logs(
     ))
 }
 
+pub async fn server_panel_log_files(State(state): State<AppState>) -> Json<Value> {
+    ok(json!(crate::panel_log::list_log_files(
+        &state.cfg.panel_log_dir
+    )))
+}
+
 pub async fn server_restart_xray(State(state): State<AppState>) -> Json<Value> {
+    tracing::info!("xray restart requested from dashboard");
     match service::apply(&state).await {
         Ok(()) => ok(Value::Null),
-        Err(err) => fail(format!("restart xray: {err}")),
+        Err(err) => fail(format!("重启 Xray 失败：{err}")),
     }
 }
 
 pub async fn server_stop_xray(State(state): State<AppState>) -> Json<Value> {
+    tracing::info!("xray stop requested from dashboard");
     state.xray.stop().await;
     ok(Value::Null)
 }
@@ -557,10 +594,10 @@ pub async fn setting_update_user(
     let new_password = params.get("newPassword").cloned().unwrap_or_default();
     let user = match db::users::find_by_username(&state.db, old_username.trim()).await? {
         Some(user) => user,
-        None => return Ok(fail("wrong username or password")),
+        None => return Ok(fail("用户名或密码错误")),
     };
     if !auth::verify_password(&old_password, &user.password_hash) {
-        return Ok(fail("wrong username or password"));
+        return Ok(fail("用户名或密码错误"));
     }
     let username = if new_username.is_empty() {
         user.username.clone()
@@ -568,21 +605,21 @@ pub async fn setting_update_user(
         new_username
     };
     if new_password.is_empty() && username == user.username {
-        return Ok(fail("nothing to update"));
+        return Ok(fail("没有需要更新的内容"));
     }
     if username != user.username
         && db::users::find_by_username(&state.db, &username)
             .await?
             .is_some()
     {
-        return Ok(fail("username already exists"));
+        return Ok(fail("用户名已存在"));
     }
     let password_hash = if new_password.is_empty() {
         user.password_hash.clone()
     } else {
         match auth::hash_password(&new_password) {
             Ok(hash) => hash,
-            Err(err) => return Ok(fail(format!("hash password: {err}"))),
+            Err(err) => return Ok(fail(format!("生成密码哈希失败：{err}"))),
         }
     };
     db::users::update(&state.db, user.id, &username, &password_hash).await?;
@@ -591,6 +628,7 @@ pub async fn setting_update_user(
 }
 
 pub async fn setting_restart_panel() -> Json<Value> {
+    tracing::info!("panel restart requested");
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         std::process::exit(1);
@@ -670,7 +708,7 @@ pub async fn server_new_x25519(State(state): State<AppState>) -> Json<Value> {
     .await;
     let output = match output {
         Ok(Ok(output)) if output.status.success() => output,
-        _ => return fail("xray x25519 failed"),
+        _ => return fail("Xray x25519 生成失败"),
     };
     let text = String::from_utf8_lossy(&output.stdout);
     let private = text
@@ -691,7 +729,7 @@ pub async fn server_new_x25519(State(state): State<AppState>) -> Json<Value> {
         (Some(private_key), Some(public_key)) => {
             ok(json!({ "privateKey": private_key, "publicKey": public_key }))
         }
-        _ => fail("could not parse xray x25519 output"),
+        _ => fail("无法解析 Xray x25519 输出"),
     }
 }
 
@@ -705,7 +743,7 @@ pub async fn server_new_vless_enc(State(state): State<AppState>) -> Json<Value> 
     .await;
     let output = match output {
         Ok(Ok(output)) if output.status.success() => output,
-        _ => return fail("xray vlessenc failed (xray too old or missing)"),
+        _ => return fail("Xray vlessenc 执行失败（版本过低或文件缺失）"),
     };
     let text = String::from_utf8_lossy(&output.stdout);
     ok(json!({ "auths": vless_enc_auths(&text) }))
@@ -784,11 +822,11 @@ async fn run_xray_generator(state: &AppState, args: &[&str]) -> Result<String, S
             .output(),
     )
     .await
-    .map_err(|_| "xray command timed out".to_string())?
-    .map_err(|err| format!("run xray {}: {err}", args.join(" ")))?;
+    .map_err(|_| "Xray 命令执行超时".to_string())?
+    .map_err(|err| format!("运行 Xray {} 失败：{err}", args.join(" ")))?;
     if !output.status.success() {
         return Err(format!(
-            "xray {} failed: {}",
+            "Xray {} 执行失败：{}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         ));
@@ -811,7 +849,7 @@ pub async fn server_new_mldsa65(State(state): State<AppState>) -> Json<Value> {
     match run_xray_generator(&state, &["mldsa65"]).await {
         Ok(text) => match parse_key_pair_output(&text) {
             Some((seed, verify)) => ok(json!({ "seed": seed, "verify": verify })),
-            None => fail("could not parse xray mldsa65 output"),
+            None => fail("无法解析 Xray ML-DSA-65 输出"),
         },
         Err(err) => fail(err),
     }
@@ -821,7 +859,7 @@ pub async fn server_new_mlkem768(State(state): State<AppState>) -> Json<Value> {
     match run_xray_generator(&state, &["mlkem768"]).await {
         Ok(text) => match parse_key_pair_output(&text) {
             Some((seed, client)) => ok(json!({ "seed": seed, "client": client })),
-            None => fail("could not parse xray mlkem768 output"),
+            None => fail("无法解析 Xray ML-KEM-768 输出"),
         },
         Err(err) => fail(err),
     }
@@ -834,7 +872,7 @@ pub async fn server_new_ech_cert(State(state): State<AppState>, req: Request) ->
     };
     let sni = params.get("sni").map(|value| value.trim()).unwrap_or("");
     if sni.is_empty() {
-        return fail("SNI (serverName) is required for ECH");
+        return fail("生成 ECH 需要填写 SNI（serverName）");
     }
     match run_xray_generator(&state, &["tls", "ech", "--serverName", sni]).await {
         Ok(text) => {
@@ -846,7 +884,7 @@ pub async fn server_new_ech_cert(State(state): State<AppState>, req: Request) ->
             // Stock xray prints a short two-line banner before the two keys:
             // config list on line 2 and server keys on line 4.
             if lines.len() < 4 {
-                return fail("unexpected xray tls ech output");
+                return fail("Xray TLS ECH 输出格式异常");
             }
             ok(json!({
                 "echConfigList": lines[1],
@@ -870,25 +908,25 @@ pub async fn server_cert_hash(State(state): State<AppState>, req: Request) -> Js
     let bytes = if !cert_file.is_empty() {
         let known = match known_cert_files(&state).await {
             Ok(known) => known,
-            Err(err) => return fail(format!("read panel settings: {err}")),
+            Err(err) => return fail(format!("读取面板设置失败：{err}")),
         };
         let requested = std::path::PathBuf::from(cert_file);
         let canonical = match requested.canonicalize() {
             Ok(path) => path,
-            Err(err) => return fail(format!("certificate file: {err}")),
+            Err(err) => return fail(format!("证书文件错误：{err}")),
         };
         if !known.contains(&canonical) {
-            return fail("certificate file is not referenced by any inbound or panel setting");
+            return fail("证书文件未被任何入站或面板设置引用");
         }
         match tokio::fs::read(&canonical).await {
             Ok(bytes) if bytes.len() <= 1 << 20 => bytes,
-            Ok(_) => return fail("certificate file exceeds 1 MiB"),
-            Err(err) => return fail(format!("read certificate: {err}")),
+            Ok(_) => return fail("证书文件超过 1 MiB"),
+            Err(err) => return fail(format!("读取证书失败：{err}")),
         }
     } else if !cert_content.trim().is_empty() {
         cert_content.into_bytes()
     } else {
-        return fail("no certificate provided");
+        return fail("未提供证书");
     };
     match certificate_der_hashes(&bytes) {
         Ok(hashes) => ok(json!(hashes)),
@@ -965,7 +1003,7 @@ fn certificate_der_hashes(bytes: &[u8]) -> Result<Vec<String>, String> {
     while let Some(start) = rest.find(begin) {
         let after = &rest[start + begin.len()..];
         let Some(stop) = after.find(end) else {
-            return Err("unterminated PEM certificate".into());
+            return Err("PEM 证书格式不完整".into());
         };
         let der = base64::engine::general_purpose::STANDARD
             .decode(after[..stop].split_whitespace().collect::<String>())
@@ -975,7 +1013,7 @@ fn certificate_der_hashes(bytes: &[u8]) -> Result<Vec<String>, String> {
     }
     if hashes.is_empty() {
         if bytes.is_empty() {
-            return Err("empty certificate".into());
+            return Err("证书内容为空".into());
         }
         hashes.push(hex::encode(Sha256::digest(bytes)));
     }
@@ -1080,7 +1118,7 @@ pub async fn inbound_get(
 ) -> AppResult<Json<Value>> {
     let inbound = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| crate::error::AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| crate::error::AppError::NotFound("入站不存在".into()))?;
     let clients = db::clients::list_by_inbound(&state.db, id).await?;
     let members: Vec<&Client> = clients.iter().collect();
     Ok(ok(inbound_view(&inbound, &members)))
@@ -1479,6 +1517,18 @@ pub async fn clients_onlines_by_guid(State(state): State<AppState>) -> Json<Valu
     ok(json!({ "": emails }))
 }
 
+pub async fn clients_online_ips(State(state): State<AppState>) -> Json<Value> {
+    let online = state.online_clients.lock().await;
+    let mut out = Map::new();
+    for (email, user) in online.iter() {
+        if !user.ips.is_empty() {
+            let ips: Vec<&str> = user.ips.iter().map(|entry| entry.ip.as_str()).collect();
+            out.insert(email.clone(), json!(ips));
+        }
+    }
+    ok(Value::Object(out))
+}
+
 pub async fn clients_online_inbounds(State(state): State<AppState>) -> Json<Value> {
     let online = state.online_clients.lock().await;
     let mut out = Map::new();
@@ -1548,14 +1598,14 @@ pub async fn inbounds_import(
 ) -> AppResult<Json<Value>> {
     let params = read_params(req).await?;
     let Some(raw) = params.get("data") else {
-        return Ok(fail("data is required"));
+        return Ok(fail("缺少 data 参数"));
     };
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
-        Err(err) => return Ok(fail(format!("invalid inbound JSON: {err}"))),
+        Err(err) => return Ok(fail(format!("入站 JSON 无效：{err}"))),
     };
     let Some(object) = parsed.as_object() else {
-        return Ok(fail("inbound data must be a JSON object"));
+        return Ok(fail("入站数据必须为 JSON 对象"));
     };
     let mut flat = HashMap::new();
     for (key, value) in object {
@@ -1571,7 +1621,7 @@ pub async fn inbounds_import(
         Err(message) => return Ok(fail(message)),
     };
     if db::inbounds::tag_exists(&state.db, &input.tag, None).await? {
-        return Ok(fail(format!("tag already exists: {}", input.tag)));
+        return Ok(fail(format!("标签已存在：{}", input.tag)));
     }
     let settings = input.settings.clone();
     let managed = managed_protocol(&input.protocol);
@@ -1626,7 +1676,7 @@ pub async fn inbounds_import(
         }
     }
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("inbound saved but xray apply failed: {err}")));
+        return Ok(fail(format!("入站已保存，但应用 Xray 配置失败：{err}")));
     }
     Ok(ok(json!({ "id": id })))
 }
@@ -1651,8 +1701,14 @@ pub async fn inbound_add(State(state): State<AppState>, req: Request) -> AppResu
         sync_clients_from_settings(&state, id, &input.protocol, &settings, true).await?;
     }
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("inbound saved but xray apply failed: {err}")));
+        return Ok(fail(format!("入站已保存，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(
+        inbound_id = id,
+        tag = %input.tag,
+        protocol = %input.protocol,
+        "inbound created"
+    );
     Ok(ok(json!({ "id": id })))
 }
 
@@ -1663,7 +1719,7 @@ pub async fn inbound_update(
 ) -> AppResult<Json<Value>> {
     let existing = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| crate::error::AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| crate::error::AppError::NotFound("入站不存在".into()))?;
     let params = read_params(req).await?;
     let mut input = match inbound_input_from_params(&params) {
         Ok(input) => input,
@@ -1689,8 +1745,14 @@ pub async fn inbound_update(
         sync_clients_from_settings(&state, id, &input.protocol, &settings, true).await?;
     }
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("inbound saved but xray apply failed: {err}")));
+        return Ok(fail(format!("入站已保存，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(
+        inbound_id = id,
+        tag = %input.tag,
+        protocol = %input.protocol,
+        "inbound updated"
+    );
     Ok(ok(json!({ "id": id })))
 }
 
@@ -1701,10 +1763,9 @@ pub async fn inbound_delete(
     db::inbounds::delete(&state.db, id).await?;
     db::client_inbounds::delete_orphans(&state.db).await?;
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!(
-            "inbound deleted but xray apply failed: {err}"
-        )));
+        return Ok(fail(format!("入站已删除，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(inbound_id = id, "inbound deleted");
     Ok(ok(Value::Null))
 }
 
@@ -1720,16 +1781,15 @@ pub async fn inbound_set_enable(
         .unwrap_or(false);
     db::inbounds::set_enable(&state.db, id, enable).await?;
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!(
-            "inbound updated but xray apply failed: {err}"
-        )));
+        return Ok(fail(format!("入站已更新，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(inbound_id = id, enable, "inbound toggled");
     Ok(ok(Value::Null))
 }
 
 pub async fn stub(method: axum::http::Method, Path(rest): Path<String>) -> Json<Value> {
     if !matches!(method, axum::http::Method::GET | axum::http::Method::HEAD) {
-        return fail("this feature is not supported by the Rust panel yet");
+        return fail("当前面板尚未支持此功能");
     }
     let obj = if rest.contains("history")
         || rest.contains("logs")
@@ -2051,50 +2111,50 @@ fn inbound_input_from_params(
         .map(|value| value.trim().to_ascii_lowercase())
         .unwrap_or_default();
     if protocol.is_empty() {
-        return Err("protocol is required".into());
+        return Err("缺少协议".into());
     }
     if !crate::xray::config::is_xray_inbound(&protocol) {
-        return Err(format!("unsupported protocol: {protocol}"));
+        return Err(format!("不支持的协议：{protocol}"));
     }
     let port = params
         .get("port")
         .and_then(|value| value.parse::<i64>().ok())
         .ok_or_else(|| "port is required".to_string())?;
     if !(1..=65535).contains(&port) {
-        return Err("port must be 1-65535".into());
+        return Err("端口必须为 1-65535".into());
     }
     let settings = match params
         .get("settings")
         .filter(|value| !value.trim().is_empty())
     {
         Some(raw) => serde_json::from_str::<Value>(raw)
-            .map_err(|err| format!("settings is not valid JSON: {err}"))?,
+            .map_err(|err| format!("settings 不是有效的 JSON：{err}"))?,
         None => json!({}),
     };
     if !settings.is_object() {
-        return Err("settings must be a JSON object".into());
+        return Err("settings 必须为 JSON 对象".into());
     }
     let stream_settings = match params
         .get("streamSettings")
         .filter(|value| !value.trim().is_empty())
     {
         Some(raw) => serde_json::from_str::<Value>(raw)
-            .map_err(|err| format!("streamSettings is not valid JSON: {err}"))?,
+            .map_err(|err| format!("streamSettings 不是有效的 JSON：{err}"))?,
         None => json!({ "network": "tcp" }),
     };
     if !stream_settings.is_object() {
-        return Err("streamSettings must be a JSON object".into());
+        return Err("streamSettings 必须为 JSON 对象".into());
     }
     let sniffing = match params
         .get("sniffing")
         .filter(|value| !value.trim().is_empty())
     {
         Some(raw) => serde_json::from_str::<Value>(raw)
-            .map_err(|err| format!("sniffing is not valid JSON: {err}"))?,
+            .map_err(|err| format!("sniffing 不是有效的 JSON：{err}"))?,
         None => json!({}),
     };
     if !sniffing.is_object() {
-        return Err("sniffing must be a JSON object".into());
+        return Err("sniffing 必须为 JSON 对象".into());
     }
     let tag = params
         .get("tag")
@@ -2102,7 +2162,7 @@ fn inbound_input_from_params(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("in-{protocol}-{port}"));
     if tag == "api" {
-        return Err("tag \"api\" is reserved".into());
+        return Err("标签 \"api\" 为保留名称".into());
     }
     let traffic_reset = params
         .get("trafficReset")
@@ -2455,11 +2515,11 @@ async fn create_client_from_params(
         .await
         .map_err(|err| err.to_string())?
     {
-        return Err("email already exists".into());
+        return Err("邮箱已存在".into());
     }
     let inbound_ids = compat_inbound_ids(params, None);
     if inbound_ids.is_empty() {
-        return Err("at least one inbound is required".into());
+        return Err("至少需要关联一个入站".into());
     }
     let mut settings = compat_client_settings(state, params, &email, None, &inbound_ids).await?;
     ensure_sub_id(&mut settings);
@@ -2503,7 +2563,7 @@ async fn create_client_from_params(
     let mut client = db::clients::get(&state.db, id)
         .await
         .map_err(|err| err.to_string())?
-        .ok_or_else(|| "client not found".to_string())?;
+        .ok_or_else(|| "客户端不存在".to_string())?;
     client.inbound_ids = inbound_ids.clone();
     Ok((client, inbound_ids))
 }
@@ -2516,8 +2576,9 @@ pub async fn client_add(State(state): State<AppState>, req: Request) -> AppResul
         Err(message) => return Ok(fail(message)),
     };
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("client saved but xray apply failed: {err}")));
+        return Ok(fail(format!("客户端已保存，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(email = %client.email, "client created");
     Ok(ok(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({}))
     ))
@@ -2536,9 +2597,9 @@ pub async fn clients_bulk_create(
 ) -> AppResult<Json<Value>> {
     let bytes = to_bytes(req.into_body(), 2 << 20)
         .await
-        .map_err(|err| crate::error::AppError::BadRequest(format!("read body: {err}")))?;
+        .map_err(|err| crate::error::AppError::BadRequest(format!("读取请求内容失败：{err}")))?;
     let items: Vec<BulkClientItem> = serde_json::from_slice(&bytes)
-        .map_err(|err| crate::error::AppError::BadRequest(format!("invalid JSON: {err}")))?;
+        .map_err(|err| crate::error::AppError::BadRequest(format!("JSON 格式无效：{err}")))?;
     let mut created = 0usize;
     let mut skipped = Vec::new();
     for item in items {
@@ -2569,9 +2630,10 @@ pub async fn clients_bulk_create(
     }
     if created > 0 {
         if let Err(err) = service::apply(&state).await {
-            return Ok(fail(format!("clients saved but xray apply failed: {err}")));
+            return Ok(fail(format!("客户端已保存，但应用 Xray 配置失败：{err}")));
         }
     }
+    tracing::info!(created, skipped = skipped.len(), "clients bulk created");
     Ok(ok(json!({ "created": created, "skipped": skipped })))
 }
 
@@ -2700,7 +2762,7 @@ async fn create_portable_client(
         .await
         .map_err(|err| err.to_string())?
     {
-        return Err("email already exists".into());
+        return Err("邮箱已存在".into());
     }
     let mut params: HashMap<String, String> = client
         .iter()
@@ -2768,18 +2830,18 @@ async fn create_portable_client(
     db::clients::get(&state.db, id)
         .await
         .map_err(|err| err.to_string())?
-        .ok_or_else(|| "client not found".to_string())
+        .ok_or_else(|| "客户端不存在".to_string())
 }
 
 pub async fn clients_import(State(state): State<AppState>, req: Request) -> AppResult<Json<Value>> {
     let params = read_params(req).await?;
     let Some(raw) = params.get("data") else {
-        return Ok(fail("data is required"));
+        return Ok(fail("缺少 data 参数"));
     };
     let items: Vec<Value> = match serde_json::from_str(raw) {
         Ok(Value::Array(items)) => items,
-        Ok(_) => return Ok(fail("client data must be a JSON array")),
-        Err(err) => return Ok(fail(format!("invalid client JSON: {err}"))),
+        Ok(_) => return Ok(fail("客户端数据必须为 JSON 数组")),
+        Err(err) => return Ok(fail(format!("客户端 JSON 无效：{err}"))),
     };
     let mut created = 0usize;
     let mut skipped = Vec::new();
@@ -2806,7 +2868,7 @@ pub async fn clients_import(State(state): State<AppState>, req: Request) -> AppR
         if inbound_ids.is_empty() {
             skipped.push(json!({
                 "email": email,
-                "reason": "at least one inbound is required",
+                "reason": "至少需要关联一个入站",
             }));
             continue;
         }
@@ -2841,9 +2903,7 @@ pub async fn clients_import(State(state): State<AppState>, req: Request) -> AppR
     }
     if created > 0 {
         if let Err(err) = service::apply(&state).await {
-            return Ok(fail(format!(
-                "clients imported but xray apply failed: {err}"
-            )));
+            return Ok(fail(format!("客户端已导入，但应用 Xray 配置失败：{err}")));
         }
     }
     Ok(ok(json!({ "created": created, "skipped": skipped })))
@@ -2856,7 +2916,7 @@ pub async fn client_update(
 ) -> AppResult<Json<Value>> {
     let existing = match db::clients::find_by_email(&state.db, &email).await? {
         Some(client) => client,
-        None => return Ok(fail("client not found")),
+        None => return Ok(fail("客户端不存在")),
     };
     let existing_ids = db::client_inbounds::ids_for_client(&state.db, existing.id).await?;
     let mut params = read_params(req).await?;
@@ -2869,11 +2929,11 @@ pub async fn client_update(
     if next_email != existing.email
         && db::clients::email_exists(&state.db, &next_email, Some(existing.id)).await?
     {
-        return Ok(fail("email already exists"));
+        return Ok(fail("邮箱已存在"));
     }
     let inbound_ids = compat_inbound_ids(&params, Some(&existing_ids));
     if inbound_ids.is_empty() {
-        return Ok(fail("at least one inbound is required"));
+        return Ok(fail("至少需要关联一个入站"));
     }
     let mut settings =
         match compat_client_settings(&state, &params, &next_email, Some(&existing), &inbound_ids)
@@ -2917,12 +2977,17 @@ pub async fn client_update(
     db::clients::update(&state.db, existing.id, &input).await?;
     db::client_inbounds::set_for_client(&state.db, existing.id, &inbound_ids).await?;
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("client saved but xray apply failed: {err}")));
+        return Ok(fail(format!("客户端已保存，但应用 Xray 配置失败：{err}")));
     }
     let mut client = db::clients::get(&state.db, existing.id)
         .await?
-        .ok_or_else(|| crate::error::AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| crate::error::AppError::NotFound("客户端不存在".into()))?;
     client.inbound_ids = inbound_ids;
+    tracing::info!(
+        email = %client.email,
+        previous_email = %existing.email,
+        "client updated"
+    );
     Ok(ok(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({}))
     ))
@@ -2933,12 +2998,13 @@ pub async fn client_delete(
     Path(email): Path<String>,
 ) -> AppResult<Json<Value>> {
     let Some(client) = db::clients::find_by_email(&state.db, &email).await? else {
-        return Ok(fail("client not found"));
+        return Ok(fail("客户端不存在"));
     };
     db::clients::delete(&state.db, client.id).await?;
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("client deleted but xray apply failed: {err}")));
+        return Ok(fail(format!("客户端已删除，但应用 Xray 配置失败：{err}")));
     }
+    tracing::info!(email = %client.email, "client deleted");
     Ok(ok(Value::Null))
 }
 
@@ -3014,7 +3080,7 @@ async fn compat_client_settings(
         let inbound = db::inbounds::get(&state.db, *inbound_id)
             .await
             .map_err(|err| err.to_string())?
-            .ok_or_else(|| format!("inbound not found: {inbound_id}"))?;
+            .ok_or_else(|| format!("入站不存在: {inbound_id}"))?;
         match inbound.protocol.as_str() {
             "vless" | "vmess" => {
                 let missing = map
@@ -3384,26 +3450,26 @@ pub async fn xray_balancer_override(State(state): State<AppState>, req: Request)
     };
     let tag = params.get("tag").map(|value| value.trim()).unwrap_or("");
     if tag.is_empty() {
-        return fail("tag is required");
+        return fail("缺少标签");
     }
     let target = params.get("target").map(|value| value.trim()).unwrap_or("");
     match crate::xray::router::override_balancer(&state.cfg.xray_api_url(), tag, target).await {
         Ok(()) => ok(Value::Null),
-        Err(err) => fail(format!("override balancer: {err:#}")),
+        Err(err) => fail(format!("切换负载均衡目标失败：{err:#}")),
     }
 }
 
 pub async fn xray_update(State(state): State<AppState>, req: Request) -> AppResult<Json<Value>> {
     let params = read_params(req).await?;
     let Some(raw) = params.get("xraySetting") else {
-        return Ok(fail("xraySetting is required"));
+        return Ok(fail("缺少 xraySetting 参数"));
     };
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
-        Err(err) => return Ok(fail(format!("invalid xraySetting JSON: {err}"))),
+        Err(err) => return Ok(fail(format!("xraySetting JSON 无效：{err}"))),
     };
     if !parsed.is_object() {
-        return Ok(fail("xraySetting must be a JSON object"));
+        return Ok(fail("xraySetting 必须为 JSON 对象"));
     }
     let extra = editable_extra_from_setting(&parsed);
     if let Some(url) = params.get("outboundTestUrl") {
@@ -3414,11 +3480,11 @@ pub async fn xray_update(State(state): State<AppState>, req: Request) -> AppResu
         };
         db::settings::set(&state.db, "outbound_test_url", url).await?;
     }
-    service::test_extra(&state, &extra).await.map_err(|err| {
-        crate::error::AppError::BadRequest(format!("xray config test failed: {err}"))
-    })?;
+    service::test_extra(&state, &extra)
+        .await
+        .map_err(|err| crate::error::AppError::BadRequest(format!("Xray 配置校验失败：{err}")))?;
     let serialized = serde_json::to_string(&extra)
-        .map_err(|err| crate::error::AppError::BadRequest(format!("serialize template: {err}")))?;
+        .map_err(|err| crate::error::AppError::BadRequest(format!("序列化模板失败：{err}")))?;
     db::settings::set(&state.db, "xray_extra", &serialized).await?;
     let mut tags = crate::api::xray_settings::tags_of(&extra, "outbounds");
     // Subscription outbounds have traffic counters and routing rules too, and
@@ -3429,7 +3495,7 @@ pub async fn xray_update(State(state): State<AppState>, req: Request) -> AppResu
     }
     service::apply(&state)
         .await
-        .map_err(|err| crate::error::AppError::Apply(format!("saved but apply failed: {err}")))?;
+        .map_err(|err| crate::error::AppError::Apply(format!("已保存，但应用配置失败：{err}")))?;
     Ok(ok(Value::Null))
 }
 
@@ -3489,7 +3555,7 @@ pub async fn client_get(
     Path(email): Path<String>,
 ) -> AppResult<Json<Value>> {
     let Some(client) = db::clients::find_by_email(&state.db, &email).await? else {
-        return Ok(fail("client not found"));
+        return Ok(fail("客户端不存在"));
     };
     let mut client = client;
     let ids = db::client_inbounds::ids_for_client(&state.db, client.id).await?;
@@ -3508,7 +3574,7 @@ pub async fn client_reset_traffic(
     Path(email): Path<String>,
 ) -> AppResult<Json<Value>> {
     let Some(client) = db::clients::find_by_email(&state.db, &email).await? else {
-        return Ok(fail("client not found"));
+        return Ok(fail("客户端不存在"));
     };
     let mut inbound_ids = db::client_inbounds::ids_for_client(&state.db, client.id).await?;
     if inbound_ids.is_empty() {
@@ -3774,7 +3840,7 @@ pub async fn inbound_fallbacks_get(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let Some(inbound) = db::inbounds::get(&state.db, id).await? else {
-        return Ok(fail("inbound not found"));
+        return Ok(fail("入站不存在"));
     };
     let fallbacks = inbound
         .settings
@@ -3806,14 +3872,14 @@ pub async fn inbound_fallbacks_put(
 ) -> AppResult<Json<Value>> {
     let params = read_params(req).await?;
     let Some(raw) = params.get("fallbacks") else {
-        return Ok(fail("fallbacks is required"));
+        return Ok(fail("缺少 fallbacks 参数"));
     };
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
-        Err(err) => return Ok(fail(format!("invalid fallbacks JSON: {err}"))),
+        Err(err) => return Ok(fail(format!("fallbacks JSON 无效：{err}"))),
     };
     let Some(rows) = parsed.as_array() else {
-        return Ok(fail("fallbacks must be an array"));
+        return Ok(fail("fallbacks 必须为数组"));
     };
     let fallbacks = rows
         .iter()
@@ -3837,7 +3903,7 @@ pub async fn inbound_fallbacks_put(
         })
         .collect::<Vec<_>>();
     let Some(inbound) = db::inbounds::get(&state.db, id).await? else {
-        return Ok(fail("inbound not found"));
+        return Ok(fail("入站不存在"));
     };
     let mut settings = inbound.settings.0.clone();
     if let Some(object) = settings.as_object_mut() {
@@ -3845,7 +3911,7 @@ pub async fn inbound_fallbacks_put(
     }
     db::inbounds::set_settings(&state.db, id, &settings).await?;
     if let Err(err) = service::apply(&state).await {
-        return Ok(fail(format!("fallbacks saved but apply failed: {err}")));
+        return Ok(fail(format!("fallbacks 已保存，但应用配置失败：{err}")));
     }
     Ok(ok(Value::Null))
 }
@@ -3855,7 +3921,7 @@ pub async fn inbound_reset_traffic(
     Path(id): Path<i64>,
 ) -> AppResult<Json<Value>> {
     let Some(inbound) = db::inbounds::get(&state.db, id).await? else {
-        return Ok(fail("inbound not found"));
+        return Ok(fail("入站不存在"));
     };
     let _ = state
         .stats
@@ -3980,17 +4046,14 @@ mod tests {
         params.insert("port".into(), "443".into());
         params.insert("settings".into(), "{not json".into());
         let err = inbound_input_from_params(&params).expect_err("malformed settings");
-        assert!(err.contains("settings is not valid JSON"), "{err}");
+        assert!(err.contains("settings 不是有效的 JSON"), "{err}");
 
         let mut params = HashMap::new();
         params.insert("protocol".into(), "vless".into());
         params.insert("port".into(), "443".into());
         params.insert("streamSettings".into(), "[]".into());
         let err = inbound_input_from_params(&params).expect_err("non-object stream");
-        assert!(
-            err.contains("streamSettings must be a JSON object"),
-            "{err}"
-        );
+        assert!(err.contains("streamSettings 必须为 JSON 对象"), "{err}");
     }
 
     #[test]

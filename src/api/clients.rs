@@ -74,7 +74,7 @@ pub async fn online(State(state): State<AppState>) -> Json<Value> {
 pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
     let client = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
     let client = with_ids(&state, client).await?;
     Ok(Json(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({})),
@@ -90,7 +90,7 @@ pub async fn create(
     let inbounds = load_inbounds(&state, &inbound_ids).await?;
     let email = validate_email(&body.email)?;
     if db::clients::email_exists(&state.db, &email, None).await? {
-        return Err(AppError::BadRequest("email already exists".into()));
+        return Err(AppError::BadRequest("邮箱已存在".into()));
     }
 
     let provided = json_object(body.settings.unwrap_or_else(|| json!({})), "settings")?;
@@ -117,12 +117,12 @@ pub async fn create(
     db::client_inbounds::set_for_client(&state.db, id, &inbound_ids).await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "client saved but xray apply failed: {err}"
+            "客户端已保存，但应用 Xray 配置失败：{err}"
         )));
     }
     let client = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
     let client = with_ids(&state, client).await?;
     Ok(Json(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({})),
@@ -136,13 +136,13 @@ pub async fn update(
 ) -> AppResult<Json<Value>> {
     let existing = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
     let existing = with_ids(&state, existing).await?;
     let inbound_ids = normalize_inbound_ids(&body, Some(&existing))?;
     let inbounds = load_inbounds(&state, &inbound_ids).await?;
     let email = validate_email(&body.email)?;
     if db::clients::email_exists(&state.db, &email, Some(id)).await? {
-        return Err(AppError::BadRequest("email already exists".into()));
+        return Err(AppError::BadRequest("邮箱已存在".into()));
     }
 
     let mut map = existing.settings.0.as_object().cloned().unwrap_or_default();
@@ -173,12 +173,12 @@ pub async fn update(
     db::client_inbounds::set_for_client(&state.db, id, &inbound_ids).await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "client saved but xray apply failed: {err}"
+            "客户端已保存，但应用 Xray 配置失败：{err}"
         )));
     }
     let client = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
     let client = with_ids(&state, client).await?;
     Ok(Json(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({})),
@@ -188,11 +188,11 @@ pub async fn update(
 pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
     let removed = db::clients::delete(&state.db, id).await?;
     if !removed {
-        return Err(AppError::NotFound("client not found".into()));
+        return Err(AppError::NotFound("客户端不存在".into()));
     }
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "client deleted but xray apply failed: {err}"
+            "客户端已删除，但应用 Xray 配置失败：{err}"
         )));
     }
     Ok(Json(json!({ "ok": true })))
@@ -204,12 +204,12 @@ pub async fn toggle(
     Json(body): Json<ToggleBody>,
 ) -> AppResult<Json<Value>> {
     if db::clients::get(&state.db, id).await?.is_none() {
-        return Err(AppError::NotFound("client not found".into()));
+        return Err(AppError::NotFound("客户端不存在".into()));
     }
     db::clients::set_enable(&state.db, id, body.enable).await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "client updated but xray apply failed: {err}"
+            "客户端已更新，但应用 Xray 配置失败：{err}"
         )));
     }
     Ok(Json(json!({ "ok": true })))
@@ -218,7 +218,7 @@ pub async fn toggle(
 pub async fn reset(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
     let client = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
 
     let mut inbound_ids = db::client_inbounds::ids_for_client(&state.db, id).await?;
     if inbound_ids.is_empty() {
@@ -228,7 +228,7 @@ pub async fn reset(State(state): State<AppState>, Path(id): Path<i64>) -> AppRes
         let pattern = traffic_pattern(inbound_id, &client.email);
         if let Err(err) = state.stats.reset_pattern(&pattern).await {
             if state.xray.status().await.running {
-                return Err(AppError::Apply(format!("reset xray stats failed: {err}")));
+                return Err(AppError::Apply(format!("重置 Xray 流量统计失败：{err}")));
             }
             tracing::debug!(error = %err, "xray down, resetting database counters only");
         }
@@ -236,7 +236,7 @@ pub async fn reset(State(state): State<AppState>, Path(id): Path<i64>) -> AppRes
     db::clients::reset_traffic(&state.db, id).await?;
     let client = db::clients::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("client not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("客户端不存在".into()))?;
     let client = with_ids(&state, client).await?;
     Ok(Json(
         serde_json::to_value(&client).unwrap_or_else(|_| json!({})),
@@ -264,9 +264,7 @@ fn normalize_inbound_ids(body: &ClientBody, existing: Option<&Client>) -> AppRes
     ids.dedup();
     ids.retain(|id| *id > 0);
     if ids.is_empty() {
-        return Err(AppError::BadRequest(
-            "at least one inbound is required".into(),
-        ));
+        return Err(AppError::BadRequest("至少需要关联一个入站".into()));
     }
     Ok(ids)
 }
@@ -279,7 +277,7 @@ async fn load_inbounds(
     for id in inbound_ids {
         let inbound = db::inbounds::get(&state.db, *id)
             .await?
-            .ok_or_else(|| AppError::BadRequest(format!("inbound not found: {id}")))?;
+            .ok_or_else(|| AppError::BadRequest(format!("入站不存在：{id}")))?;
         inbounds.push(inbound);
     }
     Ok(inbounds)
@@ -300,9 +298,7 @@ fn prepare_for_inbounds(
 fn validate_email(email: &str) -> AppResult<String> {
     let email = email.trim().to_string();
     if email.is_empty() || email.len() > 128 {
-        return Err(AppError::BadRequest(
-            "email must be 1-128 characters".into(),
-        ));
+        return Err(AppError::BadRequest("邮箱长度必须为 1-128 个字符".into()));
     }
     if email.contains(">>>")
         || email
@@ -310,7 +306,7 @@ fn validate_email(email: &str) -> AppResult<String> {
             .any(|ch| ch.is_control() || ch.is_whitespace())
     {
         return Err(AppError::BadRequest(
-            "email cannot contain whitespace, control characters or \">>>\"".into(),
+            "邮箱不能包含空白、控制字符或 \">>>\"".into(),
         ));
     }
     Ok(email)
@@ -320,9 +316,7 @@ fn json_object(value: Value, field: &str) -> AppResult<Value> {
     if value.is_object() {
         Ok(value)
     } else {
-        Err(AppError::BadRequest(format!(
-            "{field} must be a JSON object"
-        )))
+        Err(AppError::BadRequest(format!("{field} 必须为 JSON 对象")))
     }
 }
 
@@ -346,7 +340,7 @@ fn prepare_settings(
                 current
             };
             if uuid::Uuid::parse_str(&id).is_err() {
-                return Err(AppError::BadRequest("id must be a valid UUID".into()));
+                return Err(AppError::BadRequest("ID 必须为有效的 UUID".into()));
             }
             settings.insert("id".into(), json!(id));
             if protocol == "vless" {
@@ -390,7 +384,7 @@ fn prepare_settings(
                     Ok(bytes) if bytes.len() == len => {}
                     _ => {
                         return Err(AppError::BadRequest(format!(
-                            "shadowsocks {method} password must be base64 of {len} bytes"
+                            "Shadowsocks {method} 密码必须为 {len} 字节的 Base64"
                         )))
                     }
                 }
@@ -412,11 +406,7 @@ fn prepare_settings(
             }
             ensure_password(&mut settings, || random_alnum(16));
         }
-        other => {
-            return Err(AppError::BadRequest(format!(
-                "unsupported protocol: {other}"
-            )))
-        }
+        other => return Err(AppError::BadRequest(format!("不支持的协议：{other}"))),
     }
     Ok(Value::Object(settings))
 }

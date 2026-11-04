@@ -101,7 +101,7 @@ pub fn build_config(
     let mut config = match extra {
         Value::Object(map) => map.clone(),
         Value::Null => Map::new(),
-        _ => bail!("xray extra config must be a JSON object"),
+        _ => bail!("Xray 额外配置必须为 JSON 对象"),
     };
 
     // These blocks are owned by the panel; never let stale values win.
@@ -158,7 +158,7 @@ pub fn build_config(
 fn build_inbound(inbound: &Inbound, clients: &[&Client]) -> Result<Value> {
     let mut settings = inbound.settings.0.clone();
     if !settings.is_object() {
-        bail!("inbound {}: settings must be a JSON object", inbound.id);
+        bail!("入站 {}：settings 必须为 JSON 对象", inbound.id);
     }
 
     match inbound.protocol.as_str() {
@@ -255,7 +255,7 @@ fn build_credentials(
             .settings
             .0
             .as_object()
-            .with_context(|| format!("client {}: settings must be a JSON object", client.id))?;
+            .with_context(|| format!("client {}: settings 必须为 JSON 对象", client.id))?;
         let mut entry = Map::new();
         entry.insert(
             "email".into(),
@@ -318,10 +318,11 @@ fn shape_shadowsocks(inbound: &Inbound, clients: &[&Client], settings: &mut Valu
     if method.starts_with("2022-") {
         let mut entries = Vec::new();
         for client in clients.iter().filter(|client| client.enable) {
-            let creds =
-                client.settings.0.as_object().with_context(|| {
-                    format!("client {}: settings must be a JSON object", client.id)
-                })?;
+            let creds = client
+                .settings
+                .0
+                .as_object()
+                .with_context(|| format!("client {}: settings 必须为 JSON 对象", client.id))?;
             entries.push(json!({
                 "method": method,
                 "password": required(creds, "password", &client.email)?,
@@ -341,9 +342,10 @@ fn shape_shadowsocks(inbound: &Inbound, clients: &[&Client], settings: &mut Valu
         let first = clients.iter().find(|client| client.enable);
         match first {
             Some(client) => {
-                let creds = client.settings.0.as_object().with_context(|| {
-                    format!("client {}: settings must be a JSON object", client.id)
-                })?;
+                let creds =
+                    client.settings.0.as_object().with_context(|| {
+                        format!("client {}: settings 必须为 JSON 对象", client.id)
+                    })?;
                 object.insert(
                     "password".into(),
                     required(creds, "password", &client.email)?,
@@ -357,7 +359,7 @@ fn shape_shadowsocks(inbound: &Inbound, clients: &[&Client], settings: &mut Valu
         }
     }
     if inbound.port <= 0 || inbound.port > 65535 {
-        bail!("inbound {}: invalid port", inbound.id);
+        bail!("入站 {}：端口无效", inbound.id);
     }
     Ok(())
 }
@@ -373,7 +375,7 @@ fn shape_wireguard(inbound: &Inbound, clients: &[&Client], settings: &mut Value)
             .settings
             .0
             .as_object()
-            .with_context(|| format!("client {}: settings must be a JSON object", client.id))?;
+            .with_context(|| format!("client {}: settings 必须为 JSON 对象", client.id))?;
         let Some(public_key) = creds
             .get("publicKey")
             .and_then(Value::as_str)
@@ -424,7 +426,7 @@ fn shape_hysteria(inbound: &Inbound, clients: &[&Client], settings: &mut Value) 
             .settings
             .0
             .as_object()
-            .with_context(|| format!("client {}: settings must be a JSON object", client.id))?;
+            .with_context(|| format!("client {}: settings 必须为 JSON 对象", client.id))?;
         if let Some(auth) = creds
             .get("auth")
             .and_then(Value::as_str)
@@ -451,7 +453,7 @@ fn shape_masque(clients: &[&Client], settings: &mut Value) -> Result<()> {
             .settings
             .0
             .as_object()
-            .with_context(|| format!("client {}: settings must be a JSON object", client.id))?;
+            .with_context(|| format!("client {}: settings 必须为 JSON 对象", client.id))?;
         if let Some(password) = creds
             .get("password")
             .and_then(Value::as_str)
@@ -472,7 +474,7 @@ fn required(creds: &Map<String, Value>, key: &str, email: &str) -> Result<Value>
     let value = creds.get(key).cloned().unwrap_or(Value::Null);
     match value.as_str() {
         Some(text) if !text.is_empty() => Ok(Value::String(text.to_string())),
-        _ => bail!("client {email}: missing credential \"{key}\""),
+        _ => bail!("客户端 {email}：缺少凭据 \"{key}\""),
     }
 }
 

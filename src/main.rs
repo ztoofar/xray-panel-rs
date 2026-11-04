@@ -8,6 +8,7 @@ mod db;
 mod error;
 mod jobs;
 mod notify;
+mod outbound_check;
 mod outbound_subs;
 mod panel_log;
 mod panel_update;
@@ -46,13 +47,13 @@ fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    let panel_logs = init_tracing();
     let cfg = Config::from_env()?;
+    let panel_logs = init_tracing(&cfg);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(cfg.workers)
         .enable_all()
         .build()
-        .context("build tokio runtime")?;
+        .context("创建 Tokio 运行时失败")?;
     runtime.block_on(run(cfg, panel_logs))
 }
 
@@ -60,28 +61,41 @@ fn is_version_arg(arg: &str) -> bool {
     matches!(arg, "--version" | "-V")
 }
 
-fn init_tracing() -> PanelLogBuffer {
+fn init_tracing(cfg: &Config) -> PanelLogBuffer {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         let level = std::env::var("PANEL_LOG").unwrap_or_else(|_| "info".into());
         EnvFilter::new(format!("xray_panel_rs={level},tower_http=warn"))
     });
-    // Two fmt layers: stdout keeps the normal output, the second one mirrors
-    // the same events into the in-memory buffer served by the log viewer.
-    // ANSI is disabled there so the web UI does not show escape sequences.
+    // Three fmt layers: stdout keeps the normal output, the buffer serves the
+    // live viewer, and the daily files keep history. All three render China
+    // time so operators read one clock.
     let panel_logs = panel_log::buffer();
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
+        .with_timer(panel_log::ChinaTime)
         .compact()
         .with_filter(filter.clone());
     let buffer_layer = tracing_subscriber::fmt::layer()
-        .with_target(false)
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
         .with_ansi(false)
-        .compact()
+        .with_timer(panel_log::ChinaTime)
         .with_writer(panel_log::PanelLogMakeWriter::new(panel_logs.clone()))
+        .with_filter(filter.clone());
+    let file_log = std::sync::Arc::new(panel_log::PanelFileLog::new(cfg.panel_log_dir.clone()));
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_ansi(false)
+        .with_timer(panel_log::ChinaTime)
+        .with_writer(panel_log::PanelFileMakeWriter::new(file_log))
         .with_filter(filter);
     tracing_subscriber::registry()
         .with(stdout_layer)
         .with(buffer_layer)
+        .with(file_layer)
         .init();
     panel_logs
 }
@@ -118,6 +132,8 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
         login_limiter: Arc::new(Mutex::new(HashMap::new())),
         traffic_history: Arc::new(Mutex::new(VecDeque::with_capacity(240))),
         refresh_notify: Arc::new(Notify::new()),
+        outbound_check: Arc::new(Mutex::new(None)),
+        outbound_check_notify: Arc::new(Notify::new()),
         base_path: Arc::new(RwLock::new(base_path)),
         started_at: now(),
     };
@@ -126,10 +142,11 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     service::apply_on_start(&state).await;
     jobs::spawn(state.clone());
     outbound_subs::spawn(state.clone());
+    outbound_check::spawn(state.clone());
 
     let listener = tokio::net::TcpListener::bind(cfg.listen)
         .await
-        .with_context(|| format!("bind {}", cfg.listen))?;
+        .with_context(|| format!("监听 {} 失败", cfg.listen))?;
     tracing::info!(listen = %cfg.listen, "panel listening");
 
     axum::serve(
@@ -138,7 +155,7 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
-    .context("http server")?;
+    .context("HTTP 服务异常")?;
 
     state.xray.stop().await;
     tracing::info!("panel stopped");

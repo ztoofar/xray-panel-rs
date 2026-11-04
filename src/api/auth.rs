@@ -123,7 +123,7 @@ pub async fn change_credentials(
         .await?
         .ok_or(AppError::Unauthorized)?;
     if !auth::verify_password(&body.current_password, &user.password_hash) {
-        return Err(AppError::BadRequest("current password is incorrect".into()));
+        return Err(AppError::BadRequest("当前密码不正确".into()));
     }
 
     let username = body
@@ -133,15 +133,13 @@ pub async fn change_credentials(
         .filter(|v| !v.is_empty())
         .unwrap_or(&user.username);
     if username.len() > 64 {
-        return Err(AppError::BadRequest("username is too long".into()));
+        return Err(AppError::BadRequest("用户名过长".into()));
     }
 
     let password_hash = match body.new_password.as_deref().filter(|v| !v.is_empty()) {
         Some(password) => {
             if password.len() < 8 {
-                return Err(AppError::BadRequest(
-                    "new password must be at least 8 characters".into(),
-                ));
+                return Err(AppError::BadRequest("新密码至少需要 8 个字符".into()));
             }
             auth::hash_password(password)?
         }

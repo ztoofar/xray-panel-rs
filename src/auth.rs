@@ -111,7 +111,7 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request, next:
             tracing::error!(error = %err, "session lookup failed");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "database error" })),
+                Json(json!({ "error": "数据库错误" })),
             )
                 .into_response();
         }

@@ -99,7 +99,7 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Value>> {
 pub async fn get(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
     let inbound = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("入站不存在".into()))?;
     Ok(Json(
         serde_json::to_value(&inbound).unwrap_or_else(|_| json!({})),
     ))
@@ -127,12 +127,12 @@ pub async fn create(
     .await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "inbound saved but xray apply failed: {err}"
+            "入站已保存，但应用 Xray 配置失败：{err}"
         )));
     }
     let inbound = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("入站不存在".into()))?;
     Ok(Json(
         serde_json::to_value(&inbound).unwrap_or_else(|_| json!({})),
     ))
@@ -146,7 +146,7 @@ pub async fn update(
 ) -> AppResult<Json<Value>> {
     let existing = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("入站不存在".into()))?;
     let mut input = build_input(&state, &body, ctx.user_id, Some(&existing)).await?;
     let seed_settings = body.settings.clone().unwrap_or_else(|| json!({}));
     let has_clients = seed_settings
@@ -174,12 +174,12 @@ pub async fn update(
     }
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "inbound saved but xray apply failed: {err}"
+            "入站已保存，但应用 Xray 配置失败：{err}"
         )));
     }
     let inbound = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("入站不存在".into()))?;
     Ok(Json(
         serde_json::to_value(&inbound).unwrap_or_else(|_| json!({})),
     ))
@@ -188,12 +188,12 @@ pub async fn update(
 pub async fn delete(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Value>> {
     let removed = db::inbounds::delete(&state.db, id).await?;
     if !removed {
-        return Err(AppError::NotFound("inbound not found".into()));
+        return Err(AppError::NotFound("入站不存在".into()));
     }
     db::client_inbounds::delete_orphans(&state.db).await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "inbound deleted but xray apply failed: {err}"
+            "入站已删除，但应用 Xray 配置失败：{err}"
         )));
     }
     Ok(Json(json!({ "ok": true })))
@@ -205,12 +205,12 @@ pub async fn toggle(
     Json(body): Json<ToggleBody>,
 ) -> AppResult<Json<Value>> {
     if db::inbounds::get(&state.db, id).await?.is_none() {
-        return Err(AppError::NotFound("inbound not found".into()));
+        return Err(AppError::NotFound("入站不存在".into()));
     }
     db::inbounds::set_enable(&state.db, id, body.enable).await?;
     if let Err(err) = service::apply(&state).await {
         return Err(AppError::Apply(format!(
-            "inbound updated but xray apply failed: {err}"
+            "入站已更新，但应用 Xray 配置失败：{err}"
         )));
     }
     Ok(Json(json!({ "ok": true })))
@@ -223,7 +223,7 @@ pub async fn links(
 ) -> AppResult<Json<Value>> {
     let inbound = db::inbounds::get(&state.db, id)
         .await?
-        .ok_or_else(|| AppError::NotFound("inbound not found".into()))?;
+        .ok_or_else(|| AppError::NotFound("入站不存在".into()))?;
     let address = public_address(&state, &headers).await?;
     let clients = db::clients::list_by_inbound(&state.db, id).await?;
 
@@ -255,12 +255,10 @@ async fn build_input(
 ) -> AppResult<InboundInput> {
     let protocol = body.protocol.trim().to_ascii_lowercase();
     if !crate::xray::config::is_xray_inbound(&protocol) {
-        return Err(AppError::BadRequest(format!(
-            "unsupported protocol: {protocol}"
-        )));
+        return Err(AppError::BadRequest(format!("不支持的协议：{protocol}")));
     }
     if !(1..=65535).contains(&body.port) {
-        return Err(AppError::BadRequest("port must be 1-65535".into()));
+        return Err(AppError::BadRequest("端口必须为 1-65535".into()));
     }
 
     let listen = body.listen.clone().unwrap_or_else(|| {
@@ -269,9 +267,7 @@ async fn build_input(
             .unwrap_or_default()
     });
     if !listen.is_empty() && listen.parse::<IpAddr>().is_err() {
-        return Err(AppError::BadRequest(
-            "listen must be an IP address or empty".into(),
-        ));
+        return Err(AppError::BadRequest("监听地址必须为 IP 地址或留空".into()));
     }
 
     let traffic_reset = body.traffic_reset.clone().unwrap_or_else(|| {
@@ -280,17 +276,13 @@ async fn build_input(
             .unwrap_or_else(|| "never".into())
     });
     if !RESETS.contains(&traffic_reset.as_str()) {
-        return Err(AppError::BadRequest(
-            "invalid traffic reset schedule".into(),
-        ));
+        return Err(AppError::BadRequest("流量重置计划无效".into()));
     }
     let traffic_reset_day = body
         .traffic_reset_day
         .unwrap_or_else(|| existing.map(|value| value.traffic_reset_day).unwrap_or(1));
     if !(1..=31).contains(&traffic_reset_day) {
-        return Err(AppError::BadRequest(
-            "traffic reset day must be 1-31".into(),
-        ));
+        return Err(AppError::BadRequest("流量重置日必须为 1-31".into()));
     }
 
     let tag = body
@@ -303,10 +295,10 @@ async fn build_input(
                 .unwrap_or_else(|| format!("in-{protocol}-{}", body.port))
         });
     if tag == "api" {
-        return Err(AppError::BadRequest("tag \"api\" is reserved".into()));
+        return Err(AppError::BadRequest("标签 \"api\" 为保留名称".into()));
     }
     if db::inbounds::tag_exists(&state.db, &tag, existing.map(|value| value.id)).await? {
-        return Err(AppError::BadRequest(format!("tag already exists: {tag}")));
+        return Err(AppError::BadRequest(format!("标签已存在：{tag}")));
     }
 
     let settings = json_object(
@@ -337,9 +329,7 @@ async fn build_input(
         .or_else(|| existing.map(|value| value.share_addr_strategy.clone()))
         .unwrap_or_else(|| "node".into());
     if !matches!(share_addr_strategy.as_str(), "node" | "listen" | "custom") {
-        return Err(AppError::BadRequest(
-            "invalid share address strategy".into(),
-        ));
+        return Err(AppError::BadRequest("分享地址策略无效".into()));
     }
 
     Ok(InboundInput {
@@ -392,9 +382,7 @@ fn json_object(value: Value, field: &str) -> AppResult<Value> {
     if value.is_object() {
         Ok(value)
     } else {
-        Err(AppError::BadRequest(format!(
-            "{field} must be a JSON object"
-        )))
+        Err(AppError::BadRequest(format!("{field} 必须为 JSON 对象")))
     }
 }
 
@@ -417,9 +405,7 @@ pub(crate) async fn public_address(state: &AppState, headers: &HeaderMap) -> App
         .trim();
     let host = strip_port(host);
     if host.is_empty() {
-        return Err(AppError::BadRequest(
-            "public address is not configured".into(),
-        ));
+        return Err(AppError::BadRequest("尚未配置公开地址".into()));
     }
     Ok(host)
 }

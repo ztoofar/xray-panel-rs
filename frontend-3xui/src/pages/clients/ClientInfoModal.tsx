@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Tag } from 'antd';
+import { Button, Modal, Tag } from 'antd';
 
 import { HttpUtil, IntlUtil, SizeFormatter } from '@/utils';
 import { formatInboundLabel } from '@/lib/inbounds/label';
@@ -40,6 +40,58 @@ export default function ClientInfoModal({
   const dateLabel = (ts?: number) => (!ts || ts <= 0 ? '-' : IntlUtil.formatDate(ts, datepicker));
 
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, number>>({});
+  const [onlineIps, setOnlineIps] = useState<string[]>([]);
+  const [locations, setLocations] = useState<
+    Record<string, { loading?: boolean; text?: string; error?: string }>
+  >({});
+
+  useEffect(() => {
+    if (!open || !isOnline || !client?.email) {
+      setOnlineIps([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const msg = (await HttpUtil.post<Record<string, string[]>>(
+        '/panel/api/clients/onlineIps',
+        undefined,
+        { silent: true },
+      )) as { success?: boolean; obj?: Record<string, string[]> };
+      if (!cancelled && msg?.success && msg.obj) {
+        setOnlineIps(msg.obj[client.email] || []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isOnline, client?.email]);
+
+  async function lookupLocation(ip: string) {
+    setLocations((prev) => ({ ...prev, [ip]: { loading: true } }));
+    const msg = (await HttpUtil.post<Record<string, unknown>>(
+      '/panel/api/clients/ipLocation',
+      { ip },
+      { silent: true },
+    )) as {
+      success?: boolean;
+      msg?: string;
+      obj?: { country?: string; region?: string; city?: string; isp?: string };
+    };
+    if (msg?.success && msg.obj) {
+      const object = msg.obj;
+      const text =
+        [object.country, object.region, object.city, object.isp]
+          .filter((part): part is string => typeof part === 'string' && part.length > 0)
+          .join(' · ') || '-';
+      setLocations((prev) => ({ ...prev, [ip]: { text } }));
+    } else {
+      setLocations((prev) => ({
+        ...prev,
+        [ip]: { error: msg?.msg || t('somethingWentWrong') },
+      }));
+    }
+  }
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -94,6 +146,39 @@ export default function ClientInfoModal({
                 )}
               </td>
             </tr>
+            {isOnline && (
+              <tr>
+                <td>{t('pages.clients.currentIp')}</td>
+                <td>
+                  {onlineIps.length === 0 ? (
+                    <span className="hint">{t('pages.clients.ipLocationNoIp')}</span>
+                  ) : (
+                    <div className="ip-list">
+                      {onlineIps.map((ip) => {
+                        const location = locations[ip];
+                        return (
+                          <div className="ip-item" key={ip}>
+                            <Tag>{ip}</Tag>
+                            <Button
+                              size="small"
+                              type="link"
+                              loading={location?.loading}
+                              onClick={() => lookupLocation(ip)}
+                            >
+                              {t('pages.clients.ipLocation')}
+                            </Button>
+                            {location?.text && <span className="hint">{location.text}</span>}
+                            {location?.error && (
+                              <span className="hint ip-location-error">{location.error}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            )}
             <tr>
               <td>{t('status')}</td>
               <td>

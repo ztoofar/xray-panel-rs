@@ -81,15 +81,15 @@ async fn latest_release(state: &AppState) -> Result<Release> {
         let agent = updates::agent(proxy.as_deref(), API_TIMEOUT)?;
         let url = format!("https://api.github.com/repos/{PANEL_REPO}/releases/latest");
         let body = updates::get_bytes(&agent, &url, MAX_API_BYTES)?;
-        let release: Value = serde_json::from_slice(&body).context("parse GitHub release")?;
+        let release: Value = serde_json::from_slice(&body).context("解析 GitHub Release 失败")?;
         let tag = release
             .get("tag_name")
             .and_then(Value::as_str)
-            .context("release has no tag_name")?
+            .context("Release 缺少 tag_name")?
             .to_string();
         let version = tag.trim_start_matches('v').to_string();
         if parse_version(&version).is_none() {
-            bail!("unexpected release tag: {tag}");
+            bail!("Release 标签格式异常：{tag}");
         }
         let assets = release
             .get("assets")
@@ -103,7 +103,7 @@ async fn latest_release(state: &AppState) -> Result<Release> {
         let archive_url = archive
             .get("browser_download_url")
             .and_then(Value::as_str)
-            .context("release asset has no download URL")?
+            .context("Release 资产缺少下载地址")?
             .to_string();
         // GitHub computes the digest for every uploaded asset; no separate
         // checksum asset is needed.
@@ -113,7 +113,7 @@ async fn latest_release(state: &AppState) -> Result<Release> {
             .and_then(|value| value.strip_prefix("sha256:"))
             .map(str::to_ascii_lowercase)
             .filter(|value| value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()))
-            .context("release asset has no sha256 digest")?;
+            .context("Release 资产缺少 SHA-256 摘要")?;
         Ok(Release {
             tag,
             version,
@@ -132,7 +132,7 @@ async fn latest_release(state: &AppState) -> Result<Release> {
         })
     })
     .await
-    .context("release lookup task failed")?;
+    .context("版本查询任务失败")?;
     result
         .with_context(|| format!("query GitHub releases {label}"))
         .map_err(|err| updates::with_network_hint(err, proxy_hint.as_deref()))
@@ -179,28 +179,28 @@ fn tar_size(header: &[u8; 512]) -> Result<u64> {
     let raw = &header[124..136];
     let text = String::from_utf8_lossy(raw);
     let text = text.trim_matches(|c: char| c == '\0' || c == ' ');
-    u64::from_str_radix(text, 8).context("parse tar entry size")
+    u64::from_str_radix(text, 8).context("解析 tar 条目大小失败")
 }
 
 fn read_exact_limited<R: Read>(reader: &mut R, len: u64, budget: &mut u64) -> Result<Vec<u8>> {
     if len > MAX_BINARY_BYTES || len > *budget {
-        bail!("archive binary exceeds the size limit");
+        bail!("压缩包内二进制超过大小限制");
     }
     *budget -= len;
     let mut bytes = vec![0u8; len as usize];
-    reader.read_exact(&mut bytes).context("read tar entry")?;
+    reader.read_exact(&mut bytes).context("读取 tar 条目失败")?;
     Ok(bytes)
 }
 
 fn skip_exact<R: Read>(reader: &mut R, len: u64, budget: &mut u64) -> Result<()> {
     if len > *budget {
-        bail!("archive expands beyond the size limit");
+        bail!("压缩包解压后超过大小限制");
     }
     *budget -= len;
     let skipped = std::io::copy(&mut reader.by_ref().take(len), &mut std::io::sink())
-        .context("skip tar entry")?;
+        .context("跳过 tar 条目失败")?;
     if skipped != len {
-        bail!("truncated tar archive");
+        bail!("tar 压缩包不完整");
     }
     Ok(())
 }
@@ -217,12 +217,12 @@ fn extract_from_tar<R: Read>(reader: R) -> Result<Vec<u8>> {
         match reader.read_exact(&mut header) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
-                bail!("tar archive ends before the panel binary");
+                bail!("tar 压缩包在面板二进制之前结束");
             }
-            Err(err) => return Err(err).context("read tar header"),
+            Err(err) => return Err(err).context("读取 tar 头失败"),
         }
         if header.iter().all(|byte| *byte == 0) {
-            bail!("tar archive has no {PANEL_ENTRY}");
+            bail!("tar 压缩包中缺少 {PANEL_ENTRY}");
         }
         let name = tar_name(&header);
         let size = tar_size(&header)?;
@@ -231,7 +231,7 @@ fn extract_from_tar<R: Read>(reader: R) -> Result<Vec<u8>> {
         if regular && name == PANEL_ENTRY {
             let binary = read_exact_limited(&mut reader, size, &mut budget)?;
             if binary.len() < 4 || &binary[..4] != b"\x7fELF" {
-                bail!("{PANEL_ENTRY} is not a Linux ELF binary");
+                bail!("{PANEL_ENTRY} 不是 Linux ELF 二进制");
             }
             return Ok(binary);
         }
@@ -244,10 +244,10 @@ fn extract_from_tar<R: Read>(reader: R) -> Result<Vec<u8>> {
 }
 
 fn current_binary() -> Result<PathBuf> {
-    let path = std::env::current_exe().context("resolve current executable")?;
+    let path = std::env::current_exe().context("定位当前可执行文件失败")?;
     let path = path.canonicalize().unwrap_or(path);
     if !path.exists() {
-        bail!("current executable not found: {}", path.display());
+        bail!("找不到当前可执行文件：{}", path.display());
     }
     Ok(path)
 }
@@ -269,15 +269,16 @@ fn stage_binary(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
     let result = (|| -> Result<()> {
         {
             use std::io::Write;
-            let mut file = std::fs::File::create(&temp).context("create staged panel binary")?;
-            file.write_all(bytes).context("write staged panel binary")?;
-            file.sync_all().context("sync staged panel binary")?;
+            let mut file = std::fs::File::create(&temp).context("创建面板二进制临时文件失败")?;
+            file.write_all(bytes)
+                .context("写入面板二进制临时文件失败")?;
+            file.sync_all().context("同步面板二进制临时文件失败")?;
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755))
-                .context("chmod staged panel binary")?;
+                .context("设置面板二进制权限失败")?;
         }
         Ok(())
     })();
@@ -317,22 +318,22 @@ fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     let backup = target.with_extension("bak");
     std::fs::copy(target, &backup).with_context(|| {
         let _ = std::fs::remove_file(temp);
-        format!("back up current panel binary to {}", backup.display())
+        format!("备份当前面板二进制到 {} 失败", backup.display())
     })?;
     std::fs::rename(temp, target).with_context(|| {
         let _ = std::fs::remove_file(temp);
-        format!("replace {}", target.display())
+        format!("替换 {} 失败", target.display())
     })?;
     Ok(())
 }
 
 pub async fn install(state: &AppState) -> Result<Value> {
     if !cfg!(unix) {
-        bail!("online panel update is supported on Linux only");
+        bail!("面板在线更新仅支持 Linux");
     }
     let release = latest_release(state).await?;
     if !is_newer(&release.version, PANEL_VERSION) {
-        bail!("already running the latest version ({PANEL_VERSION})");
+        bail!("当前已是最新版本（{PANEL_VERSION}）");
     }
     let proxy = updates::update_proxy(state).await;
     let label = proxy_label(proxy.as_deref());
@@ -344,7 +345,7 @@ pub async fn install(state: &AppState) -> Result<Value> {
         download_verified(&agent, &release_for_download)
     })
     .await
-    .context("panel download task failed")?
+    .context("面板下载任务失败")?
     .with_context(|| format!("download panel update {label}"))
     .map_err(|err| updates::with_network_hint(err, proxy_hint.as_deref()))?;
 
@@ -429,7 +430,7 @@ mod tests {
         tar_entry(&mut tar, "other/file", b"data", b'0');
         tar.extend(std::iter::repeat_n(0u8, 512));
         let err = extract_panel_binary(&gzip(&tar)).expect_err("missing binary");
-        assert!(format!("{err:#}").contains("has no"), "{err:#}");
+        assert!(format!("{err:#}").contains("缺少"), "{err:#}");
     }
 
     #[test]
@@ -437,7 +438,7 @@ mod tests {
         let mut tar = Vec::new();
         tar_entry(&mut tar, PANEL_ENTRY, b"not-an-elf", b'0');
         let err = extract_panel_binary(&gzip(&tar)).expect_err("non-elf");
-        assert!(format!("{err:#}").contains("not a Linux ELF"), "{err:#}");
+        assert!(format!("{err:#}").contains("Linux ELF"), "{err:#}");
     }
 
     #[test]

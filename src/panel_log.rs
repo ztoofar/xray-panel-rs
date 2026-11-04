@@ -1,21 +1,27 @@
-//! In-memory ring buffer of the panel's own tracing output.
+//! Panel logging: an in-memory ring buffer for the live view plus daily files
+//! for history.
 //!
-//! The log viewer shows panel events and Xray core output in separate panes.
 //! Xray's stdout/stderr already has a buffer in the supervisor; this module
 //! mirrors the panel's tracing stream so both can be served without touching
-//! journald or adding a log file dependency.
+//! journald or adding a log-file dependency.
 
 use std::{
     collections::VecDeque,
+    fs::{File, OpenOptions},
     io::{self, Write},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-use tracing_subscriber::fmt::MakeWriter;
+use chrono::{FixedOffset, NaiveDate, Utc};
+use serde::Serialize;
+use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
 pub type PanelLogBuffer = Arc<Mutex<VecDeque<String>>>;
 
 const MAX_LINES: usize = 500;
+const LOG_FILE_PREFIX: &str = "panel-";
+const RETENTION_DAYS: i64 = 14;
 
 pub fn buffer() -> PanelLogBuffer {
     Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LINES)))
@@ -38,6 +44,132 @@ fn push(buffer: &PanelLogBuffer, line: &str) {
     }
 }
 
+// The panel reports Chinese wall-clock time regardless of the host timezone;
+// operators almost always read these logs against China-time schedules.
+fn china_offset() -> FixedOffset {
+    FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid")
+}
+
+pub fn format_china_time(utc: chrono::DateTime<Utc>) -> String {
+    utc.with_timezone(&china_offset())
+        .format("%Y-%m-%d %H:%M:%S%.3f +08:00")
+        .to_string()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ChinaTime;
+
+impl FormatTime for ChinaTime {
+    fn format_time(&self, writer: &mut Writer<'_>) -> std::fmt::Result {
+        write!(writer, "{}", format_china_time(Utc::now()))
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelLogFile {
+    pub name: String,
+    pub date: String,
+    pub size: u64,
+}
+
+fn parse_log_date(name: &str) -> Option<NaiveDate> {
+    let raw = name.strip_prefix(LOG_FILE_PREFIX)?.strip_suffix(".log")?;
+    NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok()
+}
+
+/// Only names produced by this module are accepted, so the history viewer
+/// cannot be used to read arbitrary files.
+pub fn resolve_log_file(dir: &Path, name: &str) -> Option<PathBuf> {
+    parse_log_date(name)?;
+    Some(dir.join(name))
+}
+
+pub fn list_log_files(dir: &Path) -> Vec<PanelLogFile> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PanelLogFile> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let date = parse_log_date(&name)?;
+            let size = entry.metadata().ok()?.len();
+            Some(PanelLogFile {
+                name,
+                date: date.to_string(),
+                size,
+            })
+        })
+        .collect();
+    files.sort_by(|left, right| right.name.cmp(&left.name));
+    files
+}
+
+fn prune_old_files(dir: &Path) {
+    let cutoff = Utc::now().with_timezone(&china_offset()).date_naive()
+        - chrono::Duration::days(RETENTION_DAYS);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(date) = parse_log_date(&name) {
+            if date < cutoff {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+struct OpenLogFile {
+    date: String,
+    file: File,
+}
+
+pub struct PanelFileLog {
+    dir: PathBuf,
+    state: Mutex<Option<OpenLogFile>>,
+}
+
+impl PanelFileLog {
+    pub fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            state: Mutex::new(None),
+        }
+    }
+
+    fn write_line(&self, line: &str) {
+        let date = Utc::now()
+            .with_timezone(&china_offset())
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut guard = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let rotated = guard.as_ref().is_none_or(|current| current.date != date);
+        if rotated {
+            if std::fs::create_dir_all(&self.dir).is_err() {
+                return;
+            }
+            let path = self.dir.join(format!("{LOG_FILE_PREFIX}{date}.log"));
+            let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) else {
+                return;
+            };
+            *guard = Some(OpenLogFile { date, file });
+        }
+        if let Some(current) = guard.as_mut() {
+            let _ = writeln!(current.file, "{line}");
+        }
+        drop(guard);
+        if rotated {
+            prune_old_files(&self.dir);
+        }
+    }
+}
+
 /// `MakeWriter` for a tracing `fmt` layer. Each event gets its own writer and
 /// only reaches the shared buffer when dropped, so two events formatting at
 /// the same time cannot interleave halfway through a line.
@@ -52,7 +184,7 @@ impl PanelLogMakeWriter {
     }
 }
 
-impl<'a> MakeWriter<'a> for PanelLogMakeWriter {
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for PanelLogMakeWriter {
     type Writer = PanelLogEventWriter;
 
     fn make_writer(&'a self) -> Self::Writer {
@@ -90,9 +222,62 @@ impl Drop for PanelLogEventWriter {
     }
 }
 
+/// File counterpart of [`PanelLogMakeWriter`]: one line per file, opened with
+/// append and rotated by China-time date.
+#[derive(Clone)]
+pub struct PanelFileMakeWriter {
+    log: Arc<PanelFileLog>,
+}
+
+impl PanelFileMakeWriter {
+    pub fn new(log: Arc<PanelFileLog>) -> Self {
+        Self { log }
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for PanelFileMakeWriter {
+    type Writer = PanelFileEventWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        PanelFileEventWriter {
+            log: self.log.clone(),
+            pending: String::new(),
+        }
+    }
+}
+
+pub struct PanelFileEventWriter {
+    log: Arc<PanelFileLog>,
+    pending: String,
+}
+
+impl Write for PanelFileEventWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.pending.push_str(&String::from_utf8_lossy(buf));
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for PanelFileEventWriter {
+    fn drop(&mut self) {
+        for line in self.pending.lines() {
+            let line = line.trim_end();
+            if !line.is_empty() {
+                self.log.write_line(line);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+    use tracing_subscriber::fmt::MakeWriter;
 
     #[test]
     fn buffer_keeps_the_newest_lines_and_caps_memory() {
@@ -119,5 +304,35 @@ mod tests {
             recent(&buffer, 10),
             vec!["2026/10/31 21:00:00  INFO hello", "second line"]
         );
+    }
+
+    #[test]
+    fn china_timer_renders_utc_as_east_eight() {
+        let utc = Utc.with_ymd_and_hms(2026, 11, 4, 4, 5, 6).single().unwrap();
+        let formatted = format_china_time(utc);
+        assert_eq!(formatted, "2026-11-04 12:05:06.000 +08:00");
+    }
+
+    #[test]
+    fn file_writer_appends_and_lists_the_daily_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "xray-panel-panel-log-{}-{}",
+            std::process::id(),
+            "daily"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let log = Arc::new(PanelFileLog::new(dir.clone()));
+        {
+            let mut writer = PanelFileMakeWriter::new(log.clone()).make_writer();
+            writer.write_all(b"first line\nsecond line\n").unwrap();
+        }
+        let files = list_log_files(&dir);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].date, files[0].name[6..16]);
+        let content = std::fs::read_to_string(dir.join(&files[0].name)).unwrap();
+        assert!(content.contains("first line"));
+        assert!(content.contains("second line"));
+        assert!(resolve_log_file(&dir, "../escape.log").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

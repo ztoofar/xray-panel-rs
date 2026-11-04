@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-04 00:45（本地时间）
+> 最后更新：2026-11-04 18:37（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -10,11 +10,11 @@
 | --- | --- |
 | `Cargo.toml` 版本 | `0.2.20` |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release `v0.2.20`：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,426,606 字节，SHA256 `61f1a69f...9269`（GitHub asset digest） |
-| 当前源码 | `0.2.20` 已推送 GitHub（tag `v0.2.20` → `d6f7efa`） |
+| 当前源码 | `0.2.20` + 2026-11-04 功能增强（已提交，未打包；tag `v0.2.20` 仍指向 `d6f7efa`） |
 | 上一版 | GitHub Release `v0.2.19`：tar 5,424,758 字节，asset digest `sha256:ab81a7c7...35c6` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz，GitHub asset digest）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-03 23:33 由当前 `frontend-3xui/` 源码重建（0.2.20 无前端改动） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-04 18:2x 由当前 `frontend-3xui/` 源码重建（含本次增强） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
 | musl 产物 | 0.2.20 Release tar 内含静态 ELF 二进制；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
@@ -774,6 +774,67 @@
   `cargo build` 成功；更新报错 e2e 全通过。
 - 未验证：真实 Linux/musl 运行、真实代理不可达场景的 UI 展示（本地 e2e 覆盖
   返回文本，未用真实反向代理/浏览器确认）。
+
+## 2.30 2026-11-04 功能增强（未打包、未 bump 版本）
+
+用户逐项要求：客户端在线 IP/位置、后端错误中文化、Xray 版本短格式、
+安全警告按登录周期显示、高级设置 + 出站真实连接检测通知、面板日志中国时间/
+详细/历史、设置保存不重启。全部实现并本地验证（Windows debug + 真实
+Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打包**。
+
+实现：
+
+- **客户端详情 IP/位置**：`POST /panel/api/clients/onlineIps` 返回
+  `email -> [ip...]`（来自 Xray `GetUsersStats`）；`POST
+  /panel/api/clients/ipLocation {ip}` 服务端查询 ipwho.is（失败回退
+  ipapi.co），仅点击“位置”时请求。`ClientInfoModal` 只在客户端在线时显示
+  “当前 IP”行，多个 IP 全部列出，每个 IP 旁有“位置”按钮。
+- **后端错误中文化**：`fail(`/`AppError`/`bail!`/`context` 等面向用户的英文
+  文案统一改为中文；Xray 原生输出（如 `xray run -test` 的 stdout/stderr）保持
+  原文。`AppError` 的 unauthorized/CSRF/限流/内部错误也改为中文。
+- **Xray 版本短格式**：`supervisor::parse_version_line` 从
+  `Xray 26.10.31 (...)` 提取 `26.10.31`；系统状态页只显示该版本号。
+- **安全警告按登录周期**：设置页关闭警告后写入
+  `localStorage.lumen-settings-security-alert-dismissed`；刷新保持隐藏，
+  登录页登录成功后清除，下一次登录重新显示。
+- **高级设置页**：`/settings#advanced`（侧栏“高级”）新增出站真实连接检测：
+  启用开关、多选出站（含订阅出站 tag）、1-1440 分钟检测频率、微信 Webhook
+  输入与最近检测结果。后台 `outbound_check` job 复用临时 Xray SOCKS+HTTP
+  204 真实探测；不可用时经企业微信群机器人发送通知（状态变化或同一故障
+  每 30 分钟重复一次），恢复也通知。微信 Webhook 文案改为“默认通知方式”。
+- **面板日志**：
+  - 时间固定 UTC+8（`panel_log::ChinaTime`），与主机时区无关；
+  - 新增按日文件 `panel-logs/panel-YYYY-MM-DD.log`（默认与数据库同目录，
+    可用 `PANEL_LOG_DIR` 覆盖），保留 14 天；
+  - 文件/实时缓冲区记录 target、文件、行号；新增登录、设置保存、入站/客户端
+    增删改、Xray 重启/停止、面板重启、出站检测等审计日志；
+  - `GET /panel/api/server/panelLogFiles` 列出历史文件；日志接口
+    `source=panel&file=<name>` 读取历史；日志弹窗新增“实时日志/历史日志”选择。
+- **设置保存不重启**：`setting_update` 不再因 `xrayTemplateConfig` 调用
+  `service::apply`（Xray 页面仍走 `/panel/api/xray/update`）；设置保存后
+  Xray/面板进程均不重启。“重启面板”按钮改为始终可点击，只有点击后才
+  `restartPanel`。
+
+验证：
+
+- `cargo fmt --check`、`cargo test` **107/107**、`cargo clippy --all-targets
+  -- -D warnings` 零警告、`cargo build` 成功。
+- 前端 `npm run build` 成功；改动文件 `tsc --noEmit` 无新增错误（既有
+  vitest/storybook 缺依赖报错仍在）。
+- `tmp/e2e-advanced/e2e.py`（真实 Xray 26.10.31 + 本地 mock 微信 webhook）：
+  版本短格式、设置保存不重启 Xray、高级设置持久化、blocked 出站检测失败、
+  webhook 通知、日志历史/中国时间/详细字段、在线 IP 接口、非法 IP 中文错误、
+  重启面板退出进程，全部通过。
+- `tmp/e2e-advanced/ui-run.py`（无头 Chrome）：高级页渲染/出站选项、
+  安全警告关闭→刷新保持→重新登录恢复、离线客户端不显示 IP/位置、日志历史
+  选择与实时日志、日志中国时间，全部通过。
+- `tmp/e2e-advanced/online-e2e.py`（真实 Xray + 真实 VLESS 客户端连接）：
+  `onlineIps` 返回局域网源 IP；在线客户端信息弹窗显示“当前 IP/位置”，
+  默认不查询位置，点击后才调用 `ipLocation`，全部通过。
+- **未验证**：真实 Linux/musl；真实公网客户端 IP（测试用局域网 IP，Xray
+  OnlineMap 会丢弃回环地址 127.0.0.1）；第三方位置服务在面板网络中的可达性；
+  英文界面下后端错误仍为中文（见 `KNOWN-ISSUES.md` H4）。
+- **未打包、未 bump 版本**（`Cargo.toml` 仍 0.2.20）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

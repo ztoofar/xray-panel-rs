@@ -4,6 +4,7 @@ pub mod clients;
 pub mod compat;
 pub mod dashboard;
 pub mod inbounds;
+pub mod ip_location;
 pub mod logs;
 pub mod outbound_subs;
 pub mod outbound_test;
@@ -120,6 +121,10 @@ pub fn router(state: AppState) -> Router {
             post(compat::server_update_geofile_one),
         )
         .route("/panel/api/server/logs/{rows}", post(compat::server_logs))
+        .route(
+            "/panel/api/server/panelLogFiles",
+            get(compat::server_panel_log_files),
+        )
         .route(
             "/panel/api/server/restartXrayService",
             post(compat::server_restart_xray),
@@ -293,6 +298,14 @@ pub fn router(state: AppState) -> Router {
             post(compat::clients_online_inbounds),
         )
         .route(
+            "/panel/api/clients/onlineIps",
+            post(compat::clients_online_ips),
+        )
+        .route(
+            "/panel/api/clients/ipLocation",
+            post(ip_location::ip_location),
+        )
+        .route(
             "/panel/api/clients/activeInbounds",
             post(compat::clients_active_inbounds),
         )
@@ -318,6 +331,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/panel/api/xray/resetOutboundsTraffic",
             post(compat::xray_reset_outbound_traffic),
+        )
+        .route(
+            "/panel/api/xray/outboundCheckStatus",
+            get(crate::outbound_check::status),
         )
         .route(
             "/panel/api/xray/testOutbounds",

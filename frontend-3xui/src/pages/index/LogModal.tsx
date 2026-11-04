@@ -27,6 +27,12 @@ interface XrayLogPayload {
   lines: string[];
 }
 
+interface PanelLogFile {
+  name: string;
+  date: string;
+  size: number;
+}
+
 const AUTO_UPDATE_INTERVAL = 5000;
 const NO_LINES: string[] = [];
 
@@ -38,6 +44,8 @@ export default function LogModal({ open, onClose }: LogModalProps) {
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [loading, setLoading] = useState(false);
   const [panelLines, setPanelLines] = useState<string[]>([]);
+  const [panelFile, setPanelFile] = useState('');
+  const [panelFiles, setPanelFiles] = useState<PanelLogFile[]>([]);
   const [xrayLog, setXrayLog] = useState<XrayLogPayload | null>(null);
   const source = view === 'panel' ? 'panel' : 'xray';
   const xrayFile: XrayFile = view === 'access' ? 'access' : 'error';
@@ -47,6 +55,7 @@ export default function LogModal({ open, onClose }: LogModalProps) {
       if (view === 'panel') {
         const msg = await HttpUtil.post<string[]>(`/panel/api/server/logs/${rows}`, {
           source: 'panel',
+          ...(panelFile ? { file: panelFile } : {}),
         });
         if (msg?.success) setPanelLines(msg.obj || []);
       } else {
@@ -59,7 +68,20 @@ export default function LogModal({ open, onClose }: LogModalProps) {
     } finally {
       setLoading(false);
     }
-  }, [view, rows]);
+  }, [view, rows, panelFile]);
+
+  const fetchPanelFiles = useCallback(async () => {
+    const msg = await HttpUtil.get<PanelLogFile[]>(
+      '/panel/api/server/panelLogFiles',
+      undefined,
+      { silent: true },
+    );
+    if (msg?.success) setPanelFiles(msg.obj || []);
+  }, []);
+
+  useEffect(() => {
+    if (open && view === 'panel') void fetchPanelFiles();
+  }, [open, view, fetchPanelFiles]);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -73,7 +95,7 @@ export default function LogModal({ open, onClose }: LogModalProps) {
 
   // The spinner is raised during render so the fetch effect stays side-effect
   // free until its response lands.
-  const refreshKey = open ? `${view}\u0000${rows}` : null;
+  const refreshKey = open ? `${view}\u0000${rows}\u0000${panelFile}` : null;
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   if (refreshKey !== loadingKey) {
     setLoadingKey(refreshKey);
@@ -85,10 +107,10 @@ export default function LogModal({ open, onClose }: LogModalProps) {
   }, [open, runRefresh]);
 
   useEffect(() => {
-    if (!open || !autoUpdate) return;
+    if (!open || !autoUpdate || panelFile) return;
     const id = setInterval(() => refreshRef.current(), AUTO_UPDATE_INTERVAL);
     return () => clearInterval(id);
-  }, [open, autoUpdate]);
+  }, [open, autoUpdate, panelFile]);
 
   const lines = source === 'panel' ? panelLines : (xrayLog?.lines ?? NO_LINES);
   // Newest first: the log is polled, so the top of the pane should show the
@@ -96,6 +118,7 @@ export default function LogModal({ open, onClose }: LogModalProps) {
   const visibleLines = useMemo(() => [...lines].reverse(), [lines]);
 
   const hint = useMemo(() => {
+    if (source === 'panel' && panelFile) return t('pages.index.panelLogHistoryDesc');
     if (source !== 'xray' || !xrayLog) return '';
     if (xrayLog.fallback) return t('pages.index.logProcessFallback');
     if (!xrayLog.configured) {
@@ -106,7 +129,7 @@ export default function LogModal({ open, onClose }: LogModalProps) {
       return `${xrayLog.path ?? ''} — ${t('pages.index.logFileMissing')}`;
     }
     return xrayLog.path ?? '';
-  }, [source, xrayLog, xrayFile, t]);
+  }, [source, panelFile, xrayLog, xrayFile, t]);
 
   function download() {
     const name = source === 'panel' ? 'panel.log' : `${xrayFile}.log`;
@@ -153,6 +176,24 @@ export default function LogModal({ open, onClose }: LogModalProps) {
             ]}
           />
         </Form.Item>
+        {source === 'panel' && (
+          <Form.Item>
+            <Select
+              aria-label={t('pages.index.panelLogHistory')}
+              value={panelFile}
+              size="small"
+              style={{ width: 150 }}
+              onChange={(value) => {
+                setPanelFile(value);
+                if (value) setAutoUpdate(false);
+              }}
+              options={[
+                { value: '', label: t('pages.index.panelLogRealtime') },
+                ...panelFiles.map((file) => ({ value: file.name, label: file.date })),
+              ]}
+            />
+          </Form.Item>
+        )}
         <Form.Item>
           <Space.Compact>
             <Select

@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 pub struct Config {
     pub listen: SocketAddr,
     pub db_path: PathBuf,
+    pub panel_log_dir: PathBuf,
     pub xray_bin: PathBuf,
     pub xray_config: PathBuf,
     pub xray_log_file: PathBuf,
@@ -32,6 +33,17 @@ impl Config {
         let db_path: PathBuf = env::var("PANEL_DB")
             .unwrap_or_else(|_| "xray-panel.db".into())
             .into();
+        let panel_log_dir = env::var("PANEL_LOG_DIR")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                db_path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map(|parent| parent.join("panel-logs"))
+                    .unwrap_or_else(|| PathBuf::from("panel-logs"))
+            });
         let xray_log_file = env::var("PANEL_XRAY_LOG")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -46,6 +58,7 @@ impl Config {
         Ok(Self {
             listen,
             db_path,
+            panel_log_dir,
             xray_bin: env::var("XRAY_BIN")
                 .unwrap_or_else(|_| "/usr/local/bin/xray".into())
                 .into(),

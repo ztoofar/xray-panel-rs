@@ -15,7 +15,7 @@ use crate::{
 pub async fn list(State(state): State<AppState>) -> Json<Value> {
     match outbound_subs::list_views(&state).await {
         Ok(items) => ok(serde_json::json!(items)),
-        Err(err) => fail(format!("failed to list outbound subscriptions: {err:#}")),
+        Err(err) => fail(format!("获取出站订阅列表失败：{err:#}")),
     }
 }
 
@@ -26,7 +26,7 @@ pub async fn create(State(state): State<AppState>, req: Request) -> Json<Value> 
     };
     match outbound_subs::create(&state, input_from_params(&params)).await {
         Ok(sub) => ok(serde_json::json!(outbound_subs::view(&sub))),
-        Err(err) => fail(format!("failed to create outbound subscription: {err:#}")),
+        Err(err) => fail(format!("创建出站订阅失败：{err:#}")),
     }
 }
 
@@ -36,7 +36,7 @@ pub async fn update(
     req: Request,
 ) -> Json<Value> {
     let Some(id) = parse_id(&id) else {
-        return fail("invalid subscription id");
+        return fail("订阅 ID 无效");
     };
     let params = match read_params(req).await {
         Ok(params) => params,
@@ -47,17 +47,17 @@ pub async fn update(
             outbound_subs::apply_after_change(&state).await;
             ok(Value::Null)
         }
-        Err(err) => fail(format!("failed to update outbound subscription: {err:#}")),
+        Err(err) => fail(format!("更新出站订阅失败：{err:#}")),
     }
 }
 
 pub async fn delete(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     let Some(id) = parse_id(&id) else {
-        return fail("invalid subscription id");
+        return fail("订阅 ID 无效");
     };
     match outbound_subs::delete(&state, id).await {
         Ok(()) => ok(Value::Null),
-        Err(err) => fail(format!("failed to delete outbound subscription: {err:#}")),
+        Err(err) => fail(format!("删除出站订阅失败：{err:#}")),
     }
 }
 
@@ -67,7 +67,7 @@ pub async fn move_item(
     req: Request,
 ) -> Json<Value> {
     let Some(id) = parse_id(&id) else {
-        return fail("invalid subscription id");
+        return fail("订阅 ID 无效");
     };
     let params = match read_params(req).await {
         Ok(params) => params,
@@ -79,17 +79,17 @@ pub async fn move_item(
         .unwrap_or(false);
     match outbound_subs::move_item(&state, id, up).await {
         Ok(()) => ok(Value::Null),
-        Err(err) => fail(format!("failed to reorder outbound subscription: {err:#}")),
+        Err(err) => fail(format!("调整出站订阅顺序失败：{err:#}")),
     }
 }
 
 pub async fn refresh(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     let Some(id) = parse_id(&id) else {
-        return fail("invalid subscription id");
+        return fail("订阅 ID 无效");
     };
     match outbound_subs::refresh_one(&state, id, true).await {
         Ok(outbounds) => ok(Value::Array(outbounds)),
-        Err(err) => fail(format!("refresh failed: {err:#}")),
+        Err(err) => fail(format!("刷新失败：{err:#}")),
     }
 }
 
@@ -100,7 +100,7 @@ pub async fn parse_preview(State(state): State<AppState>, req: Request) -> Json<
     };
     let url = params.get("url").map(String::as_str).unwrap_or("");
     if url.trim().is_empty() {
-        return fail("url is required");
+        return fail("缺少订阅地址");
     }
     match outbound_subs::preview(
         &state,
@@ -113,7 +113,7 @@ pub async fn parse_preview(State(state): State<AppState>, req: Request) -> Json<
     .await
     {
         Ok(outbounds) => ok(Value::Array(outbounds)),
-        Err(err) => fail(format!("failed to fetch/parse subscription: {err:#}")),
+        Err(err) => fail(format!("获取或解析订阅失败：{err:#}")),
     }
 }
 

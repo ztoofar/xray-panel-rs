@@ -100,7 +100,7 @@ export default function OverviewActionBar({
       {hasVersion && (
         <Tooltip title={t('pages.index.xraySwitch')}>
           <button type="button" className="ov-state-version" onClick={onOpenVersionSwitch}>
-            {`v${status.xray.version}`}
+            {status.xray.version}
           </button>
         </Tooltip>
       )}

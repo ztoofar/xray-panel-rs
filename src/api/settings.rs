@@ -33,9 +33,7 @@ pub async fn update(
     if let Some(name) = body.panel_name {
         let name = name.trim().to_string();
         if name.is_empty() || name.len() > 64 {
-            return Err(AppError::BadRequest(
-                "panel name must be 1-64 characters".into(),
-            ));
+            return Err(AppError::BadRequest("面板名称必须为 1-64 个字符".into()));
         }
         changes.push(("panel_name".into(), name));
     }
@@ -44,7 +42,7 @@ pub async fn update(
         let address = address.trim().to_string();
         if address.contains("://") || address.contains('/') {
             return Err(AppError::BadRequest(
-                "public address must be a host without scheme or path".into(),
+                "公开地址必须为不含协议和路径的主机名".into(),
             ));
         }
         changes.push(("public_address".into(), address));
@@ -52,9 +50,7 @@ pub async fn update(
 
     if let Some(secs) = body.traffic_poll_secs {
         if !(2..=300).contains(&secs) {
-            return Err(AppError::BadRequest(
-                "traffic poll interval must be 2-300 seconds".into(),
-            ));
+            return Err(AppError::BadRequest("流量轮询间隔必须为 2-300 秒".into()));
         }
         changes.push(("traffic_poll_secs".into(), secs.to_string()));
         refresh_poll = true;
@@ -62,14 +58,12 @@ pub async fn update(
 
     if let Some(extra) = body.xray_extra {
         if !extra.is_object() {
-            return Err(AppError::BadRequest(
-                "xrayExtra must be a JSON object".into(),
-            ));
+            return Err(AppError::BadRequest("xrayExtra 必须为 JSON 对象".into()));
         }
         changes.push((
             "xray_extra".into(),
             serde_json::to_string(&extra)
-                .map_err(|err| AppError::BadRequest(format!("invalid xrayExtra: {err}")))?,
+                .map_err(|err| AppError::BadRequest(format!("xrayExtra 无效：{err}")))?,
         ));
         apply_xray = true;
     }
@@ -85,7 +79,7 @@ pub async fn update(
     if apply_xray {
         if let Err(err) = service::apply(&state).await {
             return Err(AppError::Apply(format!(
-                "settings saved but xray apply failed: {err}"
+                "设置已保存，但应用 Xray 配置失败：{err}"
             )));
         }
     }

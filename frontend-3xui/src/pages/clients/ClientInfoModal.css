@@ -33,6 +33,24 @@
   margin-left: 6px;
 }
 
+.ip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ip-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ip-location-error {
+  color: var(--ant-color-error);
+  opacity: 0.9;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

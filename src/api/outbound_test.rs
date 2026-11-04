@@ -33,7 +33,7 @@ const MAX_OUTBOUNDS: usize = 50;
 pub async fn test_outbounds(State(state): State<AppState>, req: Request) -> Json<Value> {
     let params = match compat::read_params(req).await {
         Ok(params) => params,
-        Err(_) => return compat::fail("invalid request body"),
+        Err(_) => return compat::fail("请求内容无效"),
     };
     let outbounds: Vec<Value> = params
         .get("outbounds")
@@ -58,6 +58,16 @@ pub async fn test_outbounds(State(state): State<AppState>, req: Request) -> Json
         tunnel_probe(&state, outbounds, &all_outbounds, mode).await
     };
     compat::ok(Value::Array(results))
+}
+
+// Shared by the periodic outbound checker: a real TCP+SOCKS+HTTP request
+// through a temporary Xray instance, the same probe the UI's "real" mode uses.
+pub(crate) async fn probe_real(
+    state: &AppState,
+    outbounds: &[Value],
+    all_outbounds: &[Value],
+) -> Vec<Value> {
+    tunnel_probe(state, outbounds, all_outbounds, "real").await
 }
 
 fn result_object(
@@ -129,7 +139,7 @@ async fn tcp_probe(outbounds: &[Value]) -> Vec<Value> {
         let outbound = outbound.clone();
         jobs.spawn(async move { (index, tcp_probe_one(&outbound).await) });
     }
-    collect_results(jobs, outbounds.len(), "tcp", "probe failed").await
+    collect_results(jobs, outbounds.len(), "tcp", "检测失败").await
 }
 
 async fn tcp_probe_one(outbound: &Value) -> Value {
@@ -158,7 +168,7 @@ async fn tcp_probe_one(outbound: &Value) -> Value {
             Err(_) => endpoints.push(json!({
                 "address": address,
                 "success": false,
-                "error": "timeout",
+                "error": "超时",
             })),
         }
     }
@@ -168,7 +178,7 @@ async fn tcp_probe_one(outbound: &Value) -> Value {
     let error = if success {
         None
     } else if addresses.is_empty() {
-        Some("outbound has no dialable endpoint".to_string())
+        Some("出站没有可连接的地址".to_string())
     } else {
         endpoints
             .iter()
@@ -178,7 +188,7 @@ async fn tcp_probe_one(outbound: &Value) -> Value {
                     .and_then(Value::as_str)
                     .map(str::to_string)
             })
-            .or_else(|| Some("connection failed".to_string()))
+            .or_else(|| Some("连接失败".to_string()))
     };
     result_object(&tag, "tcp", success, best, error, endpoints)
 }
@@ -199,7 +209,7 @@ async fn tunnel_probe(
                     mode,
                     false,
                     None,
-                    Some("could not allocate a local test port".into()),
+                    Some("无法分配本地测试端口".into()),
                     Vec::new(),
                 )
             })
@@ -208,7 +218,7 @@ async fn tunnel_probe(
     let config = build_config(outbounds, all_outbounds, &ports);
     let path = std::env::temp_dir().join(format!("xray-panel-test-{}.json", uuid::Uuid::new_v4()));
     if let Err(err) = write_config(&path, &config) {
-        return failure_all(outbounds, mode, format!("write test config: {err}"));
+        return failure_all(outbounds, mode, format!("写入测试配置失败：{err}"));
     }
     let mut child = match Command::new(&state.cfg.xray_bin)
         .arg("-c")
@@ -221,14 +231,14 @@ async fn tunnel_probe(
         Ok(child) => child,
         Err(err) => {
             let _ = std::fs::remove_file(&path);
-            return failure_all(outbounds, mode, format!("start test xray: {err}"));
+            return failure_all(outbounds, mode, format!("启动测试 Xray 失败：{err}"));
         }
     };
     let results = if !wait_ready(&ports).await {
         let detail = match child.try_wait() {
-            Ok(Some(status)) => format!("test xray exited before listening ({status})"),
-            Ok(None) => "test xray is running but its socks ports never opened".to_string(),
-            Err(err) => format!("test xray status error: {err}"),
+            Ok(Some(status)) => format!("测试 Xray 启动后退出（{status}）"),
+            Ok(None) => "测试 Xray 已运行但 SOCKS 端口未打开".to_string(),
+            Err(err) => format!("读取测试 Xray 状态失败：{err}"),
         };
         failure_all(outbounds, mode, detail)
     } else {
@@ -267,13 +277,13 @@ async fn tunnel_probe(
                     }
                     Ok(Err(err)) => result_object(&tag, &mode, false, None, Some(err), Vec::new()),
                     Err(_) => {
-                        result_object(&tag, &mode, false, None, Some("timeout".into()), Vec::new())
+                        result_object(&tag, &mode, false, None, Some("超时".into()), Vec::new())
                     }
                 };
                 (index, value)
             });
         }
-        collect_results(jobs, outbounds.len(), mode, "probe failed").await
+        collect_results(jobs, outbounds.len(), mode, "检测失败").await
     };
     let _ = child.kill().await;
     let _ = tokio::fs::remove_file(&path).await;
@@ -407,7 +417,7 @@ async fn socks_connect(proxy_port: u16) -> Result<TcpStream, String> {
         .await
         .map_err(|err| err.to_string())?;
     if chosen != [0x05, 0x00] {
-        return Err(format!("socks handshake rejected (code {})", chosen[1]));
+        return Err(format!("SOCKS 握手被拒绝（代码 {}）", chosen[1]));
     }
     let mut request = vec![0x05, 0x01, 0x00, 0x03, TEST_HOST.len() as u8];
     request.extend_from_slice(TEST_HOST.as_bytes());
@@ -422,7 +432,7 @@ async fn socks_connect(proxy_port: u16) -> Result<TcpStream, String> {
         .await
         .map_err(|err| err.to_string())?;
     if head[0] != 0x05 {
-        return Err("bad socks reply".into());
+        return Err("SOCKS 响应异常".into());
     }
     if head[1] != 0x00 {
         return Err(socks_error(head[1]));
@@ -438,7 +448,7 @@ async fn socks_connect(proxy_port: u16) -> Result<TcpStream, String> {
             len[0] as usize
         }
         0x04 => 16,
-        _ => return Err("bad socks address type".into()),
+        _ => return Err("SOCKS 地址类型异常".into()),
     };
     let mut rest = vec![0u8; skip + 2];
     stream
@@ -477,7 +487,7 @@ async fn http_probe(stream: &mut TcpStream) -> Result<u16, String> {
         }
     }
     if response.is_empty() {
-        return Err("empty HTTP response".into());
+        return Err("HTTP 响应为空".into());
     }
     let text = String::from_utf8_lossy(&response);
     let first = text.lines().next().unwrap_or_default();
@@ -485,22 +495,22 @@ async fn http_probe(stream: &mut TcpStream) -> Result<u16, String> {
         .split_whitespace()
         .nth(1)
         .and_then(|code| code.parse().ok())
-        .ok_or_else(|| format!("bad HTTP status line: {first}"))
+        .ok_or_else(|| format!("HTTP 状态行异常：{first}"))
 }
 
 fn socks_error(code: u8) -> String {
     let reason = match code {
-        1 => "general failure",
-        2 => "connection not allowed",
-        3 => "network unreachable",
-        4 => "host unreachable",
-        5 => "connection refused",
-        6 => "TTL expired",
-        7 => "command not supported",
-        8 => "address type not supported",
-        _ => "unknown error",
+        1 => "一般故障",
+        2 => "连接不被允许",
+        3 => "网络不可达",
+        4 => "主机不可达",
+        5 => "连接被拒绝",
+        6 => "TTL 已过期",
+        7 => "命令不受支持",
+        8 => "地址类型不受支持",
+        _ => "未知错误",
     };
-    format!("socks connect failed: {reason} (code {code})")
+    format!("SOCKS 连接失败：{reason}（代码 {code}）")
 }
 
 fn outbound_addresses(outbound: &Value) -> Vec<String> {

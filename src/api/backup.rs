@@ -47,10 +47,10 @@ pub async fn download(State(state): State<AppState>) -> AppResult<Response> {
     sqlx::query(&format!("VACUUM INTO '{escaped}'"))
         .execute(&state.db)
         .await
-        .map_err(|err| AppError::Internal(anyhow::anyhow!("create backup: {err}")))?;
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("创建备份失败：{err}")))?;
     let bytes = tokio::fs::read(&temp)
         .await
-        .map_err(|err| AppError::Internal(anyhow::anyhow!("read backup: {err}")))?;
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("读取备份失败：{err}")))?;
     let _ = tokio::fs::remove_file(&temp).await;
 
     let filename = format!(
@@ -90,29 +90,27 @@ async fn restore_multipart(state: &AppState, mut multipart: Multipart) -> AppRes
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|err| AppError::BadRequest(format!("read upload: {err}")))?
+        .map_err(|err| AppError::BadRequest(format!("读取上传内容失败：{err}")))?
     {
         let name = field.name().unwrap_or("").to_string();
         if matches!(name.as_str(), "db" | "file" | "database") {
             let bytes = field
                 .bytes()
                 .await
-                .map_err(|err| AppError::BadRequest(format!("read upload: {err}")))?;
+                .map_err(|err| AppError::BadRequest(format!("读取上传内容失败：{err}")))?;
             uploaded = Some(bytes.to_vec());
             break;
         }
     }
-    let data = uploaded.ok_or_else(|| AppError::BadRequest("missing .db file field".into()))?;
+    let data = uploaded.ok_or_else(|| AppError::BadRequest("缺少 .db 文件字段".into()))?;
     if data.len() < 16 || &data[..16] != b"SQLite format 3\0" {
-        return Err(AppError::BadRequest(
-            "uploaded file is not a SQLite database".into(),
-        ));
+        return Err(AppError::BadRequest("上传的文件不是 SQLite 数据库".into()));
     }
 
     let temp = std::env::temp_dir().join(format!("xray-panel-restore-{}.db", now()));
     tokio::fs::write(&temp, &data)
         .await
-        .map_err(|err| AppError::Internal(anyhow::anyhow!("write restore file: {err}")))?;
+        .map_err(|err| AppError::Internal(anyhow::anyhow!("写入恢复文件失败：{err}")))?;
 
     let tables = match validate_db(&temp).await {
         Ok(tables) => tables,
@@ -141,26 +139,26 @@ async fn validate_db(path: &Path) -> Result<HashSet<String>, String> {
     let options = SqliteConnectOptions::new().filename(path).read_only(true);
     let mut connection = SqliteConnection::connect_with(&options)
         .await
-        .map_err(|err| format!("open backup: {err}"))?;
+        .map_err(|err| format!("打开备份数据库失败：{err}"))?;
     let tables: Vec<String> =
         sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table'")
             .fetch_all(&mut connection)
             .await
-            .map_err(|err| format!("read backup schema: {err}"))?;
+            .map_err(|err| format!("读取备份结构失败：{err}"))?;
     let tables: HashSet<String> = tables.into_iter().collect();
     for required in REQUIRED_TABLES {
         if !tables.contains(required) {
             let _ = connection.close().await;
-            return Err(format!("backup is missing table: {required}"));
+            return Err(format!("备份缺少表：{required}"));
         }
     }
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut connection)
         .await
-        .map_err(|err| format!("check backup integrity: {err}"))?;
+        .map_err(|err| format!("检查备份完整性失败：{err}"))?;
     let _ = connection.close().await;
     if integrity != "ok" {
-        return Err(format!("backup integrity check failed: {integrity}"));
+        return Err(format!("备份完整性检查失败：{integrity}"));
     }
     Ok(tables)
 }
@@ -174,7 +172,7 @@ async fn restore_into(state: &AppState, path: &Path, tables: &HashSet<String>) -
         .bind(path.to_string_lossy().to_string())
         .execute(&mut *connection)
         .await
-        .map_err(|err| AppError::BadRequest(format!("attach backup: {err}")))?;
+        .map_err(|err| AppError::BadRequest(format!("附加备份文件失败：{err}")))?;
 
     let outcome: Result<(), sqlx::Error> = async {
         sqlx::query("BEGIN IMMEDIATE")
@@ -222,7 +220,7 @@ async fn restore_into(state: &AppState, path: &Path, tables: &HashSet<String>) -
         .execute(&mut *connection)
         .await;
 
-    outcome.map_err(|err| AppError::BadRequest(format!("restore failed: {err}")))
+    outcome.map_err(|err| AppError::BadRequest(format!("恢复失败：{err}")))
 }
 
 // Restoring a backup made by an older schema must not fail just because this

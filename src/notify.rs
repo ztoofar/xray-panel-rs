@@ -64,13 +64,24 @@ async fn send_failed_login(
     username: &str,
     source: &'static str,
 ) -> anyhow::Result<()> {
+    let content = format!(
+        "【Lumen 面板登录失败】\n账户：{username}\n真实 IP：{ip}\n时间：{}\n来源：{source}",
+        china_now().format("%Y-%m-%d %H:%M:%S +08:00"),
+    );
+    send_text(state, content).await
+}
+
+fn china_now() -> chrono::DateTime<chrono::FixedOffset> {
+    let offset = chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid");
+    chrono::Utc::now().with_timezone(&offset)
+}
+
+/// Send one WeCom group-robot text message. A missing webhook is a no-op so
+/// every caller can reuse this without checking the setting first.
+pub(crate) async fn send_text(state: &AppState, content: String) -> anyhow::Result<()> {
     let Some(url) = webhook_url(state).await else {
         return Ok(());
     };
-    let content = format!(
-        "【Lumen 面板登录失败】\n账户：{username}\n真实 IP：{ip}\n时间：{}\n来源：{source}",
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z"),
-    );
     let payload = json!({
         "msgtype": "text",
         "text": { "content": content },
@@ -88,9 +99,9 @@ async fn send_failed_login(
         Ok(response.status().is_success())
     })
     .await
-    .map_err(|err| anyhow::anyhow!("webhook task failed: {err}"))??;
+    .map_err(|err| anyhow::anyhow!("Webhook 发送任务失败：{err}"))??;
     if !success {
-        tracing::warn!("login failure webhook returned non-2xx");
+        tracing::warn!("webhook returned non-2xx");
     }
     Ok(())
 }

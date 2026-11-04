@@ -45,12 +45,12 @@ pub async fn init(path: &Path) -> anyhow::Result<Db> {
         .acquire_timeout(Duration::from_secs(5))
         .connect_with(options)
         .await
-        .context("open sqlite database")?;
+        .context("打开 SQLite 数据库失败")?;
 
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .context("run database migrations")?;
+        .context("执行数据库迁移失败")?;
 
     Ok(pool)
 }

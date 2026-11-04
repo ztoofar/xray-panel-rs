@@ -118,6 +118,7 @@ GitHub Releases 下载 tar.gz，使用 GitHub 为资产计算的 SHA-256 digest 
 | `XRAY_CONFIG` | `/usr/local/etc/xray/config.json` | 面板生成的 Xray 配置路径 |
 | `XRAY_API_ADDR` | `127.0.0.1:10085` | Xray StatsService gRPC 地址 |
 | `PANEL_XRAY_LOG` | 与 `PANEL_DB` 同目录的 `xray.log` | Xray stdout/stderr 日志 |
+| `PANEL_LOG_DIR` | 与 `PANEL_DB` 同目录的 `panel-logs/` | 面板日志按日文件目录（保留 14 天） |
 | `PANEL_USERNAME` | `admin` | 首次启动创建的管理员用户名 |
 | `PANEL_PASSWORD` | `admin` | 首次启动密码；之后以数据库为准 |
 | `PANEL_WORKERS` | `2` | Tokio 工作线程数 |
@@ -130,10 +131,16 @@ GitHub Releases 下载 tar.gz，使用 GitHub 为资产计算的 SHA-256 digest 
 
 ### 面板设置
 
-- 常规：监听地址/端口、URI 路径、节点地址、会话有效期、分页大小、登录失败
-  webhook、面板在线更新。
+- 常规：监听地址/端口、URI 路径、节点地址、会话有效期、分页大小、微信
+  Webhook（默认通知方式，用于登录失败提醒和出站检测告警）、面板在线更新。
+- 高级：出站真实连接检测（单个/多个出站、1–1440 分钟频率、不可用通知、
+  最近结果）。
 - 运行环境：Xray 二进制/配置/API/日志路径、更新代理。
 - 安全：管理员凭据。
+
+保存设置不会重启面板或 Xray；需要重启时使用设置页顶部的“重启面板”按钮。
+面板日志固定使用中国时间（UTC+8），可在仪表盘日志弹窗中查看实时日志或最近
+14 天的历史文件。
 
 节点地址用于分享链接与客户端二维码，避免写入浏览器访问面板时使用的局域网
 地址。

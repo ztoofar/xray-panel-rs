@@ -18,6 +18,9 @@ export class AllSetting {
   sessionMaxAge = 360;
   trustedProxyCIDRs = '127.0.0.1/32,::1/128';
   loginNotifyWebhook = '';
+  outboundCheckEnabled = false;
+  outboundCheckTags = '';
+  outboundCheckIntervalMinutes = 5;
   ipLimitAllowlist = '';
   panelOutbound = '';
   pageSize = 25;

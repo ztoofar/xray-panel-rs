@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify};
 use crate::{
     config::Config,
     db::Db,
+    outbound_check::OutboundCheckRun,
     panel_log::PanelLogBuffer,
     xray::{LogBuffer, OnlineUser, StatsClient, XrayHandle},
 };
@@ -33,6 +34,10 @@ pub struct AppState {
     pub traffic_history: Arc<Mutex<VecDeque<TrafficPoint>>>,
     // Wakes the traffic job early when the admin changes the poll interval.
     pub refresh_notify: Arc<Notify>,
+    // Latest periodic outbound connectivity check, for the advanced settings page.
+    pub outbound_check: Arc<Mutex<Option<OutboundCheckRun>>>,
+    // Wakes the outbound checker after its settings are saved.
+    pub outbound_check_notify: Arc<Notify>,
     // Normalized panel URL prefix (`/` or `/secret/`). Read per request, so a
     // settings save takes effect without a restart.
     pub base_path: Arc<RwLock<String>>,

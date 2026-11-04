@@ -65,7 +65,11 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       const msg = await HttpUtil.post('/login', values);
-      if (msg.success) window.location.href = basePath + 'panel/';
+      if (msg.success) {
+        // Security warnings reappear after every fresh sign-in.
+        localStorage.removeItem('lumen-settings-security-alert-dismissed');
+        window.location.href = basePath + 'panel/';
+      }
     } finally {
       setSubmitting(false);
     }

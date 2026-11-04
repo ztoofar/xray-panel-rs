@@ -99,13 +99,13 @@ pub async fn create(state: &AppState, input: SubscriptionInput) -> Result<Outbou
     .await?;
     db::outbound_subs::get(&state.db, id)
         .await?
-        .context("created subscription disappeared")
+        .context("创建后的订阅记录丢失")
 }
 
 pub async fn update(state: &AppState, id: i64, input: SubscriptionInput) -> Result<()> {
     let sub = db::outbound_subs::get(&state.db, id)
         .await?
-        .context("subscription not found")?;
+        .context("订阅不存在")?;
     let proxy_url = validate_proxy(&input.proxy_url)?;
     let url = sanitize_public_url(&input.url, input.allow_private, !proxy_url.is_empty()).await?;
     let prefix = if input.tag_prefix.trim().is_empty() {
@@ -134,7 +134,7 @@ pub async fn update(state: &AppState, id: i64, input: SubscriptionInput) -> Resu
 pub async fn delete(state: &AppState, id: i64) -> Result<()> {
     db::outbound_subs::get(&state.db, id)
         .await?
-        .context("subscription not found")?;
+        .context("订阅不存在")?;
     db::outbound_subs::delete(&state.db, id).await?;
     if let Err(err) = service::apply(state).await {
         tracing::warn!(id, error = %err, "apply after deleting outbound subscription failed");
@@ -147,7 +147,7 @@ pub async fn move_item(state: &AppState, id: i64, up: bool) -> Result<()> {
     let index = subs
         .iter()
         .position(|sub| sub.id == id)
-        .context("subscription not found")?;
+        .context("订阅不存在")?;
     let target = if up {
         index.checked_sub(1)
     } else {
@@ -299,18 +299,18 @@ pub async fn sanitize_public_url(
     if allow_private {
         return Ok(clean);
     }
-    let url = Url::parse(&clean).context("parse URL")?;
-    let host = match url.host().context("URL host is required")? {
+    let url = Url::parse(&clean).context("解析订阅地址失败")?;
+    let host = match url.host().context("订阅地址缺少主机名")? {
         url::Host::Domain(domain) => domain.to_string(),
         url::Host::Ipv4(ip) => {
             if blocked_ip(IpAddr::V4(ip)) {
-                bail!("blocked private/internal address {ip}");
+                bail!("已阻止私有或内网地址 {ip}");
             }
             return Ok(clean);
         }
         url::Host::Ipv6(ip) => {
             if blocked_ip(IpAddr::V6(ip)) {
-                bail!("blocked private/internal address {ip}");
+                bail!("已阻止私有或内网地址 {ip}");
             }
             return Ok(clean);
         }
@@ -327,7 +327,7 @@ pub async fn sanitize_public_url(
         Err(err) => return Err(err).with_context(|| format!("cannot resolve host {host}")),
     };
     if addresses.is_empty() {
-        bail!("host {host} has no IP addresses");
+        bail!("主机 {host} 没有可用的 IP 地址");
     }
     // One public address is enough: a poisoned AAAA record must not veto a
     // healthy hostname, matching 3x-ui's resolver.
@@ -360,14 +360,14 @@ pub fn validate_proxy(raw: &str) -> Result<String> {
 pub fn sanitize_http_url(raw: &str) -> Result<String> {
     let raw = raw.trim();
     if raw.is_empty() {
-        bail!("subscription URL is required");
+        bail!("缺少订阅地址");
     }
     let url = Url::parse(raw).with_context(|| format!("invalid URL: {raw}"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
-        bail!("unsupported URL scheme \"{}\"", url.scheme());
+        bail!("不支持的 URL 协议 \"{}\"", url.scheme());
     }
     if url.host_str().is_none_or(str::is_empty) {
-        bail!("URL host is required");
+        bail!("订阅地址缺少主机名");
     }
     let mut clean = url;
     let _ = clean.set_username("");
@@ -521,7 +521,7 @@ async fn store_refresh(
                 &sub.last_error,
             )
             .await?;
-            return Err(err.context("new outbounds rejected by xray; previous list kept"));
+            return Err(err.context("新出站被 Xray 拒绝，已保留原有列表"));
         }
     }
     Ok(RefreshResult { outbounds })
@@ -537,7 +537,7 @@ async fn record_error(state: &AppState, id: i64, err: &anyhow::Error) {
 pub async fn refresh_one(state: &AppState, id: i64, apply: bool) -> Result<Vec<Value>> {
     let sub = db::outbound_subs::get(&state.db, id)
         .await?
-        .context("subscription not found")?;
+        .context("订阅不存在")?;
     refresh_record(state, sub, apply).await
 }
 

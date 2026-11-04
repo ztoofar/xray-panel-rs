@@ -8,7 +8,26 @@
 
 _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LOG.md`。）_
 
+## 已完成
+
+### T25. 2026-11-04 七项增强 —— 已完成，本地验证，未打包
+- 客户端在线 IP/按需位置查询、后端错误中文化、Xray 短版本号、安全警告按
+  登录周期显示、高级页出站真实连接检测 + 微信通知、面板日志中国时间/详细/
+  历史、设置保存不重启。
+- 验证：`cargo test` 107/107、clippy、前端构建；`tmp/e2e-advanced/e2e.py`、
+  `ui-run.py`、`online-e2e.py`。详见 `CURRENT-STATUS.md` §2.30。
+- 未验证：真实 Linux/musl、真实公网客户端 IP、英文界面下的后端错误语言。
+
 ## P1 — 重要
+
+### T26. 真实 Linux 回归 2026-11-04 增强
+- 现状：在线 IP、出站检测、日志文件/保留、设置保存不重启、重启面板均只在
+  Windows debug + 真实 Xray + 无头 Chrome 上验证。
+- 内容：在真实 Linux + systemd + musl 包上确认：Xray OnlineMap 返回公网
+  客户端 IP；出站检测临时 Xray 在 systemd 只读路径下可启动（`XRAY_LOCATION_ASSET`
+  可写）；`panel-logs/` 目录可写且 14 天轮转；设置保存后台进程 PID 不变；
+  `restartPanel` 由 systemd 拉起。
+- 验收：日志/命令证据；更新 `KNOWN-ISSUES.md` H5。
 
 ### T24. 真实 Linux 验证安装幂等与更新代理提示
 - 现状：`install.sh` 的版本跳过/哈希跳过与 `network_hint` 只在 Windows 本地

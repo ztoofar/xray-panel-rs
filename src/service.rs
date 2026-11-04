@@ -14,9 +14,9 @@ pub async fn load_extra(state: &AppState) -> anyhow::Result<Value> {
     let raw = db::settings::get(&state.db, "xray_extra")
         .await?
         .unwrap_or_else(|| "{}".into());
-    let extra: Value = serde_json::from_str(&raw).context("xray_extra is not valid JSON")?;
+    let extra: Value = serde_json::from_str(&raw).context("xray_extra 不是有效的 JSON")?;
     if !extra.is_object() {
-        bail!("xray_extra must be a JSON object");
+        bail!("xray_extra 必须为 JSON 对象");
     }
     Ok(extra)
 }
@@ -96,13 +96,19 @@ async fn write_test_config(state: &AppState, config: &Value) -> anyhow::Result<(
     result
 }
 
-pub async fn write_current(state: &AppState) -> anyhow::Result<()> {
+// The exact config Xray would run, including subscription outbounds. Callers
+// that inspect outbounds (connectivity checks) must see the merged view.
+pub async fn runtime_config_value(state: &AppState) -> anyhow::Result<Value> {
     let inbounds = db::inbounds::list_enabled(&state.db).await?;
     let clients = clients_with_inbounds(state).await?;
     let mut extra = load_extra(state).await?;
     let (prepend, append) = outbound_subs::active_split(state).await?;
     outbound_subs::merge_into_extra(&mut extra, &prepend, &append);
-    let config = build_config(&inbounds, &clients, &extra, state.cfg.xray_api_port(), true)?;
+    build_config(&inbounds, &clients, &extra, state.cfg.xray_api_port(), true)
+}
+
+pub async fn write_current(state: &AppState) -> anyhow::Result<()> {
+    let config = runtime_config_value(state).await?;
     write_config(&state.cfg, &config).await
 }
 
@@ -112,7 +118,7 @@ pub async fn apply(state: &AppState) -> anyhow::Result<()> {
         .xray
         .restart()
         .await
-        .map_err(|err| anyhow::anyhow!("restart xray: {err}"))
+        .map_err(|err| anyhow::anyhow!("重启 Xray 失败：{err}"))
 }
 
 pub async fn apply_on_start(state: &AppState) {

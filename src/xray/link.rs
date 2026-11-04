@@ -102,7 +102,7 @@ pub fn client_link(inbound: &Inbound, client: &Client, address: &str) -> Result<
             map.insert("sni".into(), json!(sni));
             map.insert("alpn".into(), json!(alpn));
             map.insert("fp".into(), json!(fingerprint));
-            let payload = serde_json::to_vec(&map).context("encode vmess link")?;
+            let payload = serde_json::to_vec(&map).context("编码 VMess 链接失败")?;
             format!("vmess://{}", STANDARD.encode(payload))
         }
         "trojan" => {
@@ -131,7 +131,7 @@ pub fn client_link(inbound: &Inbound, client: &Client, address: &str) -> Result<
             format!("ss://{userinfo}@{authority}#{}", encode(&remark))
         }
         "http" | "mixed" => return Ok(None),
-        other => bail!("unsupported protocol for share link: {other}"),
+        other => bail!("分享链接不支持该协议：{other}"),
     };
 
     Ok(Some(link))
@@ -143,7 +143,7 @@ fn credential(creds: &Map<String, Value>, key: &str, email: &str) -> Result<Stri
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .with_context(|| format!("client {email}: missing credential \"{key}\""))
+        .with_context(|| format!("客户端 {email}：缺少凭据 \"{key}\""))
 }
 
 fn get<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {

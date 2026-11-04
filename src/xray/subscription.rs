@@ -122,7 +122,7 @@ fn host_of(url: &Url) -> Result<String> {
         Some(Host::Domain(domain)) => Ok(domain.to_string()),
         Some(Host::Ipv4(ip)) => Ok(ip.to_string()),
         Some(Host::Ipv6(ip)) => Ok(ip.to_string()),
-        None => bail!("URL host is required"),
+        None => bail!("订阅地址缺少主机名"),
     }
 }
 
@@ -453,9 +453,9 @@ fn apply_mkcp_legacy(stream: &mut Value, header_type: &str, seed: &str) {
 // --- vless / trojan ---
 
 fn parse_vless(link: &str) -> Result<ParsedOutbound> {
-    let url = Url::parse(link).context("parse vless link")?;
+    let url = Url::parse(link).context("解析 VLESS 链接失败")?;
     if url.scheme() != "vless" {
-        bail!("not vless");
+        bail!("不是 VLESS 链接");
     }
     let id = decode_component(url.username());
     let host = host_of(&url)?;
@@ -499,9 +499,9 @@ fn parse_vless(link: &str) -> Result<ParsedOutbound> {
 }
 
 fn parse_trojan(link: &str) -> Result<ParsedOutbound> {
-    let url = Url::parse(link).context("parse trojan link")?;
+    let url = Url::parse(link).context("解析 Trojan 链接失败")?;
     if url.scheme() != "trojan" {
-        bail!("not trojan");
+        bail!("不是 Trojan 链接");
     }
     let password = decode_component(url.username());
     let host = host_of(&url)?;
@@ -537,12 +537,10 @@ fn parse_trojan(link: &str) -> Result<ParsedOutbound> {
 // --- vmess ---
 
 fn parse_vmess(link: &str) -> Result<ParsedOutbound> {
-    let encoded = link.strip_prefix("vmess://").context("not vmess")?;
-    let raw = decode_base64_bytes(encoded).context("decode vmess payload")?;
-    let value: Value = serde_json::from_slice(&raw).context("parse vmess JSON")?;
-    let j = value
-        .as_object()
-        .context("vmess payload is not an object")?;
+    let encoded = link.strip_prefix("vmess://").context("不是 VMess 链接")?;
+    let raw = decode_base64_bytes(encoded).context("解码 VMess 内容失败")?;
+    let value: Value = serde_json::from_slice(&raw).context("解析 VMess JSON 失败")?;
+    let j = value.as_object().context("VMess 内容不是 JSON 对象")?;
 
     let identity = {
         let core: Map<String, Value> = j
@@ -714,7 +712,9 @@ fn num(value: &Value) -> Option<i64> {
 // --- shadowsocks ---
 
 fn parse_shadowsocks(link: &str) -> Result<ParsedOutbound> {
-    let mut rest = link.strip_prefix("ss://").context("not ss")?;
+    let mut rest = link
+        .strip_prefix("ss://")
+        .context("不是 Shadowsocks 链接")?;
     let (before_fragment, fragment_raw) = match rest.split_once('#') {
         Some((left, right)) => (left, right),
         None => (rest, ""),
@@ -744,8 +744,10 @@ fn parse_shadowsocks(link: &str) -> Result<ParsedOutbound> {
             .unwrap_or_else(|| user.to_string());
         (decoded, hp.to_string())
     } else {
-        let decoded = decode_base64_text(core).context("decode legacy ss payload")?;
-        let (user, hp) = decoded.split_once('@').context("bad legacy ss payload")?;
+        let decoded = decode_base64_text(core).context("解码旧版 Shadowsocks 内容失败")?;
+        let (user, hp) = decoded
+            .split_once('@')
+            .context("旧版 Shadowsocks 内容格式错误")?;
         (user.to_string(), hp.to_string())
     };
     let (host, port) = split_host_port(&host_port)?;
@@ -783,11 +785,11 @@ fn parse_shadowsocks(link: &str) -> Result<ParsedOutbound> {
 
 fn split_host_port(value: &str) -> Result<(String, u16)> {
     let value = value.trim_end_matches('/');
-    let (host, port) = value.rsplit_once(':').context("bad host:port")?;
+    let (host, port) = value.rsplit_once(':').context("主机和端口格式错误")?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    let port: u16 = port.trim().parse().context("bad port")?;
+    let port: u16 = port.trim().parse().context("端口格式错误")?;
     if host.is_empty() || port == 0 {
-        bail!("bad host:port");
+        bail!("主机和端口格式错误");
     }
     Ok((host.to_string(), port))
 }
@@ -830,9 +832,9 @@ fn apply_obfs_local_plugin(params: &mut Vec<(String, String)>) {
 // --- hysteria2 ---
 
 fn parse_hysteria2(link: &str) -> Result<ParsedOutbound> {
-    let url = Url::parse(link).context("parse hysteria2 link")?;
+    let url = Url::parse(link).context("解析 Hysteria2 链接失败")?;
     if url.scheme() != "hysteria2" && url.scheme() != "hy2" {
-        bail!("not hysteria2");
+        bail!("不是 Hysteria2 链接");
     }
     let auth = decode_component(url.username());
     let host = host_of(&url)?;
@@ -946,9 +948,9 @@ fn apply_hysteria2_hop(stream: &mut Value, params: &[(String, String)]) {
 // --- wireguard ---
 
 fn parse_wireguard(link: &str) -> Result<ParsedOutbound> {
-    let url = Url::parse(link).context("parse wireguard link")?;
+    let url = Url::parse(link).context("解析 WireGuard 链接失败")?;
     if url.scheme() != "wireguard" && url.scheme() != "wg" {
-        bail!("not wireguard");
+        bail!("不是 WireGuard 链接");
     }
     let secret = decode_component(url.username());
     let params = query_pairs(&url);

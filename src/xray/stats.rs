@@ -87,8 +87,8 @@ impl StatsClient {
             StatsServiceClient::connect(self.endpoint.clone()),
         )
         .await
-        .map_err(|_| anyhow!("connect to xray stats api {} timed out", self.endpoint))?
-        .with_context(|| format!("connect to xray stats api {}", self.endpoint))
+        .map_err(|_| anyhow!("连接 Xray 统计接口 {} 超时", self.endpoint))?
+        .with_context(|| format!("连接 Xray 统计接口 {} 失败", self.endpoint))
     }
 
     /// Forget what we know about the online-stats RPC. Called when Xray
@@ -122,11 +122,11 @@ impl StatsClient {
             Ok(Err(status)) => {
                 // Drop the channel so the next poll reconnects after an xray restart.
                 *guard = None;
-                Err(anyhow!("stats query failed: {status}"))
+                Err(anyhow!("统计查询失败：{status}"))
             }
             Err(_) => {
                 *guard = None;
-                Err(anyhow!("stats query timed out"))
+                Err(anyhow!("统计查询超时"))
             }
         }
     }
@@ -194,11 +194,11 @@ impl StatsClient {
             }
             Ok(Err(status)) => {
                 *guard = None;
-                Err(anyhow!("online users query failed: {status}"))
+                Err(anyhow!("在线用户查询失败：{status}"))
             }
             Err(_) => {
                 *guard = None;
-                Err(anyhow!("online users query timed out"))
+                Err(anyhow!("在线用户查询超时"))
             }
         }
     }
