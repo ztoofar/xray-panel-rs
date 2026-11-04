@@ -1022,6 +1022,7 @@
   （提交 `89c4c2c`、`8a82b65`）。更新说明存档
   `.github/release-notes/v0.2.22.md`。
 - 验证：发布前 `cargo test` 112/112、clippy、fmt、前端构建、假 Key 端到端、
-  无头 Chrome 设置页检查通过；发布资产下载校验结果见下一条补充。
+  无头 Chrome 设置页检查通过。GitHub API 已确认资产大小与 digest；本机下载
+  发布包 120 秒超时（仅收到 81 KB），包内 `SHA256SUMS` 未本地复核。
 - 未验证：有效 IP数据云 Key 成功响应（T28）、真实 Linux/musl（T26）、
   真实公网客户端（T27）。

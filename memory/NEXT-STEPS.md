@@ -34,7 +34,8 @@
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过、前端 build 成功；
   `tmp/e2e-advanced/ipdc-check.py`、`ipdc-ui.py` 全通过。
 - 发布 Actions：release run `41853368185` 成功；发布说明更新 run
-  `41854912426` 成功；发布包下载校验见 `CURRENT-STATUS.md` §2.35。
+  `41854912426` 成功。发布包 digest 以 GitHub API 为准；本机下载因网络超时，
+  包内校验未完成（见 `CURRENT-STATUS.md` §2.35）。
 - 仍未验证：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl（T26）；
   真实公网客户端（T27）。
 

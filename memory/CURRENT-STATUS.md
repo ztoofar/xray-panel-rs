@@ -924,8 +924,8 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
 - Actions：release run `41853368185` 成功；发布说明更新 run `41854912426`
   成功；临时更新 workflow 已删除。
 - 本地验证：`cargo test` **112/112**、clippy 零警告、fmt 通过、前端构建、
-  假 Key 端到端与无头 Chrome 设置页检查均通过；下载资产的包内校验见
-  `memory/DEVELOPMENT-LOG.md` 同日发布记录。
+  假 Key 端到端与无头 Chrome 设置页检查均通过。GitHub API 已确认资产大小与
+  digest；本机下载发布包因网络超时未完成，包内 `SHA256SUMS` 尚未本地复核。
 - **未验证**：有效 IP数据云 Key 的成功响应（T28）；真实 Linux/musl 运行
   （T26）；真实公网客户端（T27）。
 
