@@ -947,6 +947,8 @@ Xray 26.10.31 + 无头 Chrome）；**未在真实 Linux/musl 上运行，未打�
   `/settings#advanced` 渲染标签页；移除侧栏独立 IP数据云入口和 `#ipdata`
   路由；新增 `pages.settings.outboundCheckTab` 文案。
 - 版本：`Cargo.toml` / `Cargo.lock` 0.2.22 → **0.2.23**（未打包/未打 tag）。
+- 提交：`875703f feat: move IPDataCloud into advanced settings tabs`，已推送
+  `main`（`a1bd649..875703f`）。
 - 验证：`cargo test` 112/112、clippy 零警告、fmt 通过；前端构建成功；
   `tmp/e2e-advanced/ipdc-ui.py` 无头 Chrome（1440×900）验证：高级页显示
   “出站检测 / IP数据云”两个标签，可来回切换；IP数据云标签显示 API Key
