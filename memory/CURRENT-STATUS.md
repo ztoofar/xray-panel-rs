@@ -1146,6 +1146,23 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   的实际比例；前端未改动，构建产物沿用 0.2.26。
 - 已随 0.2.27 发布（§2.44）。
 
+## 2.46 v0.2.28 发布（2026-11-05）—— 已验证（GitHub Actions + 本地包级复核）
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.28`；提交 `5e376a1`，tag `v0.2.28`。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.28>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,877 字节**，
+  GitHub asset digest
+  `sha256:f7ebdfba2946e487c503d77d535ba36714d24164578f381be1b6e125e6d58290`。
+- Actions：main CI run `42048884488` 成功；release run `42049648625`
+  （head_sha = `5e376a1`）成功。Release body 中文 UTF-8 存储正确。
+- 本地包级复核（走用户提供的 `192.168.1.251:10813` HTTP 代理，本次成功）：
+  资产 sha256 与 digest 一致；解包后包内 `SHA256SUMS`
+  `074a92939a53a48e630715012ed5f1642b2c24077bb2aba5595ea4f33af05e8c` 与
+  包内二进制一致；二进制含 `LUMEN_VERSION=0.2.28` 与 WS 帧字段
+  `clientTrafficIntervalMs`（前端已嵌入）。包内二进制 12,980,672 字节。
+- 发布前验证：`cargo test` **114/114**、clippy 零警告、fmt、前端构建。
+- **未验证**：真实 Linux/musl 运行与真实断线场景（D053/G12）。
+
 ## 2.45 入站 WS 速度断线冻结修复（2026-11-05，0.2.28）—— 已实现，未验证
 
 用户在 0.2.27（Linux 部署）再次反馈入站列表实时速度虚高/偏低。逐行核对

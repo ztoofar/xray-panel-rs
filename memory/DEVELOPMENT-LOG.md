@@ -1217,7 +1217,7 @@
 - 本机下载发布包被网络重置，未做本地解包复核；资产大小/digest 来自
   GitHub API，包内 `SHA256SUMS` 与 `file` 由 release workflow 输出。
 
-## 2026-11-05 →2026-11-06 — 入站 WS 速度断线冻结修复（0.2.28，发布流程中）
+## 2026-11-05 — 入站 WS 速度断线冻结修复 + v0.2.28 发布
 
 - 用户反馈：0.2.27（Linux 部署）入站列表实时速度仍虚高/偏低。
 - 梳理：复读 `src/jobs.rs` 全链路（增量 ÷ 真实间隔、`counter_delta` 回退、
@@ -1235,7 +1235,17 @@
     `web/dist/`。
   - 文档：`DECISIONS.md` D053、`KNOWN-ISSUES.md` G12、`CURRENT-STATUS.md`
     §2.45、`release.yml` body（更新内容改为本次两条）。
-- 验证：`cargo test` **114/114**、clippy 零警告、`cargo fmt --check` 通过、
-  前端 `npm run build` 成功（Node 26）。
-- 未验证：真实 Linux 部署断线场景；WS 存活时的幅度偏差需现场
-  `__diagDump` 数据进一步定位。
+- 自测：`cargo test` **114/114**、clippy 零警告、fmt、前端 `npm run build`。
+
+## 2026-11-05 23:00 — v0.2.28 发布（GitHub Actions + 本地包级复核）
+
+- 版本 0.2.28；提交 `5e376a1`，tag `v0.2.28`，main CI run `42048884488`
+  成功；release run `42049648625`（head_sha=`5e376a1`）成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.28>
+  资产 5,518,877 字节，asset digest
+  `sha256:f7ebdfba2946e487c503d77d535ba36714d24164578f381be1b6e125e6d58290`。
+- 复核（经 `192.168.1.251:10813` HTTP 代理下载）：包 sha256 与 digest 一致；
+  解包校验包内 `SHA256SUMS` 与二进制 `074a9293...f33af05e8c` 匹配；二进制含
+  `LUMEN_VERSION=0.2.28` 与 `clientTrafficIntervalMs`；解包产物存
+  `tmp/pkg-0.2.28/`。
+- 未验证：真实 Linux/musl 运行；真实断线场景（代理掐长连接/睡眠恢复）。
