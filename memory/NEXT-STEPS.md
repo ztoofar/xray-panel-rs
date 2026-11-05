@@ -37,9 +37,14 @@
 - 源码验证：`cargo test` **121/121**（含 2 个合并槽单测）、clippy 零警告、
   fmt；真实 Xray tunnel 与 fake-stats 两条本地链路 PASS。前端未改动，
   WS 帧协议与 0.2.25 一致。
-- **待用户现场验证**：tunnel 实时速度是否追平 3x-ui/网卡监控（允许包头
-  3–8% 结构差）。若仍偏小：`journalctl` 找 `traffic billing failed`，
-  确认 `traffic_poll_secs` 与 WS 帧 `clientTrafficIntervalMs` 是否≈设置值。
+- **待用户回传现场数据**：用户部署 0.2.30 后仍报「显示还是不对」。已发布
+  现场对照脚本 `deploy/panel_speed_check.py`（python3 标准库）：同窗口采
+  Xray 原始计数器 / 面板 WS 帧（含 `clientTrafficIntervalMs` 除数 vs 真实
+  帧间隔）/ REST upSpeed+downSpeed / DB 计费增量，四方对比自动判定丢数层。
+  用法：`python3 panel_speed_check.py --panel http://127.0.0.1:面板端口
+  --user 用户名 --password 密码 --tag 入站tag --dur 40`（下载进行中跑）。
+  本地端到端自测 PASS（`tmp/field-check/selftest.py`，真实 Xray 隧道入站，
+  四列一致、帧间隔 2.0s=除数 2.0s）。
 - 上一发布：`v0.2.29`（3x-ui 模型重写取数）、`v0.2.28`（入站 WS 过期保护）。
 
 ## 下一步（按用户任务二选一）

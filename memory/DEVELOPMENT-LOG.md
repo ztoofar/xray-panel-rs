@@ -1359,3 +1359,23 @@
 - 文档：CURRENT-STATUS §2.50（新增发布记录；§2.49 标为已发布）、
   NEXT-STEPS 当前状态改 0.2.30、CLAUDE.md「待发布→已发布」。
 - 未验证：真实 Linux/musl 大面板运行效果（等待用户部署反馈）。
+
+## 2026-11-06 03:10 — 现场四方对照脚本（deploy/panel_speed_check.py）
+
+- 用户反馈 0.2.30 部署后「显示还是不对」，无可量化数据。为避免继续猜：
+  写现场诊断脚本 `deploy/panel_speed_check.py`（python3 标准库，服务器直接
+  跑），同一窗口采样四个来源并自动判定丢数层：
+  ① `xray api statsquery` 原始计数器（绕开一切面板代码）；
+  ② 面板 WS `traffic` 帧：累计各轮 `Tag/Up/Down`，并输出**真实帧间隔 vs
+  帧携带的 `clientTrafficIntervalMs` 除数**（两数差大=采样节拍被拖长，
+  速度列摊薄——这正是 G14 的机制）；
+  ③ REST `list/slim` 的 `upSpeed/downSpeed`（UI 同源的显示值）；
+  ④ DB `inbounds.up/down` 计费增量。
+- 登录走公开 `POST /login`（表单，session cookie）；REST 取样 GET 无需
+  CSRF；WS 路径修复过 `//ws` 拼接错误（会命中 SPA 兜底路由返回 200 HTML）。
+  DB 只读 URI 打开避免和 writer 抢锁。
+- 端到端自测 `tmp/field-check/selftest.py`（真实 Xray + 隧道入站 + 持续
+  单线程下载 18 秒）PASS：tunnel-in 四列 104 B/s+11.6~11.9 MB/s 相互一致，
+  帧间隔 2.0s = 除数 2.0s；api 内部入站只出现在 ①（与 3x-ui 忽略 api 一致）。
+- 本次不改产品代码（无 Cargo 版本 bump）；G14 补「现场状态」段。等用户
+  回传现场表格再定根因。

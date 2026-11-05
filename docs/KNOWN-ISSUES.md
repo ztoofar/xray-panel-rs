@@ -492,3 +492,11 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   部署 0.2.30 后确认速度列是否追平网卡监控/3x-ui（允许包头 3–8% 的正常
   结构差）。若仍偏小，看 `journalctl` 中 `traffic billing failed` 与帧
   间隔是否仍被 DB 拖长。
+- **现场状态（2026-11-06）**：用户部署 0.2.30 后仍报「显示还是不对」，
+  具体数字未知。新增现场对照脚本 `deploy/panel_speed_check.py`（服务器端
+  python3 标准库，无依赖）：同一窗口内同时采 ①`xray api statsquery` 原始
+  计数器、②面板 WS `traffic` 帧（含 `clientTrafficIntervalMs` 除数 vs 真实
+  帧间隔）、③ REST `list/slim` 的 `upSpeed/downSpeed`、④ DB `inbounds.up/
+  down` 计费增量，四方对比自动判定丢数在哪一层。本地端到端自测
+  `tmp/field-check/selftest.py` PASS（11.6–11.9 MB/s 四列一致，帧间隔
+  2.0s=除数 2.0s）。等用户回传表格后再定位。
