@@ -1146,6 +1146,27 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   的实际比例；前端未改动，构建产物沿用 0.2.26。
 - 已随 0.2.27 发布（§2.44）。
 
+## 2.45 入站 WS 速度断线冻结修复（2026-11-05，0.2.28）—— 已实现，未验证
+
+用户在 0.2.27（Linux 部署）再次反馈入站列表实时速度虚高/偏低。逐行核对
+`src/jobs.rs` 速率链路（增量 ÷ 真实单调间隔、计数器回退、重启丢弃样本）
+确认后端计算无误，本地 fake/真实 e2e 亦覆盖幅度正确。定位到前端缺陷：
+
+- `useClients.ts`（客户端页）有 WS 速度过期计时器；`useInbounds.ts`（入站
+  页）没有。WS 半途断开时 `wsInboundSpeed` 冻结在断开瞬间的数值，并被合并
+  逻辑（`{...serverInboundSpeed, ...wsInboundSpeed}`）永久覆盖 REST 兜底值
+  ——空闲时旧速度不归零（虚高），期间真实速率变化也不跟随（偏低/跳变）。
+- 修复（仅前端 `useInbounds.ts`）：每收到一帧 traffic 就重置 2×帧间隔
+  （≤2 分钟）过期计时器（版本计数门闩）；超时清空整个 `wsInboundSpeed`，
+  回退每轮刷新的 REST `upSpeed/downSpeed`；组件卸载清理计时器。语义与
+  客户端页一致（DECISIONS D053、KNOWN-ISSUES G12）。
+
+**验证**：`cargo test` 114/114、clippy 零警告、`cargo fmt --check`、前端
+`npm run build` 成功。
+**未验证**：真实 Linux 部署断线场景（代理掐长连接/睡眠恢复）；若 WS 存活时
+仍有幅度偏差，需要用 DevTools `__diagDump`（WS 帧 + REST 速率）对照系统
+状态页网卡吞吐采集现场数据后继续定位。
+
 ## 2.44 v0.2.27 发布（2026-11-05）—— 已验证（GitHub Actions）
 
 - 版本：`Cargo.toml` / `Cargo.lock` = `0.2.27`；提交 `869facb`，tag `v0.2.27`。

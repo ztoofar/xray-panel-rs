@@ -239,6 +239,12 @@ export function useInbounds() {
   // instead of freezing on the last measured value as the old snapshot diff
   // did. This state remains for the (currently disabled) WS push path.
   const [wsInboundSpeed, setWsInboundSpeed] = useState<Record<number, InboundSpeedEntry>>({});
+  // Traffic frames arrive once per poll, so a bound on their age is also a
+  // liveness test for the socket itself. Without this expiry a dropped WS
+  // (network blip, proxy cutting long connections, tab sleep) freezes the last
+  // speed in the column forever; REST polling keeps the display honest.
+  const wsSpeedVersionRef = useRef(0);
+  const wsSpeedExpiryTimerRef = useRef<number | undefined>(undefined);
 
   const serverInboundSpeed = useMemo(() => {
     const speeds: Record<number, InboundSpeedEntry> = {};
@@ -552,7 +558,33 @@ export function useInbounds() {
     };
     if (Array.isArray(p.traffics)) applyTraffics(p.traffics, (ib) => ib.nodeId == null);
     if (Array.isArray(p.nodeTraffics)) applyTraffics(p.nodeTraffics, (ib) => ib.nodeId != null);
+
+    // The frame itself proves the socket is alive — traffic frames arrive once
+    // per poll even when nothing moved (deltas are simply empty). Reset the
+    // stale guard so live sockets never drop their speeds mid-poll, and let
+    // dead ones fall back to the REST-polling rate instead of freezing.
+    wsSpeedVersionRef.current += 1;
+    const wsSpeedVersion = wsSpeedVersionRef.current;
+    if (wsSpeedExpiryTimerRef.current !== undefined) {
+      window.clearTimeout(wsSpeedExpiryTimerRef.current);
+    }
+    wsSpeedExpiryTimerRef.current = window.setTimeout(
+      () => {
+        if (wsSpeedVersionRef.current !== wsSpeedVersion) return;
+        wsSpeedExpiryTimerRef.current = undefined;
+        setWsInboundSpeed((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      },
+      Math.min(sampleIntervalMs * 2, 120_000),
+    );
   }, []);
+  useEffect(
+    () => () => {
+      if (wsSpeedExpiryTimerRef.current !== undefined) {
+        window.clearTimeout(wsSpeedExpiryTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const applyClientStatsEvent = useCallback((payload: unknown) => {
     if (!payload || typeof payload !== 'object') return;

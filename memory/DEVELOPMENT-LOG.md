@@ -1216,3 +1216,26 @@
   不广播、Xray 采样期间重启时清空速度；另附 tunnel 零客户端真实流量验证。
 - 本机下载发布包被网络重置，未做本地解包复核；资产大小/digest 来自
   GitHub API，包内 `SHA256SUMS` 与 `file` 由 release workflow 输出。
+
+## 2026-11-05 →2026-11-06 — 入站 WS 速度断线冻结修复（0.2.28，发布流程中）
+
+- 用户反馈：0.2.27（Linux 部署）入站列表实时速度仍虚高/偏低。
+- 梳理：复读 `src/jobs.rs` 全链路（增量 ÷ 真实间隔、`counter_delta` 回退、
+  epoch 丢弃、空闲清除）确认后端计算无误；向用户确认症状为
+  「入站列表速度列，幅度虚高/偏低」，并给出 DevTools `__diagDump`
+  诊断脚本供现场采集 WS 帧/REST 速率。
+- 定位（代码审查，非复现）：`useInbounds.ts` 的 `wsInboundSpeed` 无过期
+  机制（客户端页有），WS 半途断开时入站速度列永久冻结，且冻结项覆盖
+  REST 兜底值——空闲时虚高挂着、随后与真实速率脱节（偏低/跳变）。
+- 修改：
+  - `frontend-3xui/src/pages/inbounds/useInbounds.ts`：每帧重置 2×帧间隔
+    （≤2 分钟）过期计时器（版本计数门闩）；超时清空 `wsInboundSpeed`，
+    回退 REST `upSpeed/downSpeed`；卸载清理计时器。
+  - 版本 0.2.27 → 0.2.28（Cargo.toml/Cargo.lock），前端重新构建嵌入
+    `web/dist/`。
+  - 文档：`DECISIONS.md` D053、`KNOWN-ISSUES.md` G12、`CURRENT-STATUS.md`
+    §2.45、`release.yml` body（更新内容改为本次两条）。
+- 验证：`cargo test` **114/114**、clippy 零警告、`cargo fmt --check` 通过、
+  前端 `npm run build` 成功（Node 26）。
+- 未验证：真实 Linux 部署断线场景；WS 存活时的幅度偏差需现场
+  `__diagDump` 数据进一步定位。

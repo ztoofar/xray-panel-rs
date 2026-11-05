@@ -255,6 +255,18 @@ generation 变化只负责清在线集合与在线 API 探测缓存。验证：�
   **未验证**：真实 Linux/musl；超大客户端数导致 tick 超时的真实比例；
   tunnel 的 followRedirect/TPROXY 模式；其余协议真实流量；前端未改动。
 
+### G12 0.2.28：入站 WS 速度断线冻结 —— 已实现，未在真实部署验证
+- 缺陷：`useInbounds.ts` 的 `wsInboundSpeed` 没有过期机制（客户端页有），
+  WS 半途断开后入站速度列冻结在断开瞬间的数值，被冻结项还永久覆盖
+  REST 兜底值（合并 `{...server, ...ws}`），空闲时不归零。
+- 修复：帧驱动的 2×采样间隔（≤2 分钟）过期计时器 + 卸载清理；
+  触发后清空 WS 速度，回退每轮刷新的 REST `upSpeed/downSpeed`。
+  详见 `DECISIONS.md` D053。
+- 验证：本地 `cargo test` 114/114、clippy 零警告、fmt、前端构建。
+  **未验证**：真实断线场景（代理掐长连接、睡眠恢复）下的行为；
+  若 WS 存活时仍出现幅度偏离，需按 `DEVELOPMENT-LOG.md` 记录的诊断
+  脚本（DevTools `__diagDump`）采集 WS 帧/REST 速率/网卡吞吐做对照。
+
 ### G8 重置边界仍有一个采集周期的残差 —— 与 3x-ui 相同
 手动重置与采集并发时，重置前刚采样到的增量可能落在重置之后写入，最多
 一个 `traffic_poll_secs` 的流量会留在重置后的累计值里。3x-ui 的

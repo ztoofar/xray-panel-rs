@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-05 23:00
+> 最后更新：2026-11-06
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,27 +18,25 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 114/114、clippy 零警告、Cargo 版本 `0.2.27`、
+   期望：`cargo test` 114/114、clippy 零警告、Cargo 版本 `0.2.28`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
-## 当前状态（2026-11-05）
+## 当前状态（2026-11-06）
 
-- 源码 **0.2.27（已发布）**：WS `traffic` 帧的 `clientTrafficIntervalMs`
-  改为本轮真实采样间隔（`elapsed_ms`），修复 tick 超过轮询周期时入站/客户端
-  实时速度按比例虚高；首个无间隔采样只计费不播速率。详见
-  `CURRENT-STATUS.md` §2.43、`DECISIONS.md` D052。
-- 当前发布：GitHub `v0.2.27`（tag → `869facb`，资产 5,518,387 字节，
-  digest `sha256:d0209122...138b`；main CI `42042345225`、release
-  `42042854755` 成功）。内容见 §2.43/§2.44、D052。
-- 上一发布：`v0.2.26`（5,518,877 字节），实时 WS 帧内存优化（§2.42/D051）。
-- 验证：`cargo test` **114/114**、clippy 零警告、fmt；fake e2e 13/13；
-  慢 tick 诊断（3s RPC/2s 轮询）修复前 1.5× 虚高、修复后与真实速率一致；
-  无头 Chrome UI+WS 10/10；真实 Xray 15/15。
-- 未验证：真实 Linux/musl 长时 RSS 与超大客户端规模内存曲线（T29）；
-  真实 Linux/musl 网络抖动与故障注入（T9/T26）；有效 IP数据云 Key（T28）；
-  真实公网客户端（T27）；超大客户端数导致 tick 超时的真实比例。
+- 源码 **0.2.28**：入站页 WS 速度增加与客户端页一致的过期保护——WS 断开后
+  超过 2×采样间隔（≤2 分钟）清空冻结速度，回退 REST 轮询速率；修复
+  `useInbounds.ts` 缺失过期机制导致入站速度列断线后永久冻结（0.2.25 起
+  遗留、0.2.27 未覆盖的分支）。详见 `CURRENT-STATUS.md` §2.45、
+  DECISIONS D053、KNOWN-ISSUES G12。
+- 上一发布：`v0.2.27`：WS 帧 `clientTrafficIntervalMs` 改为真实采样间隔，
+  修复慢 tick 下实时速度虚高（§2.43–§2.44、D052）。
+- 验证：`cargo test` **114/114**、clippy 零警告、fmt、前端 `npm run build`
+  （Node 26，产物已嵌入 `web/dist/`）。
+- **未验证**：真实 Linux 部署断线场景（代理掐长连接/睡眠恢复）；
+  用户现场若 WS 存活时仍有幅度偏差，用 DevTools `__diagDump` 采集
+  WS 帧 + REST 速率 + 系统状态网卡吞吐三方数据后再定位。
 
 ## 下一步（按用户任务二选一）
 
