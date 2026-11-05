@@ -1146,6 +1146,26 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   的实际比例；前端未改动，构建产物沿用 0.2.26。
 - 已随 0.2.27 发布（§2.44）。
 
+## 2.48 v0.2.29 发布（2026-11-05）—— 已验证（GitHub Actions + 本地包级复核）
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.29`；提交 `117b418`，tag
+  `v0.2.29`。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.29>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,523,004 字节**，
+  GitHub asset digest
+  `sha256:c3b86b06cded35a39fe676eff80ab344468294dce83c6d60dfe8819c631896e3`。
+- Actions：main CI run `42056105722` 成功；release run `42057016611`
+  （head_sha = `117b418`）成功。Release body 中文 UTF-8 存储正确
+  （更新内容：3x-ui 模型重写 / 64 MiB 上限 / 分族查询 / 显示与 DB 解耦）。
+- 本地包级复核（走 `192.168.1.251:10813` HTTP 代理）：资产 sha256 与
+  digest 一致；解包后包内 `SHA256SUMS`
+  `524be1513bf29823b59c4fec74d9a9bd73a48fe3d87f159062d7addc756daedb` 与
+  包内二进制一致；二进制 12,991,472 字节，含 `LUMEN_VERSION=0.2.29` 与
+  WS 帧字段 `clientTrafficIntervalMs`。解包产物存 `tmp/pkg-0.2.29/`。
+- 发布前验证：`cargo test` **119/119**、clippy 零警告、fmt（§2.47）。
+- **未验证**：真实 Linux/musl 运行与真实大面板部署效果——0.2.29 的
+  修复目标（速度列恢复显示）需用户现场部署后确认（G13）。
+
 ## 2.47 按 3x-ui 模型重写实时流量取数（2026-11-05，0.2.29）—— 已实现，未验证
 
 用户部署 0.2.28 后仍报「大流量面板速度没有显示」。下载并逐行对照上游

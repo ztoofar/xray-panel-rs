@@ -1290,3 +1290,18 @@
   族失败保基线并按跨度补算、身份折叠/裸邮箱回退、剪枝与失败例外）、
   clippy `--all-targets -D warnings` 零警告、`cargo fmt --check`。
 - 未验证：真实 Linux/大面板部署（本次修复的目标场景）；前端未改动。
+
+## 2026-11-05 23:55 — v0.2.29 发布（GitHub Actions + 本地包级复核）
+
+- 用户确认「发布」。main CI run `42056105722` 成功 → tag `v0.2.29`
+  （提交 `117b418`）→ release run `42057016611` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.29>
+  资产 5,523,004 字节，asset digest
+  `sha256:c3b86b06cded35a39fe676eff80ab344468294dce83c6d60dfe8819c631896e3`；
+  body 四条更新内容中文 UTF-8 存储正确。
+- 复核（经 `192.168.1.251:10813` HTTP 代理下载）：包 sha256 与 digest
+  一致；解包校验包内 `SHA256SUMS` 与二进制
+  `524be1513bf29823b59c4fec74d9a9bd73a48fe3d87f159062d7addc756daedb`
+  匹配；二进制含 `LUMEN_VERSION=0.2.29` 与 `clientTrafficIntervalMs`；
+  解包产物存 `tmp/pkg-0.2.29/`。
+- 未验证：真实 Linux/musl 大面板运行效果（等待用户部署反馈）。
