@@ -1,10 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
 use serde::Serialize;
+use tokio::sync::{Mutex, Notify};
 
 use crate::{
     db::{
@@ -52,6 +54,13 @@ pub fn spawn(state: AppState) {
         // successful sample of a family only records baselines, since the
         // counters may already hold traffic the panel cannot attribute.
         let mut stats_baselined: HashSet<&'static str> = HashSet::new();
+        // 3x-ui runs its DB accounting on a serialized writer goroutine
+        // (`submitTrafficWrite`) instead of inside the stats poll, so a slow
+        // write cannot stretch the gap between samples. Ours is the same task
+        // with a coalescing single-slot queue: raw counters make an older
+        // sample redundant, keeping the extra memory to one sample.
+        let billing = BillingSink::new();
+        tokio::spawn(run_billing_writer(state.clone(), billing.clone()));
         loop {
             // Xray restarts (manual, config apply, crash) drop every live
             // connection. 3x-ui keeps its online map inside the Xray process;
@@ -104,6 +113,7 @@ pub fn spawn(state: AppState) {
                 &mut last_stats_at,
                 &mut stats_last,
                 &mut stats_baselined,
+                &billing,
             )
             .await
             {
@@ -153,6 +163,7 @@ async fn tick(
     last_stats_at: &mut Option<std::time::Instant>,
     stats_last: &mut HashMap<DeltaKey, i64>,
     stats_baselined: &mut HashSet<&'static str>,
+    billing: &BillingSink,
 ) -> anyhow::Result<()> {
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
@@ -214,7 +225,6 @@ async fn tick(
             let online_emails =
                 refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
             refresh_active_inbounds(state, now, grace, &[]).await;
-            persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
             // Empty deltas clear the live speed in the browser while keeping
             // the connection-based online set accurate.
             broadcast_traffic(
@@ -227,6 +237,12 @@ async fn tick(
                 now,
             )
             .await;
+            if let Err(err) =
+                persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now)
+                    .await
+            {
+                tracing::warn!(error = %err, "online heartbeat persist failed");
+            }
             return Ok(());
         }
     };
@@ -247,7 +263,6 @@ async fn tick(
         let online_emails =
             refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
         refresh_active_inbounds(state, now, grace, &[]).await;
-        persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
         // Clear any speed label still pinned to the previous process.
         broadcast_traffic(
             state,
@@ -259,6 +274,11 @@ async fn tick(
             now,
         )
         .await;
+        if let Err(err) =
+            persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await
+        {
+            tracing::warn!(error = %err, "online heartbeat persist failed");
+        }
         return Ok(());
     }
     // Deltas and rates share one window: baselines only advance when a sample
@@ -279,12 +299,22 @@ async fn tick(
     let frame_interval = rated_interval_ms(elapsed_ms);
     let rated = frame_interval.is_some();
     let frame_interval_ms = frame_interval.unwrap_or_else(|| poll_secs.saturating_mul(1000));
+    // Display path first — speeds, the WS frame and the online/active sets
+    // are committed before any database work. 3x-ui's traffic job broadcasts
+    // over the hub and hands the accounting to its serialized writer
+    // (`submitTrafficWrite`); the previous arrangement ran the WS frame
+    // behind every fallible billing write, so on a big deployment the billing
+    // tail stretched the gap between two samples for seconds, and the frame
+    // divided this poll's bytes by that whole backlog — the rate read far
+    // below the instant throughput the NIC monitor shows.
     let mut inbound_speeds: HashMap<String, SpeedSample> = HashMap::new();
     let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
     // 3x-ui's WS traffic frame carries this poll's deltas by tag/email; the
     // browser divides them by `clientTrafficIntervalMs`.
     let mut ws_traffics: Vec<InboundTraffic<'_>> = Vec::new();
     let mut ws_client_traffics: Vec<ClientTraffic<'_>> = Vec::new();
+    let mut moved_emails: HashSet<String> = HashSet::new();
+    let mut active_tags: Vec<String> = Vec::new();
     // Live display deltas (WS frame + traffic_speeds) come from the in-memory
     // baseline engine (3x-ui StatsLastValues), not from the DB: DB baselines
     // only advance on successful billing writes, so a failed write can never
@@ -297,16 +327,71 @@ async fn tick(
         &email_by_identity,
         &client_emails,
     );
-    let restart_on_client_disable = db::settings::ui_settings(&state.db)
-        .await
-        .ok()
-        .and_then(|settings| {
-            settings
-                .get("restartXrayOnClientDisable")
-                .and_then(|value| value.as_bool())
-        })
-        .unwrap_or(true);
 
+    for client in &clients {
+        let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
+        let display_down = display.client_down.get(&client.email).copied().unwrap_or(0);
+        if display_up > 0 || display_down > 0 {
+            moved_emails.insert(client.email.clone());
+        }
+        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
+            ws_client_traffics.push(ClientTraffic {
+                email: &client.email,
+                up: display_up,
+                down: display_down,
+            });
+        }
+        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
+            client_speeds.insert(client.email.clone(), sample);
+        }
+    }
+
+    for inbound in &inbounds {
+        let display_up = display.inbound_up.get(&inbound.tag).copied().unwrap_or(0);
+        let display_down = display.inbound_down.get(&inbound.tag).copied().unwrap_or(0);
+        if display_up > 0 || display_down > 0 {
+            active_tags.push(inbound.tag.clone());
+        }
+        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
+            ws_traffics.push(InboundTraffic {
+                tag: &inbound.tag,
+                up: display_up,
+                down: display_down,
+                is_inbound: true,
+                is_outbound: false,
+            });
+        }
+        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
+            inbound_speeds.insert(inbound.tag.clone(), sample);
+        }
+    }
+
+    *state.traffic_speeds.lock().await = TrafficSpeeds {
+        inbounds: inbound_speeds,
+        clients: client_speeds,
+    };
+    // The sample is consumed here: the next rate measures from this instant
+    // even if the billing tail (or the history write) runs long.
+    *last_stats_at = Some(sample_at);
+
+    let online_emails =
+        refresh_online(state, now, grace, api_snapshot.as_ref(), &moved_emails).await;
+    refresh_active_inbounds(state, now, grace, &active_tags).await;
+
+    broadcast_traffic(
+        state,
+        frame_interval_ms,
+        &ws_traffics,
+        &ws_client_traffics,
+        &online_emails,
+        &clients,
+        now,
+    )
+    .await;
+
+    // Raw counters for the serialized billing writer. The display path above
+    // already ran; whatever the database needs seconds to do next cannot move
+    // the sample cadence or the speed columns any more.
     let user_stats = parse_user_stats(
         families
             .iter()
@@ -336,6 +421,114 @@ async fn tick(
         }
     }
 
+    billing
+        .push(BillingSample {
+            epoch: epoch_before,
+            now,
+            online_ip_counts,
+            user_stats,
+            inbound_up,
+            inbound_down,
+            outbound_up,
+            outbound_down,
+            moved_emails,
+            online_emails,
+        })
+        .await;
+
+    Ok(())
+}
+
+/// One poll's raw counters handed to the serialized billing writer. Values
+/// are raw (not deltas): the writer compares them against the stored DB
+/// baselines itself, so a newer sample subsumes any still-pending older one —
+/// bytes are neither dropped nor billed twice by coalescing.
+struct BillingSample {
+    epoch: u64,
+    now: i64,
+    online_ip_counts: HashMap<String, i64>,
+    user_stats: HashMap<String, (Option<i64>, Option<i64>)>,
+    inbound_up: HashMap<String, i64>,
+    inbound_down: HashMap<String, i64>,
+    outbound_up: HashMap<String, i64>,
+    outbound_down: HashMap<String, i64>,
+    moved_emails: HashSet<String>,
+    online_emails: HashSet<String>,
+}
+
+/// Single-slot coalescing queue between the display tick and the billing
+/// writer (3x-ui's serialized traffic writer, Rust form). The slot holds at
+/// most one sample, so a writer that falls behind costs bounded memory and
+/// the newest counters always win.
+#[derive(Clone)]
+struct BillingSink {
+    pending: Arc<Mutex<Option<BillingSample>>>,
+    notify: Arc<Notify>,
+}
+
+impl BillingSink {
+    fn new() -> Self {
+        Self {
+            pending: Arc::new(Mutex::new(None)),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    async fn push(&self, sample: BillingSample) {
+        *self.pending.lock().await = Some(sample);
+        self.notify.notify_one();
+    }
+
+    async fn next(&self) -> BillingSample {
+        loop {
+            // Arm the notification before checking the slot: a push racing
+            // between the check and the wait leaves a permit behind, so the
+            // writer cannot sleep on a sample it has already been given.
+            let notified = self.notify.notified();
+            if let Some(sample) = self.pending.lock().await.take() {
+                return sample;
+            }
+            notified.await;
+        }
+    }
+}
+
+async fn run_billing_writer(state: AppState, sink: BillingSink) {
+    loop {
+        let sample = sink.next().await;
+        if let Err(err) = apply_billing(&state, &sample).await {
+            // The speed columns and the WS frame were committed before this
+            // write; a failure here only delays accounting to the next
+            // sample, which re-reads the raw counters and spans the gap.
+            tracing::warn!(error = %err, "traffic billing failed");
+        }
+    }
+}
+
+async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Result<()> {
+    // Counters from a process that is already gone would bill that process's
+    // whole lifetime against the fresh zeroed baselines: drop the sample, the
+    // next one belongs to the new process.
+    if state.xray.start_epoch() != sample.epoch {
+        tracing::debug!("skipping billing sample from a previous xray process");
+        return Ok(());
+    }
+    let now = sample.now;
+    // Rows are re-read here (cheap indexed WAL reads) so the writer charges
+    // against current state; the display tick never waits for this.
+    let clients = db::clients::list_all(&state.db).await?;
+    let associations = db::client_inbounds::all(&state.db).await?;
+    let inbounds = db::inbounds::list(&state.db).await?;
+    let restart_on_client_disable = db::settings::ui_settings(&state.db)
+        .await
+        .ok()
+        .and_then(|settings| {
+            settings
+                .get("restartXrayOnClientDisable")
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(true);
+
     // Split every client's counters per attachment. The old code summed all
     // attachments into one baseline, so a single reset attachment corrupted
     // the deltas of the others. Samples are applied in one transaction that
@@ -351,23 +544,25 @@ async fn tick(
         .collect();
     let mut plans: Vec<ClientSamples> = Vec::with_capacity(clients.len());
     let mut legacy_deltas: HashMap<i64, (i64, i64)> = HashMap::new();
+    let mut moved: HashSet<String> = HashSet::new();
     for client in &clients {
         let ids = associations
             .get(&client.id)
             .cloned()
             .unwrap_or_else(|| vec![client.inbound_id]);
-        let samples = client_samples(&client.email, &ids, &masque_inbounds, &user_stats);
-        if !samples.is_empty() {
+        let client_attachment_samples =
+            client_samples(&client.email, &ids, &masque_inbounds, &sample.user_stats);
+        if !client_attachment_samples.is_empty() {
             plans.push(ClientSamples {
                 client_id: client.id,
-                samples,
+                samples: client_attachment_samples,
             });
             continue;
         }
 
         // Configs written outside the panel may meter the bare email. Keep
         // that path on the legacy aggregate columns.
-        if let Some(&(up, down)) = user_stats.get(&client.email) {
+        if let Some(&(up, down)) = sample.user_stats.get(&client.email) {
             let (delta_up, current_up) =
                 counter_delta(up, client.last_up).unwrap_or((0, client.last_up));
             let (delta_down, current_down) =
@@ -400,10 +595,6 @@ async fn tick(
     let applied = db::client_traffic::apply_tick(&state.db, &plans, now).await?;
 
     let mut need_restart = false;
-    // Emails whose counters moved this poll: 3x-ui unions this signal with the
-    // connection-based online list.
-    let mut moved_emails: HashSet<String> = HashSet::new();
-
     for client in &clients {
         let (delta_up, delta_down) = applied
             .get(&client.id)
@@ -411,29 +602,15 @@ async fn tick(
             .copied()
             .unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
-            moved_emails.insert(client.email.clone());
-        }
-        // Liveness and the speed columns follow the in-memory deltas: the
-        // billing deltas above need their DB write to succeed, the display
-        // must not.
-        let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
-        let display_down = display.client_down.get(&client.email).copied().unwrap_or(0);
-        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
-            ws_client_traffics.push(ClientTraffic {
-                email: &client.email,
-                up: display_up,
-                down: display_down,
-            });
-        }
-        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
-            client_speeds.insert(client.email.clone(), sample);
+            moved.insert(client.email.clone());
         }
 
         let used = client.up + delta_up + client.down + delta_down;
         let over_quota = client.total > 0 && used >= client.total;
         let expired = expired_at(client.expiry_time, now);
         let over_ip_limit = client.limit_ip > 0
-            && online_ip_counts
+            && sample
+                .online_ip_counts
                 .get(&client.email)
                 .is_some_and(|count| *count > client.limit_ip);
         if client.enable && (over_quota || expired || over_ip_limit) {
@@ -465,35 +642,16 @@ async fn tick(
         }
     }
 
-    let mut active_tags = Vec::new();
     for inbound in &inbounds {
         let (delta_up, delta_down, next_up, next_down) = direction_deltas(
-            inbound_up.get(&inbound.tag).copied(),
-            inbound_down.get(&inbound.tag).copied(),
+            sample.inbound_up.get(&inbound.tag).copied(),
+            sample.inbound_down.get(&inbound.tag).copied(),
             inbound.last_up,
             inbound.last_down,
         );
-        if delta_up > 0 || delta_down > 0 {
-            active_tags.push(inbound.tag.clone());
-        }
-        // Same split as the client loop: the frame and the speed column use
-        // the in-memory deltas, the DB rows above are billed independently.
-        let display_up = display.inbound_up.get(&inbound.tag).copied().unwrap_or(0);
-        let display_down = display.inbound_down.get(&inbound.tag).copied().unwrap_or(0);
-        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
-            ws_traffics.push(InboundTraffic {
-                tag: &inbound.tag,
-                up: display_up,
-                down: display_down,
-                is_inbound: true,
-                is_outbound: false,
-            });
-        }
-        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
-            inbound_speeds.insert(inbound.tag.clone(), sample);
-        }
 
-        if (inbound_up.contains_key(&inbound.tag) || inbound_down.contains_key(&inbound.tag))
+        if (sample.inbound_up.contains_key(&inbound.tag)
+            || sample.inbound_down.contains_key(&inbound.tag))
             && (delta_up > 0
                 || delta_down > 0
                 || next_up != inbound.last_up
@@ -519,33 +677,12 @@ async fn tick(
         }
     }
 
-    *state.traffic_speeds.lock().await = TrafficSpeeds {
-        inbounds: inbound_speeds,
-        clients: client_speeds,
-    };
-    // Client/inbound baselines are committed at this point; the next rate uses
-    // this sample as its start even if a later step (online view, outbound
-    // rows, history) fails.
-    *last_stats_at = Some(sample_at);
+    // Clients that moved bytes by the display engine's account count as seen
+    // too: their billing write may still be pending or may have failed.
+    moved.extend(sample.moved_emails.iter().cloned());
+    persist_online_heartbeat(state, &clients, &sample.online_emails, &moved, now).await?;
 
-    let online_emails =
-        refresh_online(state, now, grace, api_snapshot.as_ref(), &moved_emails).await;
-    refresh_active_inbounds(state, now, grace, &active_tags).await;
-
-    persist_online_heartbeat(state, &clients, &online_emails, &moved_emails, now).await?;
-
-    broadcast_traffic(
-        state,
-        frame_interval_ms,
-        &ws_traffics,
-        &ws_client_traffics,
-        &online_emails,
-        &clients,
-        now,
-    )
-    .await;
-
-    update_outbound_traffic(state, &outbound_up, &outbound_down).await?;
+    update_outbound_traffic(state, &sample.outbound_up, &sample.outbound_down).await?;
 
     if need_restart {
         if let Err(err) = service::apply(state).await {
@@ -1748,5 +1885,44 @@ mod tests {
             &client_emails,
         );
         assert_eq!(stats_last.len(), 2);
+    }
+
+    fn billing_sample(now: i64) -> BillingSample {
+        BillingSample {
+            epoch: 0,
+            now,
+            online_ip_counts: HashMap::new(),
+            user_stats: HashMap::new(),
+            inbound_up: HashMap::new(),
+            inbound_down: HashMap::new(),
+            outbound_up: HashMap::new(),
+            outbound_down: HashMap::new(),
+            moved_emails: HashSet::new(),
+            online_emails: HashSet::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn billing_slot_keeps_only_the_newest_sample() {
+        let sink = BillingSink::new();
+        sink.push(billing_sample(1)).await;
+        sink.push(billing_sample(2)).await;
+        // The writer was still busy applying an earlier round: the stale raw
+        // sample is replaced, not queued. Raw counters subsume older ones,
+        // so coalescing bills nothing twice and drops nothing.
+        assert_eq!(sink.next().await.now, 2);
+    }
+
+    #[tokio::test]
+    async fn billing_slot_wakes_a_waiter() {
+        let sink = BillingSink::new();
+        let waiter = {
+            let sink = sink.clone();
+            tokio::spawn(async move { sink.next().await.now })
+        };
+        // Works whether the waiter parked before or after this push: the
+        // notification stores a permit, and `next` arms it before checking.
+        sink.push(billing_sample(7)).await;
+        assert_eq!(waiter.await.unwrap(), 7);
     }
 }

@@ -1146,6 +1146,37 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   的实际比例；前端未改动，构建产物沿用 0.2.26。
 - 已随 0.2.27 发布（§2.44）。
 
+## 2.49 采样与计费解耦：串行计费 writer（2026-11-06，0.2.30）—— 已实现，未验证
+
+用户报「tunnel 协议的流量显示还是不准确」（v0.2.29 部署后），追问确认：
+累计量正常、**实时速度比 3x-ui 小很多**，轮询间隔设置是 **2 秒**。
+
+- 本地先排除 tunnel 特殊性：`tmp/diag-traffic-ws/tunnel_real.py`（真实
+  Xray 26.10.31 + rewriteAddress）PASS——8,388,608 字节下载 → 面板增量
+  8,388,725（+82 B 为 HTTP 头），WS 帧间隔 [2003,2015,2016]ms 稳定；
+  fake-stats 全链路（`diag.py`）帧 1.01/2.03 MB/s vs 真值 1.0/2.0 MB/s。
+- 对照 3x-ui 找差异（`tmp/xui-ref/`）：它的速度 = 增量 ÷ **硬编码 5s**，
+  且 DB 计费在独立串行 writer（`submitTrafficWrite`），统计 job 节拍不沾
+  写库。本面板 tick 是「采样 → 计费写 → 广播」串行：大部署 + poll=2s 时
+  一轮 DB 写拖十几秒 → 采样间隔被拉长 → 速度 = 十几秒平均 ≪ 瞬时值，
+  且一处写失败整帧丢失。用户拿 3x-ui/网卡监控做参照，遂显得"小很多"。
+- 重构（D055/G14）：`src/jobs.rs` tick 显示路径先跑完（traffic_speeds、
+  在线/活跃、WS 广播），随后把**原始计数器**打包 `BillingSample` 推入
+  `BillingSink`（单槽合并：`Arc<Mutex<Option<_>>>`+`Notify`，新样本取代
+  未落库旧样本；内存上界=一个样本，低内存约束）；独立 tokio 任务
+  `run_billing_writer` → `apply_billing` 串行执行全部计费 DB 写（attachment
+  基准比较、配额/到期/limitIp 禁用、reset_days 重置、last_online 心跳、
+  出站表、全局历史），失败只记 warn；样本 epoch 与当前进程不符整份丢弃
+  （防死进程累计对着清零基准重复计费）。在线/活跃的「本轮有流量」信号改
+  用显示增量。心跳持久化移出广播之前（广播不再被 DB 写挡住）。
+- 版本 0.2.29 → 0.2.30（Cargo.toml/Cargo.lock）。文档：D055、G14、
+  ARCHITECTURE §6 tick 流程、CLAUDE.md、release.yml body（0.2.30 四条）。
+- 验证：`cargo test` **121/121**（新增 2 个合并槽单测：最新胜出、唤醒
+  等待者）、clippy `--all-targets -D warnings` 零警告、fmt；真实 Xray
+  tunnel + fake-stats 两条 WS 链路 PASS。
+- **未验证**：真实 Linux/大面板现场（本轮症状场景）；需用户部署 0.2.30
+  确认速度列与网卡监控/3x-ui 的差距是否收敛到包头级（3–8%）。
+
 ## 2.48 v0.2.29 发布（2026-11-05）—— 已验证（GitHub Actions + 本地包级复核）
 
 - 版本：`Cargo.toml` / `Cargo.lock` = `0.2.29`；提交 `117b418`，tag

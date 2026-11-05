@@ -1305,3 +1305,40 @@
   匹配；二进制含 `LUMEN_VERSION=0.2.29` 与 `clientTrafficIntervalMs`；
   解包产物存 `tmp/pkg-0.2.29/`。
 - 未验证：真实 Linux/musl 大面板运行效果（等待用户部署反馈）。
+
+## 2026-11-06 01:30 — 采样与计费解耦：串行计费 writer（0.2.30，未发布）
+
+- 状态：已完成并本地验证 / 真实大面板现场未验证
+- 用户反馈链：「tunnel 协议的流量显示还是不准确」→ 追问确认「数值偏大/
+  偏小」+「rewriteAddress」+「最新核心」→「累积量会变，实时速度和服务器
+  监控不一样」→「3x-ui 大很多」→ 轮询间隔「2 秒」。
+- 本地复现排除 tunnel 特殊性：`tunnel_real.py`（真实 Xray）PASS——
+  8,388,608 B 下载 → 面板增量 8,388,725（+82 B 头），WS 帧间隔
+  [2003,2015,2016]ms 稳定、峰值 2.16 MB/s 与 REST 一致、空闲归零；
+  `diag.py`（fake-stats 1.0/2.0 MB/s）帧 1.01/2.03 MB/s。
+- 根因（对照 `tmp/xui-ref/`）：3x-ui 显示 = 增量 ÷ 硬编码 5s，且计费在
+  独立串行 writer（`submitTrafficWrite`）里，采样节拍不沾 DB；本面板
+  tick 串行「采样→逐行计费写→广播」，poll=2s + 大部署一轮 DB 写拖十几秒
+  → 采样间隔被拉长 → 本轮字节 ÷ 整个积压 = 十几秒平均 ≪ 瞬时值。
+- 改动（`src/jobs.rs`，D055/G14）：
+  - tick 显示路径先跑完：`traffic_speeds`、在线/活跃（信号改用显示增量）、
+    WS 广播；`last_stats_at` 在采样后即推进。
+  - `BillingSample`（epoch/now/online_ip_counts/user_stats/inbound_*
+    outbound_* 原始值/moved/online emails）→ `BillingSink` 单槽合并队列
+    （`Arc<Mutex<Option<_>>>`+`Notify`，next 先装 notified 再查槽；push
+    替换未落库旧样本——原始计数器互相包含，合并不重计不丢）。低内存：
+    常驻上界一个样本。
+  - `run_billing_writer`+`apply_billing`：重读 clients/inbounds，attachment
+    计费与 DB 基准比较、legacy 聚合路径、MASQUE 双计数、配额/到期/limitIp
+    禁用、reset_days/入站重置、`persist_online_heartbeat`、出站表、历史
+    （逻辑从旧 tick 尾部原样迁移）；失败只 warn；epoch≠当前进程整份丢弃。
+  - 失败路径（stats 全失败/epoch 中途变化）：广播先于心跳持久化，持久化
+    失败只 warn。
+- 版本 0.2.29 → 0.2.30（Cargo.toml/Cargo.lock）。文档：D055、G14、
+  ARCHITECTURE §6、CLAUDE.md、release.yml body（0.2.30 四条）、
+  CURRENT-STATUS §2.49/§2.50、NEXT-STEPS。
+- 验证：`cargo test` **121/121**（新增 2：槽只留最新、唤醒等待者）、
+  clippy `--all-targets -D warnings` 零警告、fmt；tunnel_real + diag.py
+  两条本地链路回归 PASS（前端未改动）。
+- 未验证：真实 Linux 大面板（本轮症状场景）；待用户部署 0.2.30 对照
+  3x-ui/网卡监控确认收敛到包头级差异（3–8%）。

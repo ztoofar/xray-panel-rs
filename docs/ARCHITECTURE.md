@@ -204,20 +204,32 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
      `display_deltas`，语义对齐 3x-ui `GetTraffic`（族首过只记基线；未见
      过/回退的计数器从 0 起算；族失败保留基线，下轮按跨度补算；全部族
      成功且 map > 2×live 时剪枝，键为紧凑 `DeltaKey` 省 ~30 字节/条）。
-     每个 `(client, inbound)` attachment 的**计费**增量与 DB 基准比较；
-     计数器回绕时把当前值视为新增量。缺失或负数样本保留原基准。
-  6. 在**一个 SQLite 事务**内写回客户端累计值、per-attachment 基准和
-     `last_online`；inbounds/outbound_traffics 同样按方向独立判断。这一
-     步失败只影响计费，不再拖垮显示（D054）。
+     每个 `(client, inbound)` attachment 的**计费**增量与 DB 基准比较在
+     writer 侧进行（见 6b）。
+  6. 显示路径**先于一切计费写**提交：速度写入 `traffic_speeds`、推进
+     `last_stats_at`、刷新在线/活跃集合并广播 WS 帧，然后把本轮**原始计数**
+     装进 `BillingSample` 推入合并槽。轮询节拍（两次采样间隔）从此不再受
+     DB 写耗时影响——旧的串行结构在大部署里把间隔拖到十几秒，本轮字节除
+     以整个积压时长，速度列远小于网卡监控（3x-ui 有串行 writer 不受此影响，
+     这也是用户侧它"准"而我们"小很多"的原因，见 D055/G14）。
+  6b. 串行计费 writer（独立 tokio 任务，对齐 3x-ui `submitTrafficWrite`）从
+     合并槽取最新样本（**原始计数器**：新样本取代未落库的旧样本，既不重复
+     计费也不掉字节），重读 clients/inbounds，每个 `(client, inbound)`
+     attachment 的计费增量与 DB 基准比较（回绕时当前值视为新增量；缺失或
+     负数样本保留原基准），在**一个 SQLite 事务**内写回客户端累计值、
+     per-attachment 基准与 `last_online`；inbounds/outbound_traffics 按方向
+     独立判断；执行配额、到期、`limitIp` 超限禁用与 `reset_days`/入站定时
+     重置（**重置只清数据库累计值**，不清 Xray 计数器和 `last_*` 基准，与
+     3x-ui 一致），最后更新出站表与全局历史。writer 失败只记 warn，下一轮
+     样本按跨度补算，牵连不到显示；样本 epoch 与当前进程不符（核心已重启）
+     时整份丢弃，不把死进程的累计计进清零后的基准。
   7. 用本轮显示增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
      每个客户端邮箱的字节/秒，写入 `AppState.traffic_speeds`；空闲实体没有条目，
      UI 因此清空速度。`/panel/api/inbounds/list/slim` 返回 `upSpeed/downSpeed`，
      客户端列表在 `traffic` 内返回同名速率。
-  8. 执行配额、到期、`limitIp` 超限禁用；按 `reset_days`/入站定时策略重置。
-     **重置只清数据库累计值**（`up/down`），不清 Xray 计数器和 `last_*` 基准，
-     与 3x-ui 一致；随后只计新字节，重置 RPC 失败或并发也不会重复计费。
-  9. 更新在线集合（连接信号 ∪ 本轮流量信号），窗口 = `2×poll` 并限制在 20–60 秒。
-  10. 记录全局流量历史（最多 240 点）。
+  8. 更新在线集合（连接信号 ∪ 本轮显示流量信号），窗口 = `2×poll` 并限制在
+     20–60 秒；`last_online` 心跳由 writer 落库。统计失败轮广播空增量清
+     速度（D054）。
 - Xray 子进程**新启动**时（supervisor 的 `start_epoch` 增加，首次启动也算），
   先在一个事务里把 clients/inbounds/outbound_traffics/client_inbound_traffic
   的 `last_*` 基准清零（不动累计 `up/down`），再开始采样；内存显示基线与
