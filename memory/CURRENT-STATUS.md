@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-05 22:10（本地时间）
+> 最后更新：2026-11-05 23:00（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,10 +8,11 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.27`（未打包） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.26`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,877 字节**，asset digest `sha256:9c223ffa...ae2f`；Release 页面只显示更新内容 |
+| `Cargo.toml` 版本 | `0.2.27`（发布 v0.2.27） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.27`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,387 字节**，asset digest `sha256:d0209122...138b`；Release 页面只显示更新内容 |
 | 当前源码 | `0.2.27`：实时 WS 帧改用真实采样间隔做除数，修复慢 tick 下入站/客户端速度按比例虚高；首轮无速率不广播。详见 §2.43 |
-| 上一版 | GitHub Release `v0.2.25`：tar 5,516,624 字节，asset digest `sha256:d9128d0c...92a5` |
+| 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
+| 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
 | 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
 | 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
 | 0.2.24 SHA256 | `88471d1f81d1e287c069c10b2753702dc2da7b177fa27cd3bb7cecde897330eb`（tar.gz，GitHub asset digest） |
@@ -20,9 +21,9 @@
 | 0.2.21 SHA256 | `143e27bfdc28fa745f433c54337c52c17daa81709d05d2296236639bf47f101a`（tar.gz，GitHub asset digest）；包内二进制 SHA256 `997fb41ace44b6d69f4fa1502e1aae0aedb9dbffd2d8b9d44329f208cfe3dcdb` |
 | 0.2.20 SHA256 | `61f1a69f4211cc0b7aab095e4a6895dae689f87ade20f8448fead03e0f909269`（tar.gz）；包内 `SHA256SUMS` 校验解压后的二进制 |
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
-| 前端构建产物 | `web/dist/` 已在 2026-11-05 02:1x 由当前 `frontend-3xui/` 源码重建（启用实时 WS） |
+| 前端构建产物 | `web/dist/` 已在 2026-11-05 22:4x 由当前 `frontend-3xui/` 源码重建（本次前端源码无改动） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.26 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
+| musl 产物 | 0.2.27 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -1107,7 +1108,7 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 `email/up/down`、camelCase 其余字段）。
 **未验证**：真实 Linux/musl 长时运行 RSS、超大客户端规模下的真实内存曲线。
 
-## 2.43 实时速度除数修复（2026-11-05，0.2.27）—— fake e2e 验证，未打包
+## 2.43 实时速度除数修复（2026-11-05，0.2.27）—— 已验证，已随 0.2.27 发布
 
 用户反馈“入站的实时速度还是显示不准确”。定位到 WS 帧的除数问题：
 
@@ -1143,7 +1144,25 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
     空闲归零。证明无客户端绑定也能按入站计数器显示实时速度。
 - **未验证**：真实 Linux/musl、真实公网网络抖动、超大客户端数下 tick 超时
   的实际比例；前端未改动，构建产物沿用 0.2.26。
-- 未打包、未 bump 发布（`Cargo.toml`/`Cargo.lock` 已按规则升到 `0.2.27`）。
+- 已随 0.2.27 发布（§2.44）。
+
+## 2.44 v0.2.27 发布（2026-11-05）—— 已验证（GitHub Actions）
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.27`；提交 `869facb`，tag `v0.2.27`。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.27>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,387 字节**，
+  GitHub asset digest
+  `sha256:d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`。
+- Actions：main CI run `42042345225` 成功；release run `42042854755` 成功。
+- 发布前验证：`cargo test` **114/114**、clippy 零警告、fmt、前端构建；
+  慢 tick 诊断（3s RPC/2s 轮询）修复前 1.5× 虚高、修复后 0.998/1.995 MB/s；
+  fake e2e 13/13、UI+WS 10/10、真实 Xray 15/15；真实 tunnel（dokodemo）
+  零客户端入站 8 MiB，REST/WS 峰值 ~2,160,527 B/s。
+- 本机下载发布包被网络重置（`curl: (35) Recv failure: Connection was reset`），
+  未做本地解包/`sha256sum -c` 复核；资产大小与 digest 来自 GitHub API，
+  构建与包内校验由 release workflow 完成。
+- **未验证**：真实 Linux/musl 运行；tunnel followRedirect/TPROXY 模式；
+  其余入站协议的真实流量统计；超大客户端数导致 tick 超时的真实比例。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

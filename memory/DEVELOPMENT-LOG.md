@@ -1203,3 +1203,16 @@
   UI+WS 10/10、真实 Xray 15/15（max speed 2,156,219 B/s）。
 - 未验证：真实 Linux/musl、真实公网抖动、超大客户端数下 tick 超时的实际比例；
   前端源码未改动，`web/dist` 沿用 0.2.26 构建。
+
+## 2026-11-05 23:00 — v0.2.27 发布
+
+- 版本 0.2.27；提交 `869facb`，tag `v0.2.27`。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.27>
+  资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,518,387 字节，
+  GitHub asset digest
+  `sha256:d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`。
+- Actions：main CI run `42042345225` 成功；release run `42042854755` 成功。
+- 内容：WS 帧改用真实采样间隔（修复慢 tick 下实时速度虚高）、首轮无速率
+  不广播、Xray 采样期间重启时清空速度；另附 tunnel 零客户端真实流量验证。
+- 本机下载发布包被网络重置，未做本地解包复核；资产大小/digest 来自
+  GitHub API，包内 `SHA256SUMS` 与 `file` 由 release workflow 输出。
