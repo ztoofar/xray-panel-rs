@@ -1249,3 +1249,44 @@
   `LUMEN_VERSION=0.2.28` 与 `clientTrafficIntervalMs`；解包产物存
   `tmp/pkg-0.2.28/`。
 - 未验证：真实 Linux/musl 运行；真实断线场景（代理掐长连接/睡眠恢复）。
+
+## 2026-11-05 23:40 — 按 3x-ui 模型重写实时流量取数（0.2.29，未发布）
+
+- 状态：已完成并本地验证 / 真实部署未验证
+- 用户反馈：0.2.28 部署后「还是不准确，又是大流量面板都没有显示」，
+  并明确指令「看 3x-ui 是怎么做的，把他的代码用 Rust 重写」。
+- 上游对照（代理拉取，存 `tmp/xui-ref/`；关键文件
+  `internal/xray/api.go` GetTraffic 1028–1135 行）：
+  - gRPC 接收上限 64 MiB（`maxStatsReplyBytes`），注释明说 ~45k 客户端
+    的统计回复可单独超过默认 4 MiB —— 整轮失败即速度全空；
+  - `statsFamilies = ["user>>>", "inbound>>>", "outbound>>>"]` 三次
+    QueryStats，单族失败只 warning、其余族继续；
+  - `StatsLastValues` 内存基线 + `statsBaselined` 族首过标记：未见/
+    回退计数器从 0 起算；族失败保留基线；全部族成功且 map > 2×live 时
+    才剪枝。
+- Rust 重写：
+  - `src/xray/stats.rs`：`MAX_STATS_REPLY_BYTES = 64 << 20`（connect 时
+    `max_decoding_message_size`）；新增 `query_families()` 返回
+    `Vec<FamilyStats>{family, stats, error}`，全部族失败才 Err 并断线
+    重连；单族 RPC 前缀过滤（核心全名匹配，3x-ui 同款防御）；
+    `query()` 移除，连接逻辑收敛进 `ensure_connected`。
+  - `src/jobs.rs`：spawn 持有 `stats_last: HashMap<DeltaKey, i64>` 与
+    `stats_baselined: HashSet<&'static str>`；Xray start_epoch 增加时
+    两者与 DB 基线一起清零（重连后的首个采样只建基线）。新增
+    `display_deltas()` —— WS 帧 `traffics`/`clientTraffics`、
+    `AppState.traffic_speeds`、本轮流量信号（moved_emails/active_tags）
+    改用其增量；DB 计费（`apply_tick`/`add_traffic`/配额到期执行/
+    outbound 累计/history）保持原事务路径不动。
+    低内存硬约束：`DeltaKey{kind:u8, uplink:bool, key:String}` 代替完整
+    stat 名（省 ~30B/条）；只记录 traffic 计数器；`2×live` 剪枝；
+    0 增量不入表；无订阅者不建帧（0.2.26 沿用）。
+  - `parse_user_stats` 改为迭代器入参；计费端 in/out 原始值表按族填充
+    （失败族计费同样跳过，与显示口径一致）。
+- 版本 0.2.28 → 0.2.29（Cargo.toml/Cargo.lock）。文档：
+  `docs/DECISIONS.md` D054、`docs/KNOWN-ISSUES.md` G13、
+  `docs/ARCHITECTURE.md` §6 tick 流程重写、`CLAUDE.md` 版本说明、
+  `release.yml` body（更新内容改 0.2.29 四条）。
+- 验证：`cargo test` **119/119**（新增 5：首过只建基线、未见/回退从 0、
+  族失败保基线并按跨度补算、身份折叠/裸邮箱回退、剪枝与失败例外）、
+  clippy `--all-targets -D warnings` 零警告、`cargo fmt --check`。
+- 未验证：真实 Linux/大面板部署（本次修复的目标场景）；前端未改动。

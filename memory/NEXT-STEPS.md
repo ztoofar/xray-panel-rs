@@ -18,7 +18,7 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 114/114、clippy 零警告、Cargo 版本 `0.2.28`、
+   期望：`cargo test` 119/119、clippy 零警告、Cargo 版本 `0.2.29`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
@@ -26,18 +26,22 @@
 ## 当前状态（2026-11-05 深夜）
 
 - 当前发布：GitHub **`v0.2.28`**（tag → `5e376a1`，资产/运行记录见
-  `CURRENT-STATUS.md` §2.46）。内容：入站页 WS 速度过期保护——WS 半途
-  断开超过 2×采样间隔（≤2 分钟）清空冻结速度，回退 REST 轮询速率；
-  修复 0.2.25 起遗留的入站速度列断线冻结（`useClients.ts` 有该机制而
-  `useInbounds.ts` 缺失）。详见 §2.45、DECISIONS D053、KNOWN-ISSUES G12。
-- 包级复核已完成：包 sha256 与 GitHub digest、包内 `SHA256SUMS`、
-  二进制 `LUMEN_VERSION=0.2.28` 均一致。
-- 验证：`cargo test` **114/114**、clippy 零警告、fmt、前端 `npm run build`
-  （Node 26，产物已嵌入 `web/dist/`）。
-- **未验证**：真实 Linux/musl 运行与断线场景（代理掐长连接/睡眠恢复）；
-  用户现场若 WS 存活时仍有幅度偏差，用 DevTools `__diagDump` 采集
-  WS 帧 + REST 速率 + 系统状态网卡吞吐三方数据后再定位。
-- 上一发布：`v0.2.27`（§2.44、D052）：WS 帧除数改真实采样间隔。
+  `CURRENT-STATUS.md` §2.46）。内容：入站页 WS 速度过期保护。用户部署后
+  仍报「大流量面板速度没有显示」→ 0.2.29 按 3x-ui 模型重写实时流量取数
+  （§2.47、DECISIONS D054、KNOWN-ISSUES G13）：
+  - `src/xray/stats.rs`：gRPC 接收上限 64 MiB（原 4 MiB 默认在超大面板
+    被单个回复撑爆→整轮失败）、`query_families()` 分族查询（单族失败
+    不连带）；
+  - `src/jobs.rs`：内存基线引擎 `display_deltas`（`DeltaKey` 紧凑键、
+    族首过、未见/回退从 0、`2×live` 剪枝）供 WS 帧/`traffic_speeds`/
+    本轮流量信号；DB 计费路径不动；
+  - 低内存硬约束落实：只记录 traffic 计数器、紧凑键省 ~30B/条、
+    无订阅者不建帧。
+- 源码版本 **0.2.29**（未打包）；验证：`cargo test` **119/119**、clippy
+  零警告、fmt；前端未改动。
+- **未验证**：真实 Linux/大面板部署——0.2.29 的目标场景，发布后需用户
+  现场确认速度列恢复。
+- 上一发布：`v0.2.28`（本机 0.2.28 包级复核完成，digest 见 §2.46）。
 
 ## 下一步（按用户任务二选一）
 

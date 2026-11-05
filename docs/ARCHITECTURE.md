@@ -192,24 +192,36 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
    中调用；服务端优先访问 zxinc（纯真库），失败回退 ipwho.is。设置页配置
    `ipDataCloudKey` 后，同时并行查询 IP数据云，结果放在 `ipDataCloud` 字段，
    失败只记 `ipDataCloudError`，不影响纯真结果。
-  3. `QueryStats("", false)` 拿累计计数，按统计身份拆成
-     `identity -> (uplink, downlink)`；缺失的方向保留为 `None`，不当成 0。
-  4. 每个 `(client, inbound)` attachment 单独计算增量并与自己的基准比较；
+  3. `query_families()`：按族各一次 `QueryStats`（`user>>>`/`inbound>>>`/
+     `outbound>>>`，`regexp:false`+前缀过滤；族名对齐 3x-ui `statsFamilies`）。
+     仅**全部**族失败才走失败路径；单族失败记 debug 日志，其余族照常。
+     gRPC 接收上限设为 64 MiB（3x-ui 同款：默认 4 MiB 会被超大面板的单个
+     统计回复撑爆，导致整轮失败、速度全空）。
+  4. 每个统计身份拆成 `identity -> (uplink, downlink)`；缺失的方向保留为
+     `None`，不当成 0。
+  5. **显示与计费分离**：显示增量（WS 帧 `traffics`/`clientTraffics`、
+     `AppState.traffic_speeds`、本轮流量信号）来自内存基线引擎
+     `display_deltas`，语义对齐 3x-ui `GetTraffic`（族首过只记基线；未见
+     过/回退的计数器从 0 起算；族失败保留基线，下轮按跨度补算；全部族
+     成功且 map > 2×live 时剪枝，键为紧凑 `DeltaKey` 省 ~30 字节/条）。
+     每个 `(client, inbound)` attachment 的**计费**增量与 DB 基准比较；
      计数器回绕时把当前值视为新增量。缺失或负数样本保留原基准。
-  5. 在**一个 SQLite 事务**内写回客户端累计值、per-attachment 基准和
-     `last_online`；inbounds/outbound_traffics 同样按方向独立判断。
-  6. 用本轮增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
+  6. 在**一个 SQLite 事务**内写回客户端累计值、per-attachment 基准和
+     `last_online`；inbounds/outbound_traffics 同样按方向独立判断。这一
+     步失败只影响计费，不再拖垮显示（D054）。
+  7. 用本轮显示增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
      每个客户端邮箱的字节/秒，写入 `AppState.traffic_speeds`；空闲实体没有条目，
      UI 因此清空速度。`/panel/api/inbounds/list/slim` 返回 `upSpeed/downSpeed`，
      客户端列表在 `traffic` 内返回同名速率。
-  7. 执行配额、到期、`limitIp` 超限禁用；按 `reset_days`/入站定时策略重置。
+  8. 执行配额、到期、`limitIp` 超限禁用；按 `reset_days`/入站定时策略重置。
      **重置只清数据库累计值**（`up/down`），不清 Xray 计数器和 `last_*` 基准，
      与 3x-ui 一致；随后只计新字节，重置 RPC 失败或并发也不会重复计费。
-  8. 更新在线集合（连接信号 ∪ 本轮流量信号），窗口 = `2×poll` 并限制在 20–60 秒。
-  9. 记录全局流量历史（最多 240 点）。
+  9. 更新在线集合（连接信号 ∪ 本轮流量信号），窗口 = `2×poll` 并限制在 20–60 秒。
+  10. 记录全局流量历史（最多 240 点）。
 - Xray 子进程**新启动**时（supervisor 的 `start_epoch` 增加，首次启动也算），
   先在一个事务里把 clients/inbounds/outbound_traffics/client_inbound_traffic
-  的 `last_*` 基准清零（不动累计 `up/down`），再开始采样。generation 变化
+  的 `last_*` 基准清零（不动累计 `up/down`），再开始采样；内存显示基线与
+  各族首过标记同时清空（新计数器属于另一进程）。generation 变化
   （启动或停止）则清空在线集合并让在线 API 探测缓存失效。这样新进程的计数器
   不会被拿去减旧基准；若面板启动时没有子进程（`start_epoch == 0`）则保留基准，
   兼容仍存活的残留进程。

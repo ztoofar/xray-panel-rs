@@ -754,3 +754,43 @@
   刷新；WS 恢复后下一帧立即接管。正常连接期间行为不变（每帧都重置计时）。
   版本 0.2.27 → 0.2.28（已实现，未在真实部署上验证；本地自测见
   `DEVELOPMENT-LOG.md`）。
+
+## D054 按 3x-ui 模型重写实时流量取数（64 MiB 上限 / 分族查询 / 内存基线）
+- 日期：2026-11-05
+- 背景：v0.2.28 部署后用户仍报「大流量时面板没有任何速度显示」。逐行对照
+  上游 3x-ui 的取数实现（`internal/xray/api.go` 的 `GetTraffic`）发现三项
+  结构性差异：**(a)** 上游把 gRPC 接收上限从默认 4 MiB 提到 64 MiB，注释
+  明说 ~45k 客户端的统计回复可单独达到 4 MiB，超限则**整轮失败**——本面板
+  `StatsClient` 从未设置该上限，与大流量面板速度全空的症状吻合；**(b)**
+  上游按 `user>>>` / `inbound>>>` / `outbound>>>` 分三次 QueryStats，单族
+  失败只记 warning、其余族照常计数，本面板单次 `query("")` 任一失败则整轮
+  无数据；**(c)** 上游把显示增量基线放在内存（`StatsLastValues`），每次
+  成功查询即推进、与 DB 完全解耦，本面板显示增量复用 DB `last_up/last_down`
+  （只在计费事务成功后推进），DB 写失败会连带清掉速度列与 WS 帧。
+- 决策（对齐上游语义，Rust 重写）：
+  1. `StatsClient::connect` 显式 `max_decoding_message_size(64 MiB)`
+     （`MAX_STATS_REPLY_BYTES = 64 << 20`，对端是本机回环上的自家核心）。
+  2. 新增 `query_families()`：三个族各一次 QueryStats（`regexp:false`、
+     前缀过滤），返回 `Vec<FamilyStats>`（族 + stats + 可选 error）；仅在
+     **全部**族失败时返回 Err 走既有 tick 失败路径，部分失败由 tick 记
+     debug 后用其余族继续本轮。
+  3. 新内存基线引擎 `display_deltas`（3x-ui `StatsLastValues` +
+     `statsBaselined` 语义）：族首过只记录基线不发增量；未见过或回退的
+     计数器从 0 起算（不掉流量）；族失败保留基线、下轮成功按跨度补算；
+     仅在全部族成功且 map > 2×live 时剪枝（热路径零分配）。WS 帧
+     `traffics`/`clientTraffics`、`AppState.traffic_speeds`、在线/活跃
+     判定改用该引擎增量；**DB 计费路径（`apply_tick`、`add_traffic`、
+     配额/到期/重置执行）保持原状不动**，计费正确性不受影响。
+  4. 低内存约束（硬性）：基线 map 键用紧凑 `DeltaKey{kind, uplink, key}`
+     而非完整 stat 名（省去 ~30 字节固定文本/条目）；只记录 traffic 计数
+     器；`2×live` 阈值剪枝防膨胀；map 大小以**现存 traffic 计数器**为上界
+     （≈ 每 (attachment, 方向) 一条，几十字节/条）。WS 帧/`traffic_speeds`
+     的分配结构沿用 0.2.26 的优化（无订阅者不建帧）。
+- 备选：仅修 (a) 不动结构——最小改动，但 (b)(c) 是上游已被生产验证的
+  鲁棒性来源，且用户明确要求「把 3x-ui 的代码用 Rust 重写」，故按完整
+  结构移植；显示与计费保持解耦（DB 基线仍为计费路径，与上游把 DB 写入
+  放在 `submitTrafficWrite` 序列化事务的思路一致）。
+- 后果：大客户端/大流量面板不再因单回复超 4 MiB 或单族失败而整体无速度；
+  显示速度与 DB 写成败解耦。前端 WS 帧协议与 0.2.25 完全一致（字段、间隔、
+  语义），无需前端改动。版本 0.2.28 → 0.2.29（已经 `cargo test` 119/119、
+  clippy 零警告、fmt；**未在真实 Linux/大面板部署上验证**，见 G13）。

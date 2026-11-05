@@ -40,6 +40,20 @@ pub struct OnlineUser {
 const ONLINE_API_UNKNOWN: u8 = 0;
 const ONLINE_API_SUPPORTED: u8 = 1;
 const ONLINE_API_UNSUPPORTED: u8 = 2;
+// 3x-ui replaces gRPC's 4 MiB receive default with 64 MiB because a stats
+// reply of about 45k clients reaches the default on its own, and a reply over
+// the cap fails wholesale — every traffic number on the panel disappears at
+// once. The peer is the panel's own core on loopback, so the cap is bounded.
+const MAX_STATS_REPLY_BYTES: usize = 64 << 20;
+
+// 3x-ui polls the three stat families with one QueryStats each: a reply that
+// fails for one family (e.g. an outbound tag the core chokes on) must not take
+// every client's counters down with it. The core matches the pattern anywhere
+// in the stat name, so replies are filtered back to the family prefix.
+pub const FAMILY_USER: &str = "user>>>";
+pub const FAMILY_INBOUND: &str = "inbound>>>";
+pub const FAMILY_OUTBOUND: &str = "outbound>>>";
+pub const STATS_FAMILIES: [&str; 3] = [FAMILY_USER, FAMILY_INBOUND, FAMILY_OUTBOUND];
 // Old cores answer Unimplemented on every call; remember that instead of
 // probing each tick, but re-check occasionally so an upgraded core is noticed
 // even when a restart leaves the gRPC channel alive.
@@ -55,6 +69,52 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+/// One stats family's reply. `error` is set when that family could not be
+/// queried; the other families still report and keep their counter baselines.
+#[derive(Debug)]
+pub struct FamilyStats {
+    pub family: &'static str,
+    pub stats: Vec<Stat>,
+    pub error: Option<String>,
+}
+
+impl FamilyStats {
+    /// The family prefix without the separator (`"user>>>"` → `"user"`).
+    pub fn kind(&self) -> &'static str {
+        match self.family {
+            FAMILY_USER => "user",
+            FAMILY_INBOUND => "inbound",
+            _ => "outbound",
+        }
+    }
+}
+
+// One QueryStats RPC. Counters are never reset (reset: false, like 3x-ui);
+// the panel derives deltas from stored baselines instead, so a failed or
+// racing reset can never make the same bytes count twice.
+async fn query_family(
+    client: &mut StatsServiceClient<Channel>,
+    family: &str,
+) -> anyhow::Result<Vec<Stat>> {
+    let request = QueryStatsRequest {
+        pattern: family.to_string(),
+        reset: false,
+        regexp: false,
+    };
+    match tokio::time::timeout(STATS_RPC_TIMEOUT, client.query_stats(request)).await {
+        Ok(Ok(response)) => Ok(response
+            .into_inner()
+            .stat
+            .into_iter()
+            // The core matches the pattern anywhere in the name; the prefix
+            // keeps the reply to one family (3x-ui filters the same way).
+            .filter(|stat| stat.name.starts_with(family))
+            .collect()),
+        Ok(Err(status)) => Err(anyhow!("统计查询失败：{status}")),
+        Err(_) => Err(anyhow!("统计查询超时")),
+    }
 }
 
 #[derive(Clone)]
@@ -82,13 +142,14 @@ impl StatsClient {
     // starts once a channel exists. A stalled connect delays every tick (and
     // with it the online view), which the per-call timeout alone does not fix.
     async fn connect(&self) -> anyhow::Result<StatsServiceClient<Channel>> {
-        tokio::time::timeout(
+        let client = tokio::time::timeout(
             STATS_CONNECT_TIMEOUT,
             StatsServiceClient::connect(self.endpoint.clone()),
         )
         .await
         .map_err(|_| anyhow!("连接 Xray 统计接口 {} 超时", self.endpoint))?
-        .with_context(|| format!("连接 Xray 统计接口 {} 失败", self.endpoint))
+        .with_context(|| format!("连接 Xray 统计接口 {} 失败", self.endpoint))?;
+        Ok(client.max_decoding_message_size(MAX_STATS_REPLY_BYTES))
     }
 
     /// Forget what we know about the online-stats RPC. Called when Xray
@@ -99,39 +160,56 @@ impl StatsClient {
         self.online_api_checked_at.store(0, Ordering::Relaxed);
     }
 
-    // Counters are never reset through this RPC (3x-ui does the same). The
-    // panel derives deltas from stored baselines instead, so a failed or
-    // racing reset can never make the same bytes count twice.
-    pub async fn query(&self, pattern: &str) -> anyhow::Result<Vec<Stat>> {
+    /// Query each stats family separately (3x-ui GetTraffic): one family's
+    /// failure leaves the other families live, and a failed family keeps its
+    /// counter baselines intact for the next round. Returns `Err` only when
+    /// *every* family failed, which is the tick failure path; partial failures
+    /// come back per family in `FamilyStats`.
+    pub async fn query_families(&self) -> anyhow::Result<Vec<FamilyStats>> {
         let mut guard = self.client.lock().await;
+        self.ensure_connected(&mut guard).await?;
+        let client = guard.as_mut().expect("client connected");
+        let mut out = Vec::with_capacity(STATS_FAMILIES.len());
+        let mut failures = 0;
+        for family in STATS_FAMILIES {
+            match query_family(client, family).await {
+                Ok(stats) => out.push(FamilyStats {
+                    family,
+                    stats,
+                    error: None,
+                }),
+                Err(err) => {
+                    failures += 1;
+                    out.push(FamilyStats {
+                        family,
+                        stats: Vec::new(),
+                        error: Some(format!("{err:#}")),
+                    });
+                }
+            }
+        }
+        if failures == STATS_FAMILIES.len() {
+            // Nothing answered: the channel is dead (Xray restarted or gone).
+            // Reconnect on the next tick instead of retrying a stale one.
+            *guard = None;
+            return Err(anyhow!("Xray 统计查询全部失败"));
+        }
+        Ok(out)
+    }
+
+    async fn ensure_connected(
+        &self,
+        guard: &mut Option<StatsServiceClient<Channel>>,
+    ) -> anyhow::Result<()> {
         if guard.is_none() {
             let client = self.connect().await?;
             *guard = Some(client);
-            // A fresh channel can mean a new xray process (and maybe a new core),
-            // so re-probe the online-stats RPC.
+            // A fresh channel can mean a new xray process (and maybe a new
+            // core), so re-probe the online-stats RPC.
             self.online_api.store(ONLINE_API_UNKNOWN, Ordering::Relaxed);
             self.online_api_checked_at.store(0, Ordering::Relaxed);
         }
-
-        let client = guard.as_mut().expect("client connected");
-        let request = QueryStatsRequest {
-            pattern: pattern.to_string(),
-            reset: false,
-            regexp: false,
-        };
-
-        match tokio::time::timeout(STATS_RPC_TIMEOUT, client.query_stats(request)).await {
-            Ok(Ok(response)) => Ok(response.into_inner().stat),
-            Ok(Err(status)) => {
-                // Drop the channel so the next poll reconnects after an xray restart.
-                *guard = None;
-                Err(anyhow!("统计查询失败：{status}"))
-            }
-            Err(_) => {
-                *guard = None;
-                Err(anyhow!("统计查询超时"))
-            }
-        }
+        Ok(())
     }
 
     /// Connection-level online users (email + source IPs), like 3x-ui's
@@ -146,11 +224,7 @@ impl StatsClient {
             return Ok(None);
         }
         let mut guard = self.client.lock().await;
-        if guard.is_none() {
-            let client = self.connect().await?;
-            *guard = Some(client);
-            self.online_api.store(ONLINE_API_UNKNOWN, Ordering::Relaxed);
-        }
+        self.ensure_connected(&mut guard).await?;
         let client = guard.as_mut().expect("client connected");
         let request = GetUsersStatsRequest {
             include_traffic: false,

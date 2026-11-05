@@ -15,7 +15,7 @@ use crate::{
     service,
     state::{AppState, SpeedSample, TrafficPoint, TrafficSpeeds},
     traffic::counter_delta,
-    xray::identity::stat_email,
+    xray::{identity::stat_email, stats::FamilyStats},
 };
 
 const MAX_HISTORY: usize = 240;
@@ -42,6 +42,16 @@ pub fn spawn(state: AppState) {
         // configured poll length: a slow tick or a missed RPC must not skew
         // the speed, and a wall-clock jump must not either.
         let mut last_stats_at: Option<std::time::Instant> = None;
+        // 3x-ui keeps the live-display delta baseline in memory
+        // (XrayAPI.StatsLastValues): it advances on every successful query and
+        // is decoupled from the database, so a failed DB billing write can
+        // never blank the speed columns or the WS frame. The DB baselines
+        // stay authoritative for billing on their own transactional path.
+        let mut stats_last: HashMap<DeltaKey, i64> = HashMap::new();
+        // Per-family first-pass flag (3x-ui statsBaselined): the first
+        // successful sample of a family only records baselines, since the
+        // counters may already hold traffic the panel cannot attribute.
+        let mut stats_baselined: HashSet<&'static str> = HashSet::new();
         loop {
             // Xray restarts (manual, config apply, crash) drop every live
             // connection. 3x-ui keeps its online map inside the Xray process;
@@ -68,6 +78,11 @@ pub fn spawn(state: AppState) {
                         // The first sample after a restart only establishes the
                         // new process's counters; there is no interval to rate.
                         last_stats_at = None;
+                        // The new counters belong to another process: the
+                        // in-memory display baseline (and the family
+                        // first-pass flags) restart with them.
+                        stats_last.clear();
+                        stats_baselined.clear();
                         tracing::info!(epoch, "xray started; traffic baselines reset");
                     }
                     Err(err) => {
@@ -83,7 +98,15 @@ pub fn spawn(state: AppState) {
             // Tick before sleeping so a freshly started panel knows who is
             // online without waiting a full interval first.
             let started = std::time::Instant::now();
-            if let Err(err) = tick(&state, secs, &mut last_stats_at).await {
+            if let Err(err) = tick(
+                &state,
+                secs,
+                &mut last_stats_at,
+                &mut stats_last,
+                &mut stats_baselined,
+            )
+            .await
+            {
                 tracing::warn!(error = %err, "traffic tick failed");
                 // Never leave a rate from an earlier, unrelated sample on the
                 // panel after a failed accounting round.
@@ -128,6 +151,8 @@ async fn tick(
     state: &AppState,
     poll_secs: u64,
     last_stats_at: &mut Option<std::time::Instant>,
+    stats_last: &mut HashMap<DeltaKey, i64>,
+    stats_baselined: &mut HashSet<&'static str>,
 ) -> anyhow::Result<()> {
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
@@ -174,8 +199,11 @@ async fn tick(
         .unwrap_or_default();
 
     let sample_at = std::time::Instant::now();
-    let stats = match state.stats.query("").await {
-        Ok(stats) => stats,
+    // One QueryStats per family (3x-ui): a failing family leaves the others
+    // live. An outbound tag with a name the core chokes on used to blank every
+    // client's counters for the round.
+    let families = match state.stats.query_families().await {
+        Ok(families) => families,
         Err(err) => {
             tracing::debug!(error = %err, "xray stats unavailable");
             // A rate from an older sample would be stale; drop it instead of
@@ -202,6 +230,13 @@ async fn tick(
             return Ok(());
         }
     };
+    for family in &families {
+        if let Some(error) = &family.error {
+            // Partial failure: the other families keep counting this round and
+            // the failed one keeps its baselines for the next success.
+            tracing::debug!(family = family.family, error, "stats family unavailable");
+        }
+    }
     // The supervisor may restart Xray between the epoch check at the top of
     // the loop and this query. Those counters belong to another process than
     // the stored baselines; billing them would misreport one window. Discard
@@ -250,6 +285,18 @@ async fn tick(
     // browser divides them by `clientTrafficIntervalMs`.
     let mut ws_traffics: Vec<InboundTraffic<'_>> = Vec::new();
     let mut ws_client_traffics: Vec<ClientTraffic<'_>> = Vec::new();
+    // Live display deltas (WS frame + traffic_speeds) come from the in-memory
+    // baseline engine (3x-ui StatsLastValues), not from the DB: DB baselines
+    // only advance on successful billing writes, so a failed write can never
+    // stall or blank the speed columns. The in-memory baseline advances on
+    // every successful stats query instead.
+    let display = display_deltas(
+        &families,
+        stats_last,
+        stats_baselined,
+        &email_by_identity,
+        &client_emails,
+    );
     let restart_on_client_disable = db::settings::ui_settings(&state.db)
         .await
         .ok()
@@ -260,24 +307,31 @@ async fn tick(
         })
         .unwrap_or(true);
 
-    let user_stats = parse_user_stats(&stats);
+    let user_stats = parse_user_stats(
+        families
+            .iter()
+            .filter(|family| family.error.is_none() && family.kind() == "user")
+            .flat_map(|family| family.stats.iter()),
+    );
     let mut inbound_up: HashMap<String, i64> = HashMap::new();
     let mut inbound_down: HashMap<String, i64> = HashMap::new();
     let mut outbound_up: HashMap<String, i64> = HashMap::new();
     let mut outbound_down: HashMap<String, i64> = HashMap::new();
 
-    for stat in &stats {
-        if let Some((tag, uplink)) = parse_stat(&stat.name, "inbound") {
-            if uplink {
-                inbound_up.insert(tag.to_string(), stat.value);
-            } else {
-                inbound_down.insert(tag.to_string(), stat.value);
-            }
-        } else if let Some((tag, uplink)) = parse_stat(&stat.name, "outbound") {
-            if uplink {
-                outbound_up.insert(tag.to_string(), stat.value);
-            } else {
-                outbound_down.insert(tag.to_string(), stat.value);
+    for family in families.iter().filter(|family| family.error.is_none()) {
+        for stat in &family.stats {
+            if let Some((tag, uplink)) = parse_stat(&stat.name, family.kind()) {
+                if family.kind() == "outbound" {
+                    if uplink {
+                        outbound_up.insert(tag.to_string(), stat.value);
+                    } else {
+                        outbound_down.insert(tag.to_string(), stat.value);
+                    }
+                } else if uplink {
+                    inbound_up.insert(tag.to_string(), stat.value);
+                } else {
+                    inbound_down.insert(tag.to_string(), stat.value);
+                }
             }
         }
     }
@@ -358,15 +412,20 @@ async fn tick(
             .unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
             moved_emails.insert(client.email.clone());
-            if ws_enabled && rated {
-                ws_client_traffics.push(ClientTraffic {
-                    email: &client.email,
-                    up: delta_up,
-                    down: delta_down,
-                });
-            }
         }
-        if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
+        // Liveness and the speed columns follow the in-memory deltas: the
+        // billing deltas above need their DB write to succeed, the display
+        // must not.
+        let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
+        let display_down = display.client_down.get(&client.email).copied().unwrap_or(0);
+        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
+            ws_client_traffics.push(ClientTraffic {
+                email: &client.email,
+                up: display_up,
+                down: display_down,
+            });
+        }
+        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
             client_speeds.insert(client.email.clone(), sample);
         }
 
@@ -416,17 +475,21 @@ async fn tick(
         );
         if delta_up > 0 || delta_down > 0 {
             active_tags.push(inbound.tag.clone());
-            if ws_enabled && rated {
-                ws_traffics.push(InboundTraffic {
-                    tag: &inbound.tag,
-                    up: delta_up,
-                    down: delta_down,
-                    is_inbound: true,
-                    is_outbound: false,
-                });
-            }
         }
-        if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
+        // Same split as the client loop: the frame and the speed column use
+        // the in-memory deltas, the DB rows above are billed independently.
+        let display_up = display.inbound_up.get(&inbound.tag).copied().unwrap_or(0);
+        let display_down = display.inbound_down.get(&inbound.tag).copied().unwrap_or(0);
+        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
+            ws_traffics.push(InboundTraffic {
+                tag: &inbound.tag,
+                up: display_up,
+                down: display_down,
+                is_inbound: true,
+                is_outbound: false,
+            });
+        }
+        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
             inbound_speeds.insert(inbound.tag.clone(), sample);
         }
 
@@ -512,6 +575,144 @@ struct OnlineSnapshot {
     emails: HashSet<String>,
     ips: HashMap<String, Vec<crate::xray::stats::OnlineIp>>,
     inbounds: HashMap<String, Vec<String>>,
+}
+
+/// Memory-lean baseline key for the live display engine. A stat name is
+/// ~50 bytes of which ~30 are fixed family/traffic/direction text; keeping
+/// only the family byte, the direction and the variable key (identity or
+/// tag) keeps the bounded map small on the low-memory target even at tens of
+/// thousands of clients.
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct DeltaKey {
+    kind: u8,
+    uplink: bool,
+    key: String,
+}
+
+/// One poll's display deltas, keyed the way the UI reads them: inbounds by
+/// tag, clients by panel email.
+#[derive(Default)]
+struct DisplayDeltas {
+    inbound_up: HashMap<String, i64>,
+    inbound_down: HashMap<String, i64>,
+    client_up: HashMap<String, i64>,
+    client_down: HashMap<String, i64>,
+}
+
+// Advance the in-memory delta baseline and produce this poll's display
+// deltas. Mirrors 3x-ui GetXrayTraffic (internal/xray/api.go GetTraffic):
+// - the first successful sample of a family only records baselines, since
+//   the counters may already hold traffic the panel cannot attribute;
+// - a counter the panel has not seen, or one that moved backwards because
+//   the core restarted, counts from zero so no traffic is dropped;
+// - a failed family keeps its baselines and yields nothing this round —
+//   the next success measures the gap, not the whole counters again;
+// - baselines for counters that no longer exist are pruned once the map has
+//   drifted past twice the live set (3x-ui), so the steady-state hot path
+//   stays allocation-free.
+fn display_deltas(
+    families: &[FamilyStats],
+    stats_last: &mut HashMap<DeltaKey, i64>,
+    baselined: &mut HashSet<&'static str>,
+    email_by_identity: &HashMap<String, String>,
+    client_emails: &HashSet<String>,
+) -> DisplayDeltas {
+    let mut out = DisplayDeltas::default();
+    for family in families {
+        if family.error.is_some() {
+            // The family failed: its baselines are not gone, so the next
+            // success must not count the whole counters again.
+            continue;
+        }
+        let kind = family.kind();
+        let kind_byte = kind.as_bytes()[0];
+        // HashSet::insert reports whether the family was new, i.e. baseline
+        // pass: record baselines only, no deltas this round.
+        let baseline_pass = baselined.insert(family.family);
+        for stat in &family.stats {
+            let Some((key, uplink)) = parse_stat(&stat.name, kind) else {
+                // Non-traffic counters need no display baseline.
+                continue;
+            };
+            let previous = stats_last.insert(
+                DeltaKey {
+                    kind: kind_byte,
+                    uplink,
+                    key: key.to_string(),
+                },
+                stat.value,
+            );
+            let last = match previous {
+                Some(previous) if stat.value >= previous => previous,
+                // Unseen or backward counter counts from zero (3x-ui).
+                _ => 0,
+            };
+            if baseline_pass {
+                continue;
+            }
+            let value = stat.value - last;
+            match kind {
+                "inbound" => {
+                    if value > 0 {
+                        let slot = if uplink {
+                            &mut out.inbound_up
+                        } else {
+                            &mut out.inbound_down
+                        };
+                        *slot.entry(key.to_string()).or_insert(0) += value;
+                    }
+                }
+                // Outbound tags have no live display: the outbounds page reads
+                // stored totals, not per-poll speeds.
+                "outbound" => {}
+                _ => {
+                    // Map the per-attachment identity back to the panel email;
+                    // configs written outside the panel meter the bare email,
+                    // accepted whenever it is a live client (online view does
+                    // the same).
+                    let Some(email) = email_by_identity
+                        .get(key)
+                        .cloned()
+                        .or_else(|| client_emails.contains(key).then(|| key.to_string()))
+                    else {
+                        continue;
+                    };
+                    if value > 0 {
+                        let slot = if uplink {
+                            &mut out.client_up
+                        } else {
+                            &mut out.client_down
+                        };
+                        *slot.entry(email).or_insert(0) += value;
+                    }
+                }
+            }
+        }
+    }
+
+    let failures = families.iter().any(|family| family.error.is_some());
+    let live: usize = families
+        .iter()
+        .filter(|family| family.error.is_none())
+        .map(|family| family.stats.len())
+        .sum();
+    if !failures && live > 0 && stats_last.len() > 2 * live {
+        let live_keys: HashSet<DeltaKey> = families
+            .iter()
+            .filter(|family| family.error.is_none())
+            .flat_map(|family| {
+                family.stats.iter().filter_map(|stat| {
+                    parse_stat(&stat.name, family.kind()).map(|(key, uplink)| DeltaKey {
+                        kind: family.kind().as_bytes()[0],
+                        uplink,
+                        key: key.to_string(),
+                    })
+                })
+            })
+            .collect();
+        stats_last.retain(|key, _| live_keys.contains(key));
+    }
+    out
 }
 
 // The generated config meters each (inbound, client) attachment under its own
@@ -632,8 +833,8 @@ fn client_samples(
 
 // Raw counters per stat identity: identity -> (uplink, downlink). A direction
 // is `None` when xray did not return it; that must not be coerced to zero.
-fn parse_user_stats(
-    stats: &[crate::xray::stats::proto::Stat],
+fn parse_user_stats<'a>(
+    stats: impl Iterator<Item = &'a crate::xray::stats::proto::Stat>,
 ) -> HashMap<String, (Option<i64>, Option<i64>)> {
     let mut out: HashMap<String, (Option<i64>, Option<i64>)> = HashMap::new();
     for stat in stats {
@@ -1082,7 +1283,7 @@ mod tests {
     fn user_stats_keep_each_attachment_separate() {
         use crate::xray::stats::proto::Stat;
 
-        let stats = vec![
+        let stats = [
             Stat {
                 name: "user>>>1:alice>>>traffic>>>uplink".into(),
                 value: 10,
@@ -1100,7 +1301,7 @@ mod tests {
                 value: 3,
             },
         ];
-        let parsed = parse_user_stats(&stats);
+        let parsed = parse_user_stats(stats.iter());
         assert_eq!(parsed.get("1:alice"), Some(&(Some(10), Some(20))));
         // Downlink was not reported for this attachment: None, not zero.
         assert_eq!(parsed.get("2:alice"), Some(&(Some(5), None)));
@@ -1262,5 +1463,290 @@ mod tests {
         );
         assert_eq!(parse_stat("user>>>a@b>>>traffic>>>uplink", "inbound"), None);
         assert_eq!(parse_stat("garbage", "user"), None);
+    }
+
+    use crate::xray::stats::{FAMILY_INBOUND, FAMILY_USER};
+
+    fn family(family: &'static str, stats: Vec<(&str, i64)>) -> FamilyStats {
+        FamilyStats {
+            family,
+            stats: stats
+                .into_iter()
+                .map(|(name, value)| crate::xray::stats::proto::Stat {
+                    name: name.into(),
+                    value,
+                })
+                .collect(),
+            error: None,
+        }
+    }
+
+    fn empty_maps() -> (HashMap<String, String>, HashSet<String>) {
+        (HashMap::new(), HashSet::new())
+    }
+
+    #[test]
+    fn first_pass_records_baselines_only_like_xui() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let (email_by_identity, client_emails) = empty_maps();
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![("inbound>>>in-a>>>traffic>>>uplink", 100)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        // Counters may already hold unattributable traffic: no deltas.
+        assert!(display.inbound_up.is_empty());
+        assert!(baselined.contains(&FAMILY_INBOUND));
+        assert_eq!(stats_last.len(), 1);
+
+        // The next sample against those baselines shows the delta.
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![("inbound>>>in-a>>>traffic>>>uplink", 160)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(display.inbound_up.get("in-a"), Some(&60));
+    }
+
+    #[test]
+    fn unseen_and_backward_counters_count_from_zero_like_xui() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let (email_by_identity, client_emails) = empty_maps();
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![("inbound>>>in-a>>>traffic>>>uplink", 100)],
+        )];
+        display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+
+        // A counter created by a user's first use has no baseline: it counts
+        // from zero, so nothing is dropped for a whole poll.
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![
+                ("inbound>>>in-a>>>traffic>>>uplink", 150),
+                ("inbound>>>in-b>>>traffic>>>uplink", 40),
+            ],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(display.inbound_up.get("in-a"), Some(&50));
+        assert_eq!(display.inbound_up.get("in-b"), Some(&40));
+
+        // A counter that moved backwards (core restart without an epoch
+        // event) also counts from zero instead of dropping the traffic.
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![("inbound>>>in-a>>>traffic>>>uplink", 10)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(display.inbound_up.get("in-a"), Some(&10));
+    }
+
+    #[test]
+    fn failed_family_keeps_baselines_and_the_next_success_spans_the_gap() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let email_by_identity = HashMap::from([("1:alice".to_string(), "alice".to_string())]);
+        let client_emails = HashSet::from(["alice".to_string()]);
+
+        let families = vec![family(
+            FAMILY_USER,
+            vec![("user>>>1:alice>>>traffic>>>uplink", 100)],
+        )];
+        display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+
+        // The user family fails for one poll: nothing displayed for it, no
+        // baseline touched for that family.
+        let failed = FamilyStats {
+            family: FAMILY_USER,
+            stats: Vec::new(),
+            error: Some("boom".into()),
+        };
+        let display = display_deltas(
+            &[failed],
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert!(display.client_up.is_empty());
+
+        // Recovering: the delta spans the failed gap (30), rather than
+        // recounting the whole counter (130) because the family baseline was
+        // dropped.
+        let families = vec![family(
+            FAMILY_USER,
+            vec![("user>>>1:alice>>>traffic>>>uplink", 130)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(display.client_up.get("alice"), Some(&30));
+    }
+
+    #[test]
+    fn display_client_deltas_collapse_identities_into_the_panel_email() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let email_by_identity = HashMap::from([("1:alice".to_string(), "alice".to_string())]);
+        // A bare-email counter (config written outside the panel) is accepted
+        // like the online view does.
+        let client_emails = HashSet::from(["alice".to_string(), "bob".to_string()]);
+
+        let families = vec![family(
+            FAMILY_USER,
+            vec![
+                ("user>>>1:alice>>>traffic>>>uplink", 60),
+                ("user>>>bob>>>traffic>>>downlink", 20),
+                // Not a panel client's counter: nothing to display it under.
+                ("user>>>ghost>>>traffic>>>uplink", 500),
+            ],
+        )];
+        display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+
+        let families = vec![family(
+            FAMILY_USER,
+            vec![
+                ("user>>>1:alice>>>traffic>>>uplink", 80),
+                ("user>>>bob>>>traffic>>>downlink", 35),
+                ("user>>>ghost>>>traffic>>>uplink", 600),
+            ],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(display.client_up.get("alice"), Some(&20));
+        assert_eq!(display.client_down.get("bob"), Some(&15));
+        assert!(!display.client_up.contains_key("ghost"));
+    }
+
+    #[test]
+    fn drifted_baselines_are_pruned_but_never_after_a_failure() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let (email_by_identity, client_emails) = empty_maps();
+
+        let families = vec![family(
+            FAMILY_INBOUND,
+            vec![("inbound>>>in-a>>>traffic>>>uplink", 100)],
+        )];
+        display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        // Simulate deleted clients whose baselines linger in the map.
+        let stale = DeltaKey {
+            kind: b'u',
+            uplink: true,
+            key: "9:ghost".into(),
+        };
+        stats_last.insert(stale.clone(), 7);
+        assert_eq!(stats_last.len(), 2);
+        // 2 live entries > 2x1 live stat: no prune yet.
+        display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(stats_last.len(), 2);
+        // One more stale key tips it over 2x the live set.
+        stats_last.insert(
+            DeltaKey {
+                kind: b'u',
+                uplink: false,
+                key: "9:ghost".into(),
+            },
+            8,
+        );
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(stats_last.len(), 1);
+        assert!(
+            display.inbound_up.is_empty(),
+            "equal counters mean no delta"
+        );
+        assert!(stats_last.contains_key(&DeltaKey {
+            kind: b'i',
+            uplink: true,
+            key: "in-a".into()
+        }));
+
+        // With any family failure the map is not rebuilt: missing stats are
+        // not deleted ones.
+        let failed = FamilyStats {
+            family: FAMILY_USER,
+            stats: Vec::new(),
+            error: Some("boom".into()),
+        };
+        stats_last.insert(stale, 7);
+        display_deltas(
+            &[failed],
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert_eq!(stats_last.len(), 2);
     }
 }
