@@ -244,6 +244,17 @@ generation 变化只负责清在线集合与在线 API 探测缓存。验证：�
 - **未验证**：真实 Linux/musl 长时运行 RSS、超大客户端规模下的真实内存曲线。
   收益随活跃客户端数近似线性，小规模面板可能看不出明显差别。
 
+### G11 0.2.27：WS 帧除数改为真实采样间隔 —— fake e2e 验证
+- 修复 tick 超过轮询周期时前端按配置值除增量导致的速度虚高（3s RPC/2s
+  轮询实测 1.0 MB/s 显示 1.5 MB/s；修复后 0.998 MB/s），以及首轮把启动
+  以来的累计值当成一个窗口的尖峰。
+- 验证：`tmp/diag-traffic-ws/diag.py`、fake e2e 13/13、UI+WS 10/10、
+  真实 Xray 15/15。另用真实 Xray 26.10.31 验证 **tunnel（dokodemo）无客户端
+  入站**：rewriteAddress 模式转发 8 MiB，入站 down 8,388,725 字节，REST 与
+  WS 峰值均 ~2,160,527 B/s，空闲归零（`tmp/diag-traffic-ws/tunnel_real.py`）。
+  **未验证**：真实 Linux/musl；超大客户端数导致 tick 超时的真实比例；
+  tunnel 的 followRedirect/TPROXY 模式；其余协议真实流量；前端未改动。
+
 ### G8 重置边界仍有一个采集周期的残差 —— 与 3x-ui 相同
 手动重置与采集并发时，重置前刚采样到的增量可能落在重置之后写入，最多
 一个 `traffic_poll_secs` 的流量会留在重置后的累计值里。3x-ui 的

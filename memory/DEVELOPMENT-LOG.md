@@ -1178,3 +1178,28 @@
 - Actions：release run `42015308253` 成功；main CI run `42015280025` 成功。
 - 内容：0.2.25 实时 WS 流量帧的内存优化（无订阅者不建帧、直接序列化、
   缓冲 2 帧、WS 保活/空闲/发送超时）。
+
+## 2026-11-05 22:10 — 实时速度除数修复（0.2.27，未打包）
+
+- 用户反馈：入站的实时速度还是显示不准确。
+- 复现：新增 `tmp/diag-traffic-ws/diag.py`（真实 `/ws` 客户端 + fake
+  StatsService，计数器按固定 1.0/2.0 MB/s 增长；`tmp/fake_stats` 增加
+  `FAKE_STATS_DELAY_MS` 钩子模拟慢统计 RPC）。
+  - 正常 tick：帧间隔 2000ms，显示 1.000/2.000 MB/s，正确。
+  - 统计 RPC 延迟 3s、轮询 2s：修复前帧间隔仍写 2000ms，显示
+    **1.500/3.000 MB/s**（50% 虚高）；REST 为 0.99/1.99 MB/s。
+  - 首轮无上一采样点时，帧把启动以来的累计值当成一个窗口，出现 2.75× 尖峰。
+- 修改：
+  - `src/jobs.rs`：帧的 `clientTrafficIntervalMs` 改用本轮真实 `elapsed_ms`；
+    `elapsed_ms <= 0` 时累计照常计费但不广播速率增量（`rated_interval_ms`）；
+    Xray 采样期间重启时广播空增量清速度；无速率帧回退配置轮询值。
+  - `tmp/fake_stats/src/main.rs`：`FAKE_STATS_DELAY_MS` 测试钩子。
+  - `tmp/e2e-traffic-ui/ui_check.mjs`：间隔断言改为 1500–4000ms 区间。
+  - 文档：`docs/{ARCHITECTURE,API,DECISIONS}.md`（D052）、`CURRENT-STATUS.md`
+    §2.43、`CLAUDE.md` 版本说明；版本 0.2.26 → 0.2.27
+    （Cargo.toml/Cargo.lock）。
+- 验证：`cargo test` **114/114**（新增 1 个）、clippy 零警告、fmt；修复后慢
+  RPC 场景显示 0.998/1.995 MB/s（真实 1.0/2.0）；fake e2e 13/13、
+  UI+WS 10/10、真实 Xray 15/15（max speed 2,156,219 B/s）。
+- 未验证：真实 Linux/musl、真实公网抖动、超大客户端数下 tick 超时的实际比例；
+  前端源码未改动，`web/dist` 沿用 0.2.26 构建。

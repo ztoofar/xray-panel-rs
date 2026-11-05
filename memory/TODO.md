@@ -80,6 +80,10 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 - 内容（至少覆盖）：wireguard、hysteria、tunnel、tun、masque 在 Linux + 官方
   Xray 26.10.31 上逐个 `xray run -test`；hysteria/masque 用真实 TLS 证书；
   wireguard 客户端用生成的 keypair 实际握手；确认 Xray 启动后各入站端口正常。
+- 进度：tunnel（dokodemo，rewriteAddress 模式）已在 Windows + 真实 Xray
+  26.10.31 验证真实转发与入站计数/速度（无客户端，8 MiB 下载，REST/WS 峰值
+  ~2.16 MB/s，见 `tmp/diag-traffic-ws/tunnel_real.py`，2026-11-05）。
+  其余协议、Linux、followRedirect/TPROXY 模式仍未验证。
 - 验收：有每条命令与日志证据；结果写入 `DEVELOPMENT-LOG.md` 和
   `KNOWN-ISSUES.md` M1。下载/执行外部 Xray 二进制前需用户明确授权。
 
@@ -116,6 +120,8 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
   - `QueryStats` 临时缺一个方向；只有下载计数器回绕；
   - 采样期间重启 Xray，确认该样本被丢弃而非错计；
   - 速度与 `iperf`/实际下载速率对比误差、空闲一个周期内归零；
+  - tick 超过轮询周期（慢 gRPC/大量客户端）时，WS 帧间隔与前端显示速率
+    仍准确（0.2.27 修复，fake 慢 RPC 已验，真实环境待验）；
   - 旧核心升级到支持 `GetUsersStats` 的新核心；gRPC 超时后恢复。
 - 验收：有可复现命令与日志证据；结果写入 `DEVELOPMENT-LOG.md` 与
   `KNOWN-ISSUES.md` G6–G8。

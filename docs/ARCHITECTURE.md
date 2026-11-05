@@ -261,10 +261,13 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
   onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
   time}`；`traffics` 是入站 tag 的 `{Tag,Up,Down,IsInbound}` 增量，
   `clientTraffics` 是 `{email,up,down}` 增量。
-- 前端用 `clientTrafficIntervalMs`（2–300s）换算字节/秒，不再写死 5 秒；
-  帧中缺失的入站/客户端在本轮视为空闲并清除速度。
-- 统计查询失败时同样广播一帧空增量，清空浏览器里的旧速度；在线集合保持
-  本轮连接信号。慢客户端由 `broadcast` 的 `Lagged` 跳过旧帧。
+- `clientTrafficIntervalMs` 是**本轮增量实际跨越的采样间隔**（单调时钟测得的
+  `elapsed_ms`），不是配置的轮询长度：tick 超时、漏采、设置刚改动时两者会
+  不同，用配置值做除数会把速度按比例放大。首次采样（面板/Xray 刚启动）没有
+  上一个时间点，无法计算速率，帧里不带该轮增量（累计流量仍照常计费）；
+  统计查询失败时广播空增量清空旧速度。
+- 前端用 `clientTrafficIntervalMs` 换算字节/秒；帧中缺失的入站/客户端在本轮
+  视为空闲并清除速度。慢客户端由 `broadcast` 的 `Lagged` 跳过旧帧。
 - 内存约束（0.2.26）：`receiver_count() == 0` 时流量 job 不收集增量、
   `broadcast_traffic` 不序列化帧；帧内增量用借用 `&str` 的结构体直接
   `serde_json::to_string`，不建 `Value` 树。广播缓冲容量为 2 帧（只有最新帧

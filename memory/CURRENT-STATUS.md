@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-05 01:35（本地时间）
+> 最后更新：2026-11-05 22:10（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.26`（发布 v0.2.26） |
+| `Cargo.toml` 版本 | `0.2.27`（未打包） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.26`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,877 字节**，asset digest `sha256:9c223ffa...ae2f`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.26`：优化 §2.40 实时 WS 推送的内存占用——无订阅者时不构建流量帧、增量改为直接序列化、广播缓冲降到 2 帧、WS 增加 ping/空闲/发送超时。详见 §2.42 |
+| 当前源码 | `0.2.27`：实时 WS 帧改用真实采样间隔做除数，修复慢 tick 下入站/客户端速度按比例虚高；首轮无速率不广播。详见 §2.43 |
 | 上一版 | GitHub Release `v0.2.25`：tar 5,516,624 字节，asset digest `sha256:d9128d0c...92a5` |
 | 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
 | 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
@@ -1106,6 +1106,44 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 字段名/值与 0.2.25 完全一致（`Tag/Up/Down/IsInbound/IsOutbound`、
 `email/up/down`、camelCase 其余字段）。
 **未验证**：真实 Linux/musl 长时运行 RSS、超大客户端规模下的真实内存曲线。
+
+## 2.43 实时速度除数修复（2026-11-05，0.2.27）—— fake e2e 验证，未打包
+
+用户反馈“入站的实时速度还是显示不准确”。定位到 WS 帧的除数问题：
+
+- 症状（可复现）：StatsService 慢 3 秒、轮询设为 2 秒时，实际 1.0 MB/s，
+  WS/UI 显示 **1.5 MB/s**（50% 虚高）；REST `upSpeed` 正确显示 1.00 MB/s。
+- 根因：`traffic` 帧的 `clientTrafficIntervalMs` 固定为配置轮询值
+  （`poll_secs*1000`），而帧内增量是相对上一轮成功采样的真实窗口（本次
+  `elapsed_ms`）的差分。tick 超过轮询周期、RPC 超时后恢复、设置刚改变时，
+  两者不等，前端按配置值除就按比例放大。首轮（面板/Xray 刚启动）没有上一
+  采样点，增量是整个启动以来的计数，也被当成一个轮询窗口广播 → 一次性尖峰。
+- 修复（`src/jobs.rs`）：
+  - 帧的 `clientTrafficIntervalMs` 改为本轮真实 `elapsed_ms`；
+  - `elapsed_ms <= 0` 时累计照常计费，但不广播速率增量（浏览器清空速度），
+    新增纯函数 `rated_interval_ms`；
+  - Xray 采样期间重启时额外广播空增量，立即清掉旧速度；
+  - 无速率可播的帧仍回退为配置轮询值，保持 3x-ui 客户端约定。
+- 文件：`src/jobs.rs`、`docs/{ARCHITECTURE,API,DECISIONS}.md`（D052）、
+  `tmp/fake_stats` 增加 `FAKE_STATS_DELAY_MS` 测试钩子、
+  `tmp/e2e-traffic-ui/ui_check.mjs` 间隔断言改为区间。
+- 验证：
+  - `cargo test` **114/114**（新增 `ws_frame_divisor_is_the_real_window_not_the_configured_poll`）；
+    clippy 零警告；fmt 通过。
+  - 新增 `tmp/diag-traffic-ws/diag.py`：真实 `/ws` 客户端 + fake StatsService，
+    已知计数器速率。慢 RPC 3s/2s 轮询：修复前帧间隔 2000ms、显示
+    1.500/3.000 MB/s；修复后帧间隔 3010–3027ms、显示 0.998/1.995 MB/s，
+    与真实 1.0/2.0 MB/s 及 REST 一致。首轮空帧无尖峰。
+  - `tmp/e2e-traffic-accuracy/e2e.py` 13/13；`tmp/e2e-traffic-ui/ui_run.py`
+    10/10（无客户端入站速度仍正常）；`tmp/e2e-traffic-real/e2e.py`
+    真实 Xray 26.10.31 15/15（入站/客户端速度 2,156,219 B/s 与限速一致）。
+  - `tmp/diag-traffic-ws/tunnel_real.py`：真实 Xray 26.10.31 的 tunnel
+    （dokodemo，rewriteAddress）入站、**零客户端**，8 MiB 下载后入站
+    `down=8,388,725`、`up=82`，REST 与 WS 峰值速度均 ~2,160,527 B/s，
+    空闲归零。证明无客户端绑定也能按入站计数器显示实时速度。
+- **未验证**：真实 Linux/musl、真实公网网络抖动、超大客户端数下 tick 超时
+  的实际比例；前端未改动，构建产物沿用 0.2.26。
+- 未打包、未 bump 发布（`Cargo.toml`/`Cargo.lock` 已按规则升到 `0.2.27`）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

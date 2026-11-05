@@ -189,7 +189,16 @@ async fn tick(
             persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
             // Empty deltas clear the live speed in the browser while keeping
             // the connection-based online set accurate.
-            broadcast_traffic(state, poll_secs, &[], &[], &online_emails, &clients, now).await;
+            broadcast_traffic(
+                state,
+                poll_secs.saturating_mul(1000),
+                &[],
+                &[],
+                &online_emails,
+                &clients,
+                now,
+            )
+            .await;
             return Ok(());
         }
     };
@@ -204,6 +213,17 @@ async fn tick(
             refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
         refresh_active_inbounds(state, now, grace, &[]).await;
         persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
+        // Clear any speed label still pinned to the previous process.
+        broadcast_traffic(
+            state,
+            poll_secs.saturating_mul(1000),
+            &[],
+            &[],
+            &online_emails,
+            &clients,
+            now,
+        )
+        .await;
         return Ok(());
     }
     // Deltas and rates share one window: baselines only advance when a sample
@@ -216,6 +236,14 @@ async fn tick(
                 .min(i64::MAX as u128) as i64
         })
         .unwrap_or(0);
+    // The first sample after a (re)start has no previous timestamp: its deltas
+    // are real bytes but there is no window to rate them over, so no speed is
+    // advertised for it. A tick that outlasts the configured poll makes the
+    // deltas span longer than `poll_secs`; the frame must carry the interval the
+    // deltas were actually measured over or the browser inflates the rate.
+    let frame_interval = rated_interval_ms(elapsed_ms);
+    let rated = frame_interval.is_some();
+    let frame_interval_ms = frame_interval.unwrap_or_else(|| poll_secs.saturating_mul(1000));
     let mut inbound_speeds: HashMap<String, SpeedSample> = HashMap::new();
     let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
     // 3x-ui's WS traffic frame carries this poll's deltas by tag/email; the
@@ -330,7 +358,7 @@ async fn tick(
             .unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
             moved_emails.insert(client.email.clone());
-            if ws_enabled {
+            if ws_enabled && rated {
                 ws_client_traffics.push(ClientTraffic {
                     email: &client.email,
                     up: delta_up,
@@ -388,7 +416,7 @@ async fn tick(
         );
         if delta_up > 0 || delta_down > 0 {
             active_tags.push(inbound.tag.clone());
-            if ws_enabled {
+            if ws_enabled && rated {
                 ws_traffics.push(InboundTraffic {
                     tag: &inbound.tag,
                     up: delta_up,
@@ -445,7 +473,7 @@ async fn tick(
 
     broadcast_traffic(
         state,
-        poll_secs,
+        frame_interval_ms,
         &ws_traffics,
         &ws_client_traffics,
         &online_emails,
@@ -762,11 +790,12 @@ struct TrafficPayload<'a, 'b> {
 }
 
 // 3x-ui pushes one `traffic` frame per poll. The browser's existing handlers
-// divide these deltas by the sample interval and clear tags absent from the
-// frame, so the live speed no longer depends on when its REST poll lands.
+// divide these deltas by `client_traffic_interval_ms` and clear tags absent
+// from the frame, so the live speed no longer depends on when its REST poll
+// lands.
 async fn broadcast_traffic<'a>(
     state: &AppState,
-    poll_secs: u64,
+    interval_ms: u64,
     traffics: &'a [InboundTraffic<'a>],
     client_traffics: &'a [ClientTraffic<'a>],
     online_emails: &HashSet<String>,
@@ -795,7 +824,7 @@ async fn broadcast_traffic<'a>(
             online_by_guid: HashMap::from([("", online.as_slice())]),
             active_inbounds: HashMap::from([("", active.as_slice())]),
             last_online_map: &last_online,
-            client_traffic_interval_ms: poll_secs.saturating_mul(1000),
+            client_traffic_interval_ms: interval_ms,
         },
         time: chrono::Utc::now().timestamp_millis(),
     };
@@ -875,6 +904,13 @@ fn expired_at(expiry: i64, now_secs: i64) -> bool {
         expiry
     };
     expiry_ms <= now_secs.saturating_mul(1000)
+}
+
+// The divisor the browser must use for this poll's deltas. `None` means there
+// was no previous sample (panel/Xray just started), so the bytes may be billed
+// but must not be advertised as a rate: the window they span is unknown.
+fn rated_interval_ms(elapsed_ms: i64) -> Option<u64> {
+    (elapsed_ms > 0).then_some(elapsed_ms as u64)
 }
 
 // Bytes per second for one poll window. `elapsed_ms` is the real time between
@@ -991,6 +1027,17 @@ mod tests {
         // Idle or unmeasured windows produce no entry, which clears the UI.
         assert_eq!(speed_sample(0, 0, 5_000), None);
         assert_eq!(speed_sample(100, 100, 0), None);
+    }
+
+    #[test]
+    fn ws_frame_divisor_is_the_real_window_not_the_configured_poll() {
+        // A 2s poll whose tick took 3s must tell the browser 3s: dividing the
+        // same deltas by 2s made every live speed read 50% high.
+        assert_eq!(rated_interval_ms(3_027), Some(3_027));
+        // No previous sample (panel/Xray just started): bill, but advertise no
+        // rate, otherwise the startup counters look like a huge burst.
+        assert_eq!(rated_interval_ms(0), None);
+        assert_eq!(rated_interval_ms(-1), None);
     }
 
     #[test]

@@ -235,9 +235,11 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
   time}`。
   - `traffics`: `[{Tag, Up, Down, IsInbound, IsOutbound}]`，本轮入站增量；
   - `clientTraffics`: `[{email, up, down}]`，本轮客户端增量；
-  - `clientTrafficIntervalMs`: 本轮增量对应的采集间隔（2–300 秒）；
+  - `clientTrafficIntervalMs`: 本轮增量**实际**跨越的采样间隔（毫秒，
+    单调时钟测得）；通常约等于配置的轮询长度，tick 超时或漏采时更长。
+    首次采样没有上一时间点，不携带增量（此时该字段回退为配置值）。
   - `lastOnlineMap`: `email -> 毫秒时间戳`；在线集合按本地上送。
-- 前端按 `clientTrafficIntervalMs` 换算速度；帧中缺失的实体视为空闲并清空
+- 前端用 `clientTrafficIntervalMs` 换算速度；帧中缺失的实体视为空闲并清空
   速度。统计接口失败时推送空增量以清空旧速度。
 - 连接断开后浏览器自动重连；重连前/WS 不可用时，前端继续使用 REST 列表中的
   `upSpeed/downSpeed` 兜底。

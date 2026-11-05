@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-05 19:xx
+> 最后更新：2026-11-05 22:10
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,25 +18,26 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 113/113、clippy 零警告、Cargo 版本 `0.2.26`、
+   期望：`cargo test` 114/114、clippy 零警告、Cargo 版本 `0.2.27`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-05）
 
-- 源码 **0.2.26**：优化 0.2.25 实时 WS 流量帧的内存占用——无订阅者不构建
-  帧、增量改为直接序列化、广播缓冲 8→2、WS ping/空闲/发送超时。协议字段
-  与 0.2.25 一致。详见 `CURRENT-STATUS.md` §2.42、`DECISIONS.md` D051。
-- 发布：GitHub `v0.2.26`（tag → `4ccbec5`，资产 5,518,877 字节，
+- 源码 **0.2.27（未打包）**：WS `traffic` 帧的 `clientTrafficIntervalMs`
+  改为本轮真实采样间隔（`elapsed_ms`），修复 tick 超过轮询周期时入站/客户端
+  实时速度按比例虚高；首个无间隔采样只计费不播速率。详见
+  `CURRENT-STATUS.md` §2.43、`DECISIONS.md` D052。
+- 上一发布：GitHub `v0.2.26`（tag → `4ccbec5`，资产 5,518,877 字节，
   digest `sha256:9c223ffa...ae2f`；release run `42015308253`、main CI
-  `42015280025` 成功）。上一版 `v0.2.25`：5,516,624 字节。
-- 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13；
-  无客户端入站 4/4；无头 Chrome UI+WS 10/10；3000 客户端 RSS 对比见
-  §2.42。
+  `42015280025` 成功）。0.2.26 是实时 WS 帧的内存优化（§2.42/D051）。
+- 验证：`cargo test` **114/114**、clippy 零警告、fmt；fake e2e 13/13；
+  慢 tick 诊断（3s RPC/2s 轮询）修复前 1.5× 虚高、修复后与真实速率一致；
+  无头 Chrome UI+WS 10/10；真实 Xray 15/15。
 - 未验证：真实 Linux/musl 长时 RSS 与超大客户端规模内存曲线（T29）；
   真实 Linux/musl 网络抖动与故障注入（T9/T26）；有效 IP数据云 Key（T28）；
-  真实公网客户端（T27）。
+  真实公网客户端（T27）；超大客户端数导致 tick 超时的真实比例。
 
 ## 下一步（按用户任务二选一）
 
