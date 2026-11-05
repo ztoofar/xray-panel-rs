@@ -1301,8 +1301,8 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - **未验证**：真实 Linux/musl 运行；tunnel followRedirect/TPROXY 模式；
   其余入站协议的真实流量统计；超大客户端数导致 tick 超时的真实比例。
 
-## 2.51 实时速度改为 1 秒显示采样（2026-11-06，0.2.31，未打包）
-- 状态：已实现并本地验证；真实部署待验证。
+## 2.51 实时速度改为 1 秒显示采样（2026-11-06，0.2.31，已发布并部署）
+- 状态：已实现、本地验证、GitHub 发布，并已部署到现场服务器。
 - 背景：0.2.30 部署后用户仍报入站/客户端实时速度不准。现场四方对照
   （Xray 计数器 / WS 帧 / REST / DB）证明字节增量与 `增量 ÷ 真实间隔`
   一致、计费累计一致；差异来自显示只有每 `traffic_poll_secs`（现场 5 秒）
@@ -1321,6 +1321,19 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - 验证：`cargo test` **121/121**、clippy 零警告、fmt；fake-stats 计费
   e2e 13/13；无头 Chrome UI+WS 10/10（速度标签出现/清除、帧间隔与除数）；
   真实 Xray tunnel 回归 PASS（WS 帧间隔 ~1.0 秒，峰值与 REST/Xray 一致）。
+- 发布：tag `v0.2.31` → 提交 `f3e0509`；main CI run `42126455604` 成功；
+  release run `42126932326` 成功。资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,503 字节**，GitHub asset
+  digest `sha256:77d0b7068d9b84f5d1f97cf25f2fb0189b0e27f4b273e2383b8b68f00663c908`。
+  本机下载校验 sha256 与 digest 一致；包内 `SHA256SUMS` 与二进制
+  `66f2614cca69f07ec8ac653f7cfb1ad0a3a4e6589d8f88afbe1c8b7ec4a27a5e`
+  （13,004,816 字节，`LUMEN_VERSION=0.2.31`）匹配。
+- 现场部署：`/usr/local/bin/xray-panel-rs` 已替换为 0.2.31（旧版备份
+  `/usr/local/bin/xray-panel-rs.bak-0.2.30`），systemd 服务 active，
+  `/api/health` 返回 `version=0.2.31`；重启后 Xray 由 supervisor 正常拉起。
+  WS 实测帧间隔 1.00 s、`clientTrafficIntervalMs=1000`，证明 1 秒显示节拍
+  生效。现场受上游 `djzl` 出站暂时不可用影响，未能用受控 4 MiB/s 流量复测
+  速度数值（本地 fake-stats/真实 Xray tunnel 已覆盖）。
 - 未验证：真实 Linux/musl 大面板的 1 秒采样 CPU/内存；>2000 客户端自动
   回退到轮询的实际效果。
 

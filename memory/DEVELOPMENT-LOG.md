@@ -1421,3 +1421,25 @@
   （WS 帧间隔 ~1.0 秒，峰值 2,158,371 B/s 与 REST/Xray 一致）。
 - 未验证：真实 Linux/musl 大面板 1 秒采样的 CPU/内存；>2000 客户端自动
   回退轮询的实际效果。
+
+## 2026-11-06 — v0.2.31 发布并部署现场
+
+- 提交 `f3e0509`，tag `v0.2.31`；main CI run `42126455604` 成功，
+  release run `42126932326` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.31>
+  资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,528,503 字节，asset digest
+  `sha256:77d0b7068d9b84f5d1f97cf25f2fb0189b0e27f4b273e2383b8b68f00663c908`。
+- 本机下载复核：sha256 与 digest 一致；包内 `SHA256SUMS` 与二进制
+  `66f2614cca69f07ec8ac653f7cfb1ad0a3a4e6589d8f88afbe1c8b7ec4a27a5e`
+  （13,004,816 字节）匹配；含 `LUMEN_VERSION=0.2.31` 与
+  `clientTrafficIntervalMs`。
+- 现场部署：备份旧二进制为 `/usr/local/bin/xray-panel-rs.bak-0.2.30`，
+  原子替换后 `systemctl restart xray-panel`；`--version` 与 `/api/health`
+  均为 0.2.31，Xray 子进程正常。WS 实测帧间隔 1.00s、
+  `clientTrafficIntervalMs=1000`，1 秒显示节拍生效。
+- 现场受上游 `djzl` 出站暂时不可用影响（`speed.cloudflare.com`/百度等
+  经 10812 返回 503/reset），未能用受控 4 MiB/s 流量复测数值；本地
+  fake-stats 与真实 Xray tunnel 已覆盖同一代码路径。
+- 部署期间服务器发生一次重启（面板日志显示 shutdown signal，07:14 自动
+  恢复），重启后 0.2.31 服务与 Xray 均正常；/tmp 临时文件已随重启清除，
+  无遗留测试进程。
