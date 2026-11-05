@@ -1379,3 +1379,22 @@
   帧间隔 2.0s = 除数 2.0s；api 内部入站只出现在 ①（与 3x-ui 忽略 api 一致）。
 - 本次不改产品代码（无 Cargo 版本 bump）；G14 补「现场状态」段。等用户
   回传现场表格再定根因。
+
+## 2026-11-06 04:20 — 远程登录现场服务器复核（结论：管线正确，方向列误读）
+
+- 用户授权远程操作。本机 PuTTY 会话 + 密钥（`D:\2\镇江.ppk`），plink 连
+  现场服务器（Debian，`xray-panel` active），面板基础路径 `/morphine/`，
+  监听 127.0.0.1:15104。
+- 部署核对：二进制 13,000,368 字节 = v0.2.30（页面 `X_UI_CUR_VER=0.2.30`），
+  二进制时间 Nov 6 00:51；`traffic_poll_secs=5`；Xray 26.10.31；
+  `xray api statsquery` 可用；journal 6h 无 billing/stats 警告（20 次
+  `xray started` 为现场反复改配置重启，epoch 递增、基线清零属预期）。
+- 实测（临时只读 session 读 REST，用后即删；DB 只读 URI）：
+  - 空闲：`in-802-tcpudp` 原始 uplink 1760 B/s → REST upSpeed=1422、
+    downSpeed=0，一致；
+  - 用户此前的 60s 数据：原始 3.7 KB/s+1.6 MB/s = WS 1.6 MB/s = DB
+    1.6 MB/s = REST 均值 1.5 MB/s，帧间隔 5.0s=除数 5.0s。
+  - 结论：3.32K 是 ↑ 上行列（下载时上行只有请求/ACK）；下载在 ↓ 列
+    （~1.5–1.8 MB/s，突发十余 MB/s）。监控 4 MB/s ≈ 代理两条腿 + 包头。
+- 未改产品代码。G14/NEXT-STEPS 记录结论；可选后续：速度标签改用
+  「上传/下载」文案（待用户确认）。

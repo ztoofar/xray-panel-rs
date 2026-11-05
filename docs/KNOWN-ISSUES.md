@@ -499,4 +499,22 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   帧间隔）、③ REST `list/slim` 的 `upSpeed/downSpeed`、④ DB `inbounds.up/
   down` 计费增量，四方对比自动判定丢数在哪一层。本地端到端自测
   `tmp/field-check/selftest.py` PASS（11.6–11.9 MB/s 四列一致，帧间隔
-  2.0s=除数 2.0s）。等用户回传表格后再定位。
+  2.0s=除数 2.0s）。
+- **现场结论（2026-11-06，SSH 登录现场服务器实测）**：面板二进制
+  13,000,368 字节 = v0.2.30；`traffic_poll_secs=5`；Xray 26.10.31。
+  - 用户 60s 对照（`in-802-tcpudp`）：Xray 原始 3.7 KB/s + 1.6 MB/s =
+    WS 帧合计 1.6 MB/s = DB 计费 3.6 KB/s + 1.6 MB/s = REST 均值
+    4.9 KB/s + 1.5 MB/s，帧间隔 avg 5.0s = 除数 5.0s → 计数、显示、计费
+    一致，无丢数、无摊薄。REST 峰值 18.7 MB/s 是突发 5 秒窗的真实值。
+  - 空闲复核：`in-802` 原始 uplink 1760 B/s → REST `upSpeed=1422`、
+    `downSpeed=0`，两者一致。
+  - 「面板 3.32K vs 监控 4MB」的真相：3.32K 是 **↑ 上行**列（tunnel 下载时
+    上行只有请求/ACK，原始 3.7 KB/s 吻合）；下载量在 **↓ 下行**列
+    （~1.5–1.8 MB/s 均值，突发可到十几 MB/s）。监控 4 MB/s ≈ 代理两条腿
+    （客户端侧 + 源站侧）× ~1.8 MB/s + 包头/TLS，面板只算单条腿 payload。
+  - journal 6 小时内无 `traffic billing failed`/`stats family` 警告；
+    20 次 `xray started` 是现场反复改配置触发的核心重启（每次 epoch 递增，
+    基线按设计清零，显示会丢首轮基线，属预期）。
+- 结论：0.2.30 的目标场景验证通过，问题为**方向列误读 + 网卡口径差异**，
+  不是代码 bug。待用户确认 ↓ 列数值与 iftop/监控的对应关系；若需要，可
+  把速度标签改成显式「上传/下载」而非仅箭头。

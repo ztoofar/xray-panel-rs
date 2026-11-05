@@ -269,6 +269,8 @@ def main():
                     help="面板地址，https 自签证书自动放行")
     ap.add_argument("--user", default="", help="面板用户名（--tag 给全时可留空跳过 REST/WS）")
     ap.add_argument("--password", default="", help="面板密码")
+    ap.add_argument("--cookie", default="",
+                    help="已有会话 Cookie 头（如 'xpanel_session=...'），给出时跳过登录")
     ap.add_argument("--tag", action="append", default=None,
                     help="只看指定入站 tag，可重复；缺省看全部")
     ap.add_argument("--dur", type=int, default=40, help="观察秒数")
@@ -293,8 +295,8 @@ def main():
           % (args.panel, api_addr, XRAY_BIN, db_path, args.dur,
              sorted(tags) if tags else "ALL"))
 
-    have_panel = bool(args.user and args.password)
-    cookie = login(args.panel, args.user, args.password) if have_panel else None
+    have_panel = bool(args.cookie or (args.user and args.password))
+    cookie = args.cookie or login(args.panel, args.user, args.password) if have_panel else None
     ws = None
     if have_panel:
         try:

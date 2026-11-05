@@ -37,14 +37,16 @@
 - 源码验证：`cargo test` **121/121**（含 2 个合并槽单测）、clippy 零警告、
   fmt；真实 Xray tunnel 与 fake-stats 两条本地链路 PASS。前端未改动，
   WS 帧协议与 0.2.25 一致。
-- **待用户回传现场数据**：用户部署 0.2.30 后仍报「显示还是不对」。已发布
-  现场对照脚本 `deploy/panel_speed_check.py`（python3 标准库）：同窗口采
-  Xray 原始计数器 / 面板 WS 帧（含 `clientTrafficIntervalMs` 除数 vs 真实
-  帧间隔）/ REST upSpeed+downSpeed / DB 计费增量，四方对比自动判定丢数层。
-  用法：`python3 panel_speed_check.py --panel http://127.0.0.1:面板端口
-  --user 用户名 --password 密码 --tag 入站tag --dur 40`（下载进行中跑）。
-  本地端到端自测 PASS（`tmp/field-check/selftest.py`，真实 Xray 隧道入站，
-  四列一致、帧间隔 2.0s=除数 2.0s）。
+- **现场验证完成（2026-11-06）**：SSH 登录现场服务器实测 v0.2.30（二进制
+  13,000,368 字节）、`traffic_poll_secs=5`、Xray 26.10.31。`in-802-tcpudp`
+  60s 对照：Xray 原始 3.7 KB/s+1.6 MB/s = WS 帧 1.6 MB/s = DB 计费
+  1.6 MB/s = REST 均值 1.5 MB/s，帧间隔 5.0s = 除数 5.0s；空闲复核
+  `upSpeed` 1422 B/s ≈ 原始 uplink 1760 B/s。journal 无 billing/stats
+  警告。**结论：管线正确**——用户看到的 3.32K 是 ↑ 上行列（下载时上行
+  只有请求/ACK），下载量在 ↓ 列（~1.5–1.8 MB/s）；监控 4 MB/s ≈ 代理
+  两条腿（客户端侧+源站侧）+ 包头/TLS，面板只算单条腿 payload（§G14）。
+- 可选后续：把速度标签从纯箭头改为「上传/下载」显式文案（需前端构建，
+  等用户确认要不要）。
 - 上一发布：`v0.2.29`（3x-ui 模型重写取数）、`v0.2.28`（入站 WS 过期保护）。
 
 ## 下一步（按用户任务二选一）
