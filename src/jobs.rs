@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
-use serde_json::{json, Value};
+use serde::Serialize;
 
 use crate::{
     db::{
@@ -131,6 +131,11 @@ async fn tick(
 ) -> anyhow::Result<()> {
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
+    // Building the 3x-ui traffic frame is not free: it serialises every active
+    // client/inbound and the online sets. Most of the time no browser has the
+    // WS open, so skip the whole frame instead of allocating it just to have
+    // `send` return Err.
+    let ws_enabled = state.ws_events.receiver_count() > 0;
     // Captured before any work: a restart anywhere between the loop's epoch
     // check and the stats query means the sample may belong to a different
     // process than the stored baselines.
@@ -184,16 +189,7 @@ async fn tick(
             persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await?;
             // Empty deltas clear the live speed in the browser while keeping
             // the connection-based online set accurate.
-            broadcast_traffic(
-                state,
-                poll_secs,
-                Vec::new(),
-                Vec::new(),
-                &online_emails,
-                &clients,
-                now,
-            )
-            .await;
+            broadcast_traffic(state, poll_secs, &[], &[], &online_emails, &clients, now).await;
             return Ok(());
         }
     };
@@ -224,8 +220,8 @@ async fn tick(
     let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
     // 3x-ui's WS traffic frame carries this poll's deltas by tag/email; the
     // browser divides them by `clientTrafficIntervalMs`.
-    let mut ws_traffics: Vec<Value> = Vec::new();
-    let mut ws_client_traffics: Vec<Value> = Vec::new();
+    let mut ws_traffics: Vec<InboundTraffic<'_>> = Vec::new();
+    let mut ws_client_traffics: Vec<ClientTraffic<'_>> = Vec::new();
     let restart_on_client_disable = db::settings::ui_settings(&state.db)
         .await
         .ok()
@@ -334,11 +330,13 @@ async fn tick(
             .unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
             moved_emails.insert(client.email.clone());
-            ws_client_traffics.push(json!({
-                "email": client.email,
-                "up": delta_up,
-                "down": delta_down,
-            }));
+            if ws_enabled {
+                ws_client_traffics.push(ClientTraffic {
+                    email: &client.email,
+                    up: delta_up,
+                    down: delta_down,
+                });
+            }
         }
         if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
             client_speeds.insert(client.email.clone(), sample);
@@ -390,13 +388,15 @@ async fn tick(
         );
         if delta_up > 0 || delta_down > 0 {
             active_tags.push(inbound.tag.clone());
-            ws_traffics.push(json!({
-                "Tag": inbound.tag,
-                "Up": delta_up,
-                "Down": delta_down,
-                "IsInbound": true,
-                "IsOutbound": false,
-            }));
+            if ws_enabled {
+                ws_traffics.push(InboundTraffic {
+                    tag: &inbound.tag,
+                    up: delta_up,
+                    down: delta_down,
+                    is_inbound: true,
+                    is_outbound: false,
+                });
+            }
         }
         if let Some(sample) = speed_sample(delta_up, delta_down, elapsed_ms) {
             inbound_speeds.insert(inbound.tag.clone(), sample);
@@ -446,8 +446,8 @@ async fn tick(
     broadcast_traffic(
         state,
         poll_secs,
-        ws_traffics,
-        ws_client_traffics,
+        &ws_traffics,
+        &ws_client_traffics,
         &online_emails,
         &clients,
         now,
@@ -717,18 +717,65 @@ async fn refresh_active_inbounds(state: &AppState, now: i64, grace: i64, moved_t
     *state.active_inbounds.lock().await = active.keys().cloned().collect();
 }
 
+// One per-poll delta, serialised directly. The frame can carry thousands of
+// entries on a busy panel, so building a serde_json::Value tree first doubled
+// the allocation count and the peak heap for every tick.
+#[derive(Serialize)]
+struct InboundTraffic<'a> {
+    #[serde(rename = "Tag")]
+    tag: &'a str,
+    #[serde(rename = "Up")]
+    up: i64,
+    #[serde(rename = "Down")]
+    down: i64,
+    #[serde(rename = "IsInbound")]
+    is_inbound: bool,
+    #[serde(rename = "IsOutbound")]
+    is_outbound: bool,
+}
+
+#[derive(Serialize)]
+struct ClientTraffic<'a> {
+    email: &'a str,
+    up: i64,
+    down: i64,
+}
+
+#[derive(Serialize)]
+struct TrafficFrame<'a, 'b> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    payload: TrafficPayload<'a, 'b>,
+    time: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrafficPayload<'a, 'b> {
+    traffics: &'a [InboundTraffic<'a>],
+    client_traffics: &'a [ClientTraffic<'a>],
+    online_clients: &'a [&'a String],
+    online_by_guid: HashMap<&'static str, &'a [&'a String]>,
+    active_inbounds: HashMap<&'static str, &'b [String]>,
+    last_online_map: &'a HashMap<&'a str, i64>,
+    client_traffic_interval_ms: u64,
+}
+
 // 3x-ui pushes one `traffic` frame per poll. The browser's existing handlers
 // divide these deltas by the sample interval and clear tags absent from the
 // frame, so the live speed no longer depends on when its REST poll lands.
-async fn broadcast_traffic(
+async fn broadcast_traffic<'a>(
     state: &AppState,
     poll_secs: u64,
-    traffics: Vec<Value>,
-    client_traffics: Vec<Value>,
+    traffics: &'a [InboundTraffic<'a>],
+    client_traffics: &'a [ClientTraffic<'a>],
     online_emails: &HashSet<String>,
-    clients: &[Client],
+    clients: &'a [Client],
     now: i64,
 ) {
+    if state.ws_events.receiver_count() == 0 {
+        return;
+    }
     let online: Vec<&String> = online_emails.iter().collect();
     let active = state.active_inbounds.lock().await.clone();
     // Only clients seen online this tick need a fresh timestamp; the browser
@@ -739,22 +786,24 @@ async fn broadcast_traffic(
         .filter(|client| online_emails.contains(&client.email))
         .map(|client| (client.email.as_str(), now.saturating_mul(1000)))
         .collect();
-    let payload = json!({
-        "traffics": &traffics,
-        "clientTraffics": &client_traffics,
-        "onlineClients": &online,
-        "onlineByGuid": { "": &online },
-        "activeInbounds": { "": &active },
-        "lastOnlineMap": &last_online,
-        "clientTrafficIntervalMs": poll_secs.saturating_mul(1000),
-    });
-    let message = json!({
-        "type": "traffic",
-        "payload": payload,
-        "time": chrono::Utc::now().timestamp_millis(),
-    });
+    let frame = TrafficFrame {
+        kind: "traffic",
+        payload: TrafficPayload {
+            traffics,
+            client_traffics,
+            online_clients: &online,
+            online_by_guid: HashMap::from([("", online.as_slice())]),
+            active_inbounds: HashMap::from([("", active.as_slice())]),
+            last_online_map: &last_online,
+            client_traffic_interval_ms: poll_secs.saturating_mul(1000),
+        },
+        time: chrono::Utc::now().timestamp_millis(),
+    };
+    let Ok(message) = serde_json::to_string(&frame) else {
+        return;
+    };
     // Err only means nobody is connected; the next tick tries again.
-    let _ = state.ws_events.send(message.to_string());
+    let _ = state.ws_events.send(message);
 }
 
 async fn reset_inbound_traffic(

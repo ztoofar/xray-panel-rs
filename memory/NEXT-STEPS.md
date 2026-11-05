@@ -1,7 +1,7 @@
 # NEXT-STEPS
 
 > 下一次会话从这里开始。写完本文件时假设读者没有本次会话的上下文。
-> 最后更新：2026-11-05 01:35
+> 最后更新：2026-11-05 19:xx
 
 ## 第 0 步（每次会话必做，不可跳过）
 
@@ -18,29 +18,29 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 113/113、clippy 零警告、Cargo 版本 `0.2.25`、
+   期望：`cargo test` 113/113、clippy 零警告、Cargo 版本 `0.2.26`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-05）
 
-- 源码 **0.2.25**：在 0.2.24 的 3x-ui 计量模型上恢复 `/ws` 实时 `traffic`
-  推送；前端按帧内真实采集间隔换算速度，无客户端入站也由入站计数器显示
-  实时速度；REST `upSpeed/downSpeed` 保留为 WS 不可用兜底。详见
-  `CURRENT-STATUS.md` §2.39/§2.40、`DECISIONS.md` D049/D050。
-- 发布：GitHub `v0.2.25`（tag → `ade85bd`，资产 5,516,624 字节，
+- 源码 **0.2.26**：优化 0.2.25 实时 WS 流量帧的内存占用——无订阅者不构建
+  帧、增量改为直接序列化、广播缓冲 8→2、WS ping/空闲/发送超时。协议字段
+  与 0.2.25 一致。详见 `CURRENT-STATUS.md` §2.42、`DECISIONS.md` D051。
+- 上一版：GitHub `v0.2.25`（tag → `ade85bd`，资产 5,516,624 字节，
   digest `sha256:d9128d0c...92a5`；Actions run `41884947044` 成功）。
-- 验证：`cargo test` 113/113、clippy 零警告、fmt、前端 build；
-  fake e2e 13/13；无客户端入站 4/4；真实 Xray 15/15；无头 Chrome UI+WS
-  10/10（两个入站行均显示速度、WS 帧含无客户端入站增量、空闲清零）。
-- 未验证：真实 Linux/musl 网络抖动与故障注入（T9/T26）；有效 IP数据云 Key
-  （T28）；真实公网客户端（T27）。
+- 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13；
+  无客户端入站 4/4；无头 Chrome UI+WS 10/10；3000 客户端 RSS 对比见
+  §2.42。
+- 未验证：真实 Linux/musl 长时 RSS 与超大客户端规模内存曲线（T29）；
+  真实 Linux/musl 网络抖动与故障注入（T9/T26）；有效 IP数据云 Key（T28）；
+  真实公网客户端（T27）。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.25`；新改动须先按
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.26`；新改动须先按
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。

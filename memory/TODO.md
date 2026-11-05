@@ -143,6 +143,16 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 - 验收：有真实消息截图或接口日志；结果写入 `DEVELOPMENT-LOG.md` 与
   `KNOWN-ISSUES.md` L1。
 
+### T29. 0.2.26 WS 内存优化的真实规模验证
+- 现状：只在 Windows debug + fake StatsService 上对比 3000 客户端 RSS
+  （见 `CURRENT-STATUS.md` §2.42）；未在真实 Linux/musl、真实 Xray、
+  长时间运行和超大客户端规模下测量。
+- 内容：在真实部署上记录面板 `/proc/<pid>/status` VmRSS：无面板页连接、
+  打开入站页（WS+REST）、客户端规模扩大时的稳态与峰值；确认无订阅者时
+  帧路径不再分配，WS 空闲连接会按 90 秒超时清理。
+- 验收：至少 3 个规模点、30 分钟以上的 RSS 曲线；结果写入
+  `DEVELOPMENT-LOG.md` 与 `KNOWN-ISSUES.md` G10。
+
 ## P2 — 改进
 
 ### T4. 真实 Linux + 真实 Xray 回归

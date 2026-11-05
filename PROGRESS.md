@@ -1327,3 +1327,28 @@ SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=
 - Release 资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,516,624 字节，
   asset digest `sha256:d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`。
 - Actions run `41884947044` 成功；main CI run `41884941034` 成功。
+
+## 实时 WS 流量帧内存优化（2026-11-05，0.2.26，待发布）
+
+用户反馈：0.2.25 优化实时速度后，面板内存一直很高。
+
+定位与修复：
+
+- **无订阅者也建帧**：`jobs::tick` 每轮无条件收集并序列化完整 traffic 帧，
+  即使没有任何浏览器连 `/ws`。现在先读 `ws_events.receiver_count()`，为 0
+  时跳过增量收集，`broadcast_traffic` 入口也短路。
+- **Value 树开销**：原 `json!` 为每个入站/客户端条目创建 `Value` Map 和 key
+  String；改为借用 `&str` 的 `InboundTraffic`/`ClientTraffic` 结构体，
+  整帧一次 `serde_json::to_string`。
+- **广播缓冲**：容量 8 → 2，慢客户端靠 `Lagged` 跳到最新帧。
+- **僵尸连接**：`/ws` 每 30 秒 Ping、90 秒无入站帧断开、单次发送 10 秒超时，
+  避免休眠/断网连接长期占住任务与待发帧。
+
+内存对比（Windows debug + fake stats，3000 客户端，2s 采集，每秒流量）：
+
+- 无 WS：0.2.25 末值 28.2 / 峰值 34.1 MiB → 0.2.26 27.0 / 32.8 MiB。
+- 一个 WS 读取端：0.2.25 28.8 / 34.7 MiB → 0.2.26 27.8 / 33.7 MiB。
+
+验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13、无客户端
+入站 4/4、无头 Chrome UI+WS 10/10；抓包确认 WS 帧字段与 0.2.25 一致。
+未验证：真实 Linux/musl 长时 RSS、超大客户端规模的真实内存曲线。

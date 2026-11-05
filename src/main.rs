@@ -119,8 +119,10 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     let xray = xray::XrayHandle::spawn(Arc::new(cfg.clone()), xray_logs.clone());
     let stats = xray::StatsClient::new(cfg.xray_api_url());
     // Slow browsers may lag; the newest traffic frame is the only one that
-    // matters, so a tiny buffer plus Lagged-skip is enough.
-    let (ws_events, _) = tokio::sync::broadcast::channel(8);
+    // matters, so two slots plus Lagged-skip are enough. Each slot holds a
+    // serialised frame (which grows with the number of active clients), so
+    // keeping the ring small matters on low-memory panels.
+    let (ws_events, _) = tokio::sync::broadcast::channel(2);
     let state = AppState {
         db: db.clone(),
         cfg: Arc::new(cfg.clone()),

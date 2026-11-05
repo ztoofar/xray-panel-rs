@@ -1144,3 +1144,26 @@
 - Actions：release run `41884947044` 成功；main CI run `41884941034` 成功。
 - 内容：恢复 3x-ui `/ws` 实时 traffic 推送；无客户端入站速度由入站计数器
   实时显示；REST 速率保留兜底。
+
+## 2026-11-05 19:xx — 优化实时 WS 流量帧内存（0.2.26，待发布）
+
+- 用户反馈：0.2.25 实时速度更新后面板内存一直很高。
+- 定位：`jobs::tick` 每轮无条件收集并序列化完整 3x-ui traffic 帧，即使没有
+  任何 WS 订阅者；`json!` 为每个入站/客户端条目建 Value 树；broadcast 缓冲
+  保留 8 帧；WS 连接没有 ping/空闲/发送超时。
+- 修改：
+  - `src/jobs.rs`：`ws_enabled = ws_events.receiver_count() > 0`，为 0 时跳过
+    增量收集；`broadcast_traffic` 入口再次检查。增量改用借用 `&str` 的
+    `InboundTraffic` / `ClientTraffic` 结构体，整帧 `serde_json::to_string`。
+  - `src/main.rs`：`broadcast::channel(8)` → `channel(2)`。
+  - `src/api/ws.rs`：30s Ping、90s 空闲断开、10s 发送超时。
+  - 文档：`CURRENT-STATUS.md` §2.42、`ARCHITECTURE.md` §6.1、
+    `DECISIONS.md` D051、`KNOWN-ISSUES.md` G10、`PROGRESS.md`；版本 0.2.25 →
+    0.2.26（Cargo.toml/Cargo.lock）。
+- 内存对比（Windows debug，3000 客户端，2s 采集，每秒流量）：
+  - 无 WS：0.2.25 末值 28.2 / 峰值 34.1 MiB；0.2.26 27.0 / 32.8 MiB。
+  - 一个 WS 读取端：0.2.25 28.8 / 34.7 MiB；0.2.26 27.8 / 33.7 MiB。
+  - 收益随活跃客户端数增加；无面板连接时不构建帧。
+- 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13、
+  无客户端入站 4/4、无头 Chrome UI+WS 10/10；WS 帧字段与 0.2.25 一致。
+- 未验证：真实 Linux/musl 长时 RSS、超大客户端规模的真实内存曲线。

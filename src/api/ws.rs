@@ -3,6 +3,8 @@
 //! broadcasts the same delta snapshots 3x-ui does. Authentication is the
 //! normal session-cookie middleware on the protected router.
 
+use std::time::Duration;
+
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -10,9 +12,19 @@ use axum::{
     },
     response::IntoResponse,
 };
-use tokio::sync::broadcast::error::RecvError;
+use tokio::{
+    sync::broadcast::error::RecvError,
+    time::{interval, Instant},
+};
 
 use crate::state::AppState;
+
+// Browsers answer our pings with pongs; a peer that stays silent for this long
+// is gone (laptop sleep, dropped mobile network, half-open NAT mapping).
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+// A stalled peer must not pin a task and the queued frame forever.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| run(socket, state))
@@ -20,11 +32,26 @@ pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> imp
 
 async fn run(mut socket: WebSocket, state: AppState) {
     let mut events = state.ws_events.subscribe();
+    let mut ping = interval(PING_INTERVAL);
+    let mut last_seen = Instant::now();
+
     loop {
         tokio::select! {
+            _ = ping.tick() => {
+                if last_seen.elapsed() >= IDLE_TIMEOUT {
+                    break;
+                }
+                let sent = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Ping(Vec::new().into())))
+                    .await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    break;
+                }
+            }
             event = events.recv() => match event {
                 Ok(text) => {
-                    if socket.send(Message::Text(text.into())).await.is_err() {
+                    let sent = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Text(text.into())))
+                        .await;
+                    if !matches!(sent, Ok(Ok(()))) {
                         break;
                     }
                 }
@@ -35,9 +62,9 @@ async fn run(mut socket: WebSocket, state: AppState) {
             },
             incoming = socket.recv() => match incoming {
                 None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
-                // The browser sends no application messages; ping/pong is
-                // handled by the WebSocket layer.
-                Some(Ok(_)) => {}
+                // Browsers send no application messages, but they do answer
+                // our pings; any inbound frame proves the peer is still there.
+                Some(Ok(_)) => last_seen = Instant::now(),
             }
         }
     }

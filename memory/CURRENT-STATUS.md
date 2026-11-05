@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.25`（发布 v0.2.25） |
+| `Cargo.toml` 版本 | `0.2.26`（已实现，待发布） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.25`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,516,624 字节**，asset digest `sha256:d9128d0c...92a5`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.25`：在 §2.39 的 3x-ui 计量模型上恢复 `/ws` 实时 `traffic` 推送，前端按真实采集间隔换算速度；无关联客户端的入站也由入站计数器实时显示速度。详见 §2.40 |
+| 当前源码 | `0.2.26`：优化 §2.40 实时 WS 推送的内存占用——无订阅者时不构建流量帧、增量改为直接序列化、广播缓冲降到 2 帧、WS 增加 ping/空闲/发送超时。详见 §2.42 |
 | 上一版 | GitHub Release `v0.2.24`：tar 5,467,602 字节，asset digest `sha256:88471d1f...30eb` |
 | 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
 | 0.2.24 SHA256 | `88471d1f81d1e287c069c10b2753702dc2da7b177fa27cd3bb7cecde897330eb`（tar.gz，GitHub asset digest） |
@@ -1062,6 +1062,41 @@ HTTP 头/协议帧等少量字节（本次实测 117 B），不要求逐字节�
   fake e2e 13/13、无客户端入站 4/4、真实 Xray 15/15、无头 Chrome UI+WS
   10/10。
 - **未验证**：真实 Linux/musl 运行、真实公网网络抖动、gRPC 故障注入。
+
+## 2.42 实时 WS 流量帧内存优化（2026-11-05，0.2.26）—— 已验证并发布
+
+用户反馈 0.2.25 之后面板内存一直很高。定位到 0.2.25 的流量广播路径引入的
+常驻/瞬时占用，已优化：
+
+- **无订阅者仍构建帧**：`jobs::tick` 原先无论有没有浏览器连接都收集
+  `ws_traffics`/`ws_client_traffics`，`broadcast_traffic` 还会把完整
+  `{traffics, clientTraffics, onlineClients, onlineByGuid, activeInbounds,
+  lastOnlineMap}` 序列化一遍，最后 `send` 无接收者返回 Err。现在 tick 开头
+  读取 `ws_events.receiver_count()`，为 0 时跳过增量收集；broadcast 入口也
+  再检查一次。面板页没打开时不再产生任何帧分配。
+- **Value 树开销**：原实现每个入站/客户端条目都用 `json!` 建
+  `serde_json::Value`（每条约 1 个 Map + 3 个 key String），一帧几千条时
+  峰值和分配次数翻倍。现在增量用借用 `&str` 的 `InboundTraffic`/
+  `ClientTraffic` 结构体，整个帧直接 `serde_json::to_string`，不再建树。
+- **广播缓冲**：容量 8 → 2。慢客户端由 `Lagged` 跳过旧帧，只有最新帧有意义；
+  每帧随活跃客户端增长，减少常驻的旧帧副本。
+- **僵尸连接**：`/ws` 每 30 秒发 Ping，90 秒无任何入站帧（浏览器会自动回
+  Pong）断开；所有发送包 10 秒超时。休眠笔记本、断网/半开 NAT 的连接不再
+  长期占着任务和待发帧。
+
+验证（Windows debug + fake StatsService，3000 客户端，2 秒采集，每秒有流量）：
+
+| 场景 | 0.2.25 | 0.2.26 |
+| --- | --- | --- |
+| 无 WS 连接，末值 / 峰值 RSS | 28.2 / 34.1 MiB | 27.0 / 32.8 MiB |
+| 一个 WS 读取端，末值 / 峰值 RSS | 28.8 / 34.7 MiB | 27.8 / 33.7 MiB |
+
+收益与活跃客户端数近似线性（帧大小随条目数增长）；面板页未打开时 0.2.26
+完全不构建帧。其他回归：`cargo test` 113/113、clippy 零警告、fmt；
+fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 WS 帧
+字段名/值与 0.2.25 完全一致（`Tag/Up/Down/IsInbound/IsOutbound`、
+`email/up/down`、camelCase 其余字段）。
+**未验证**：真实 Linux/musl 长时运行 RSS、超大客户端规模下的真实内存曲线。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

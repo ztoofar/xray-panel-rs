@@ -61,8 +61,12 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.23`（以 `Cargo.toml` 为准），已随 GitHub Release
-  `v0.2.23` 发布（tag → `a0aa557`）。0.2.23 把 IP数据云移入“高级”页的标签
+- **当前源码版本**：`0.2.26`（以 `Cargo.toml` 为准）。0.2.26 优化 0.2.25
+  实时 WS 流量帧的内存占用（无订阅者不建帧、直接序列化、缓冲 2 帧、WS
+  保活/空闲/发送超时）；0.2.25 恢复 3x-ui `/ws` 实时 traffic 推送；0.2.24
+  对齐 3x-ui 流量计量与后端速率（见 `memory/CURRENT-STATUS.md`
+  §2.39–§2.42、DECISIONS D049–D051）。
+  0.2.23 把 IP数据云移入“高级”页的标签
   （出站检测 / IP数据云，样式同常规设置页）。0.2.22 将位置查询主源改为纯真库
   （zxinc）并增加可选 IP数据云查询；Release 页面只列本次更新内容（见
   `memory/CURRENT-STATUS.md` §2.32–§2.38、DECISIONS D046–D048）。
