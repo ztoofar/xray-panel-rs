@@ -229,15 +229,17 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 #### WebSocket `/ws`（0.2.25 起，3x-ui 兼容）
 
 - 路径：`<basePath>ws`（默认 `/ws`），需要登录会话 Cookie。
-- 服务端每个流量采集周期推送：
+- 0.2.31 起，有订阅者且客户端数 ≤2000 时服务端每 **1 秒**推送一帧；否则
+  回到 `traffic_poll_secs` 的轮询周期。没有订阅者时不构建帧。
   `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
   onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
   time}`。
   - `traffics`: `[{Tag, Up, Down, IsInbound, IsOutbound}]`，本轮入站增量；
   - `clientTraffics`: `[{email, up, down}]`，本轮客户端增量；
   - `clientTrafficIntervalMs`: 本轮增量**实际**跨越的采样间隔（毫秒，
-    单调时钟测得）；通常约等于配置的轮询长度，tick 超时或漏采时更长。
-    首次采样没有上一时间点，不携带增量（此时该字段回退为配置值）。
+    单调时钟测得）；0.2.31 快速显示模式下约 1000，受限/大面板时为配置的
+    轮询长度；tick 超时或漏采时更长。首次采样没有上一时间点，不携带增量
+    （此时该字段回退为配置值）。
   - `lastOnlineMap`: `email -> 毫秒时间戳`；在线集合按本地上送。
 - 前端用 `clientTrafficIntervalMs` 换算速度；帧中缺失的实体视为空闲并清空
   速度。统计接口失败时推送空增量以清空旧速度。

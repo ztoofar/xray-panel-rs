@@ -28,6 +28,11 @@ const MAX_HISTORY: usize = 240;
 // clients look online long after they were gone.
 const MIN_ONLINE_GRACE_SECS: i64 = 20;
 const MAX_ONLINE_GRACE_SECS: i64 = 60;
+// Fast display ticks (1s) mean three QueryStats per second. That is cheap for
+// the panels this project targets, but on a very large client set the reply
+// itself can be tens of MB, so above this size the display falls back to the
+// configured poll instead of multiplying that load by five.
+const FAST_DISPLAY_MAX_CLIENTS: usize = 2_000;
 
 pub fn spawn(state: AppState) {
     tokio::spawn(async move {
@@ -61,6 +66,21 @@ pub fn spawn(state: AppState) {
         // sample redundant, keeping the extra memory to one sample.
         let billing = BillingSink::new();
         tokio::spawn(run_billing_writer(state.clone(), billing.clone()));
+        // Clients/inbounds/identity maps used by the display path. Reloaded on
+        // every billing tick (the old poll cadence) and whenever the settings
+        // wake us, but reused by the faster display ticks so a 1s speed sample
+        // does not run four unnecessary SELECTs each second.
+        let mut roster: Option<Roster> = None;
+        // The accounting writer keeps the configured poll cadence; only the
+        // display path (speeds + WS frame) runs faster. A browser opens one
+        // WS connection for the whole session (PanelLayout), so the receiver
+        // count is the right "someone is watching" signal.
+        let mut last_bill_at: Option<std::time::Instant> = None;
+        // Display deltas are summed across the faster ticks and handed to the
+        // billing writer as one sample, so a client that moved bytes early in
+        // the window still gets its last-online bump.
+        let mut moved_since_bill: HashSet<String> = HashSet::new();
+        let mut active_since_bill: HashSet<String> = HashSet::new();
         loop {
             // Xray restarts (manual, config apply, crash) drop every live
             // connection. 3x-ui keeps its online map inside the Xray process;
@@ -72,6 +92,10 @@ pub fn spawn(state: AppState) {
                 state.stats.invalidate_online_api_probe();
                 *state.traffic_speeds.lock().await = TrafficSpeeds::default();
                 generation = Some(current);
+                roster = None;
+                moved_since_bill.clear();
+                active_since_bill.clear();
+                last_bill_at = None;
             }
 
             // A new process starts with zero counters, so every stored
@@ -92,6 +116,10 @@ pub fn spawn(state: AppState) {
                         // first-pass flags) restart with them.
                         stats_last.clear();
                         stats_baselined.clear();
+                        roster = None;
+                        moved_since_bill.clear();
+                        active_since_bill.clear();
+                        last_bill_at = None;
                         tracing::info!(epoch, "xray started; traffic baselines reset");
                     }
                     Err(err) => {
@@ -104,33 +132,76 @@ pub fn spawn(state: AppState) {
                 }
             }
             let secs = poll_seconds(&state).await;
+            let bill = last_bill_at
+                .map(|at| at.elapsed() >= Duration::from_secs(secs))
+                .unwrap_or(true);
+            // Reload the roster on accounting ticks (the old poll cadence) and
+            // whenever the settings wake the loop; reuse it for the faster
+            // display ticks.
+            if bill || roster.is_none() {
+                match load_roster(&state).await {
+                    Ok(loaded) => roster = Some(loaded),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "traffic roster load failed");
+                        *state.traffic_speeds.lock().await = TrafficSpeeds::default();
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+            }
+            // Display cadence: 1s while a browser is connected, otherwise the
+            // configured poll. This is what makes the speed column match a
+            // 1s server monitor instead of showing a five-second average that
+            // lags every ramp-up and overstates the window after a burst.
+            // Billing stays on `secs` (the 3x-ui model): the DB never sees
+            // five times the writes just because somebody is watching.
+            let watching = state.ws_events.receiver_count() > 0
+                && roster
+                    .as_ref()
+                    .is_some_and(|roster| roster.clients.len() <= FAST_DISPLAY_MAX_CLIENTS);
+            let tick_secs = if watching { 1 } else { secs };
             // Tick before sleeping so a freshly started panel knows who is
             // online without waiting a full interval first.
             let started = std::time::Instant::now();
-            if let Err(err) = tick(
+            match tick(
                 &state,
                 secs,
-                &mut last_stats_at,
-                &mut stats_last,
-                &mut stats_baselined,
-                &billing,
+                TrafficTick {
+                    last_stats_at: &mut last_stats_at,
+                    stats_last: &mut stats_last,
+                    stats_baselined: &mut stats_baselined,
+                    billing: &billing,
+                    roster: roster.as_ref().expect("roster loaded above"),
+                    bill,
+                    moved_since_bill: &mut moved_since_bill,
+                    active_since_bill: &mut active_since_bill,
+                },
             )
             .await
             {
-                tracing::warn!(error = %err, "traffic tick failed");
-                // Never leave a rate from an earlier, unrelated sample on the
-                // panel after a failed accounting round.
-                *state.traffic_speeds.lock().await = TrafficSpeeds::default();
+                Ok(billed) => {
+                    if billed {
+                        last_bill_at = Some(started);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "traffic tick failed");
+                    // Never leave a rate from an earlier, unrelated sample on
+                    // the panel after a failed accounting round.
+                    *state.traffic_speeds.lock().await = TrafficSpeeds::default();
+                }
             }
-            // Keep the configured cadence when a tick ran slow (e.g. an
+            // Keep the display cadence when a tick ran slow (e.g. an
             // unreachable stats API): sleep only the remainder of the period.
             // A setting change wakes us early so a shorter interval applies
-            // without waiting out the old sleep.
+            // without waiting out the old sleep, and forces a roster reload.
             let elapsed = started.elapsed();
-            let wait = Duration::from_secs(secs).saturating_sub(elapsed);
+            let wait = Duration::from_secs(tick_secs).saturating_sub(elapsed);
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
-                _ = state.refresh_notify.notified() => {}
+                _ = state.refresh_notify.notified() => {
+                    roster = None;
+                }
             }
         }
     });
@@ -157,14 +228,72 @@ async fn clear_online_state(state: &AppState) {
     state.active_inbound_last_seen.lock().await.clear();
 }
 
-async fn tick(
-    state: &AppState,
-    poll_secs: u64,
-    last_stats_at: &mut Option<std::time::Instant>,
-    stats_last: &mut HashMap<DeltaKey, i64>,
-    stats_baselined: &mut HashSet<&'static str>,
-    billing: &BillingSink,
-) -> anyhow::Result<()> {
+/// Online set as last computed by an accounting tick. Display ticks use it
+/// without paying for another online-users RPC.
+async fn current_online(state: &AppState) -> HashSet<String> {
+    state.online_clients.lock().await.keys().cloned().collect()
+}
+
+/// Divisor for an empty traffic frame (a failed sample). While a browser is
+/// connected the display cadence is 1s, so the frame must not advertise the
+/// configured poll.
+fn frame_interval_hint(poll_secs: u64, ws_enabled: bool) -> u64 {
+    if ws_enabled {
+        1000
+    } else {
+        poll_secs.saturating_mul(1000)
+    }
+}
+
+/// Everything the display path needs from the database, loaded once per
+/// accounting tick and reused by the faster 1s display ticks.
+struct Roster {
+    clients: Vec<Client>,
+    inbounds: Vec<Inbound>,
+    client_emails: HashSet<String>,
+    email_by_identity: HashMap<String, String>,
+    tag_by_identity: HashMap<String, String>,
+}
+
+async fn load_roster(state: &AppState) -> anyhow::Result<Roster> {
+    let clients = db::clients::list_all(&state.db).await?;
+    let associations = db::client_inbounds::all(&state.db).await?;
+    let inbounds = db::inbounds::list(&state.db).await?;
+    let client_emails = clients.iter().map(|client| client.email.clone()).collect();
+    let (email_by_identity, tag_by_identity) = identity_maps(&clients, &inbounds, &associations);
+    Ok(Roster {
+        clients,
+        inbounds,
+        client_emails,
+        email_by_identity,
+        tag_by_identity,
+    })
+}
+
+/// Mutable loop state handed to one tick. Bundled so the display/billing split
+/// keeps the tick signature readable.
+struct TrafficTick<'a> {
+    last_stats_at: &'a mut Option<std::time::Instant>,
+    stats_last: &'a mut HashMap<DeltaKey, i64>,
+    stats_baselined: &'a mut HashSet<&'static str>,
+    billing: &'a BillingSink,
+    roster: &'a Roster,
+    bill: bool,
+    moved_since_bill: &'a mut HashSet<String>,
+    active_since_bill: &'a mut HashSet<String>,
+}
+
+async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow::Result<bool> {
+    let TrafficTick {
+        last_stats_at,
+        stats_last,
+        stats_baselined,
+        billing,
+        roster,
+        bill,
+        moved_since_bill,
+        active_since_bill,
+    } = ctx;
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
     // Building the 3x-ui traffic frame is not free: it serialises every active
@@ -180,34 +309,43 @@ async fn tick(
     // Per-attachment identities are what let us attribute an online email to
     // the inbound it is connected through. They have to exist before the
     // online API result can be decoded.
-    let clients = db::clients::list_all(&state.db).await?;
-    let associations = db::client_inbounds::all(&state.db).await?;
-    let inbounds = db::inbounds::list(&state.db).await?;
-    let client_emails: HashSet<String> =
-        clients.iter().map(|client| client.email.clone()).collect();
-    let (email_by_identity, tag_by_identity) = identity_maps(&clients, &inbounds, &associations);
+    let clients = &roster.clients;
+    let inbounds = &roster.inbounds;
+    let client_emails = &roster.client_emails;
+    let email_by_identity = &roster.email_by_identity;
+    let tag_by_identity = &roster.tag_by_identity;
 
     // Connection-based onlines are the primary signal (3x-ui GetUsersStats):
     // they catch idle-but-connected clients that move no bytes this poll.
-    let api_snapshot = match state.stats.online_users().await {
-        Ok(users) => users.as_deref().map(|users| {
-            decode_online_users(users, &email_by_identity, &tag_by_identity, &client_emails)
-        }),
-        Err(err) => {
-            tracing::debug!(error = %err, "xray online users unavailable");
-            None
+    // Only the accounting tick pays for the extra API call; display ticks
+    // between them reuse the online set already in AppState.
+    let api_snapshot = if bill {
+        match state.stats.online_users().await {
+            Ok(users) => users.as_deref().map(|users| {
+                decode_online_users(users, email_by_identity, tag_by_identity, client_emails)
+            }),
+            Err(err) => {
+                tracing::debug!(error = %err, "xray online users unavailable");
+                None
+            }
         }
+    } else {
+        None
     };
-    let online_ip_counts = api_snapshot
-        .as_ref()
-        .map(|snapshot| {
-            snapshot
-                .ips
-                .iter()
-                .map(|(email, ips)| (email.clone(), ips.len() as i64))
-                .collect::<HashMap<_, _>>()
-        })
-        .unwrap_or_default();
+    let online_ip_counts = if bill {
+        api_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .ips
+                    .iter()
+                    .map(|(email, ips)| (email.clone(), ips.len() as i64))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
 
     let sample_at = std::time::Instant::now();
     // One QueryStats per family (3x-ui): a failing family leaves the others
@@ -222,28 +360,36 @@ async fn tick(
             *state.traffic_speeds.lock().await = TrafficSpeeds::default();
             // No traffic deltas this round, but the online API may still work;
             // either way let both windows age out instead of pinning clients.
-            let online_emails =
-                refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
-            refresh_active_inbounds(state, now, grace, &[]).await;
+            let online_emails = if bill {
+                refresh_online(state, now, grace, api_snapshot.as_ref(), moved_since_bill).await
+            } else {
+                current_online(state).await
+            };
+            if bill {
+                let active: Vec<String> = active_since_bill.iter().cloned().collect();
+                refresh_active_inbounds(state, now, grace, &active).await;
+            }
             // Empty deltas clear the live speed in the browser while keeping
             // the connection-based online set accurate.
             broadcast_traffic(
                 state,
-                poll_secs.saturating_mul(1000),
+                frame_interval_hint(poll_secs, ws_enabled),
                 &[],
                 &[],
                 &online_emails,
-                &clients,
+                clients,
                 now,
             )
             .await;
-            if let Err(err) =
-                persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now)
-                    .await
-            {
-                tracing::warn!(error = %err, "online heartbeat persist failed");
+            if bill {
+                if let Err(err) =
+                    persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now)
+                        .await
+                {
+                    tracing::warn!(error = %err, "online heartbeat persist failed");
+                }
             }
-            return Ok(());
+            return Ok(false);
         }
     };
     for family in &families {
@@ -260,26 +406,35 @@ async fn tick(
     if state.xray.start_epoch() != epoch_before {
         tracing::debug!("xray restarted during the stats sample; discarding it");
         *state.traffic_speeds.lock().await = TrafficSpeeds::default();
-        let online_emails =
-            refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await;
-        refresh_active_inbounds(state, now, grace, &[]).await;
+        moved_since_bill.clear();
+        active_since_bill.clear();
+        let online_emails = if bill {
+            refresh_online(state, now, grace, api_snapshot.as_ref(), &HashSet::new()).await
+        } else {
+            current_online(state).await
+        };
+        if bill {
+            refresh_active_inbounds(state, now, grace, &[]).await;
+        }
         // Clear any speed label still pinned to the previous process.
         broadcast_traffic(
             state,
-            poll_secs.saturating_mul(1000),
+            frame_interval_hint(poll_secs, ws_enabled),
             &[],
             &[],
             &online_emails,
-            &clients,
+            clients,
             now,
         )
         .await;
-        if let Err(err) =
-            persist_online_heartbeat(state, &clients, &online_emails, &HashSet::new(), now).await
-        {
-            tracing::warn!(error = %err, "online heartbeat persist failed");
+        if bill {
+            if let Err(err) =
+                persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now).await
+            {
+                tracing::warn!(error = %err, "online heartbeat persist failed");
+            }
         }
-        return Ok(());
+        return Ok(false);
     }
     // Deltas and rates share one window: baselines only advance when a sample
     // is applied, so a missed RPC makes the next delta span the whole gap.
@@ -313,8 +468,6 @@ async fn tick(
     // browser divides them by `clientTrafficIntervalMs`.
     let mut ws_traffics: Vec<InboundTraffic<'_>> = Vec::new();
     let mut ws_client_traffics: Vec<ClientTraffic<'_>> = Vec::new();
-    let mut moved_emails: HashSet<String> = HashSet::new();
-    let mut active_tags: Vec<String> = Vec::new();
     // Live display deltas (WS frame + traffic_speeds) come from the in-memory
     // baseline engine (3x-ui StatsLastValues), not from the DB: DB baselines
     // only advance on successful billing writes, so a failed write can never
@@ -324,15 +477,15 @@ async fn tick(
         &families,
         stats_last,
         stats_baselined,
-        &email_by_identity,
-        &client_emails,
+        email_by_identity,
+        client_emails,
     );
 
-    for client in &clients {
+    for client in clients {
         let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
         let display_down = display.client_down.get(&client.email).copied().unwrap_or(0);
         if display_up > 0 || display_down > 0 {
-            moved_emails.insert(client.email.clone());
+            moved_since_bill.insert(client.email.clone());
         }
         if (display_up > 0 || display_down > 0) && ws_enabled && rated {
             ws_client_traffics.push(ClientTraffic {
@@ -346,11 +499,11 @@ async fn tick(
         }
     }
 
-    for inbound in &inbounds {
+    for inbound in inbounds {
         let display_up = display.inbound_up.get(&inbound.tag).copied().unwrap_or(0);
         let display_down = display.inbound_down.get(&inbound.tag).copied().unwrap_or(0);
         if display_up > 0 || display_down > 0 {
-            active_tags.push(inbound.tag.clone());
+            active_since_bill.insert(inbound.tag.clone());
         }
         if (display_up > 0 || display_down > 0) && ws_enabled && rated {
             ws_traffics.push(InboundTraffic {
@@ -374,9 +527,19 @@ async fn tick(
     // even if the billing tail (or the history write) runs long.
     *last_stats_at = Some(sample_at);
 
-    let online_emails =
-        refresh_online(state, now, grace, api_snapshot.as_ref(), &moved_emails).await;
-    refresh_active_inbounds(state, now, grace, &active_tags).await;
+    // Online sets and the DB write only run on accounting ticks. Display
+    // ticks reuse the online set already in AppState, so a 1s frame cadence
+    // does not turn into one online API call and one heartbeat UPDATE per
+    // second.
+    let online_emails = if bill {
+        let online =
+            refresh_online(state, now, grace, api_snapshot.as_ref(), moved_since_bill).await;
+        let active: Vec<String> = active_since_bill.iter().cloned().collect();
+        refresh_active_inbounds(state, now, grace, &active).await;
+        online
+    } else {
+        current_online(state).await
+    };
 
     broadcast_traffic(
         state,
@@ -384,10 +547,14 @@ async fn tick(
         &ws_traffics,
         &ws_client_traffics,
         &online_emails,
-        &clients,
+        clients,
         now,
     )
     .await;
+
+    if !bill {
+        return Ok(false);
+    }
 
     // Raw counters for the serialized billing writer. The display path above
     // already ran; whatever the database needs seconds to do next cannot move
@@ -431,12 +598,13 @@ async fn tick(
             inbound_down,
             outbound_up,
             outbound_down,
-            moved_emails,
+            moved_emails: std::mem::take(moved_since_bill),
             online_emails,
         })
         .await;
+    active_since_bill.clear();
 
-    Ok(())
+    Ok(true)
 }
 
 /// One poll's raw counters handed to the serialized billing writer. Values

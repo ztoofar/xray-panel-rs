@@ -18,41 +18,31 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 119/119、clippy 零警告、Cargo 版本 `0.2.29`、
+   期望：`cargo test` 121/121、clippy 零警告、Cargo 版本 `0.2.31`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-06）
 
-- **当前发布：GitHub `v0.2.30`**（tag → `c3bd5b5`，§2.50）：采样与计费解耦
-  （§2.49、DECISIONS D055、KNOWN-ISSUES G14）——`src/jobs.rs` tick 显示路径
-  （`traffic_speeds`/在线活跃/WS 广播）先跑完，原始计数器装 `BillingSample`
-  推入 `BillingSink`（单槽合并、新样本取代旧样本、内存上界一个样本），独立
-  tokio 任务 `run_billing_writer`→`apply_billing` 串行落库（计费/禁用/重置/
-  心跳/出站/历史），失败只记 warn；epoch 不符的旧进程样本丢弃。修复 poll=2s
-  大部署下速度列被计费尾工摊薄（用户报 tunnel「比 3x-ui 小很多」）。
-- 发布复核：main CI `42067360254`、release `42068104145` 成功；包 sha256 与
-  GitHub digest、包内 `SHA256SUMS`、`LUMEN_VERSION=0.2.30` 一致（§2.50）。
-- 源码验证：`cargo test` **121/121**（含 2 个合并槽单测）、clippy 零警告、
-  fmt；真实 Xray tunnel 与 fake-stats 两条本地链路 PASS。前端未改动，
-  WS 帧协议与 0.2.25 一致。
-- **现场验证完成（2026-11-06）**：SSH 登录现场服务器实测 v0.2.30（二进制
-  13,000,368 字节）、`traffic_poll_secs=5`、Xray 26.10.31。`in-802-tcpudp`
-  60s 对照：Xray 原始 3.7 KB/s+1.6 MB/s = WS 帧 1.6 MB/s = DB 计费
-  1.6 MB/s = REST 均值 1.5 MB/s，帧间隔 5.0s = 除数 5.0s；空闲复核
-  `upSpeed` 1422 B/s ≈ 原始 uplink 1760 B/s。journal 无 billing/stats
-  警告。**结论：管线正确**——用户看到的 3.32K 是 ↑ 上行列（下载时上行
-  只有请求/ACK），下载量在 ↓ 列（~1.5–1.8 MB/s）；监控 4 MB/s ≈ 代理
-  两条腿（客户端侧+源站侧）+ 包头/TLS，面板只算单条腿 payload（§G14）。
-- 可选后续：把速度标签从纯箭头改为「上传/下载」显式文案（需前端构建，
-  等用户确认要不要）。
-- 上一发布：`v0.2.29`（3x-ui 模型重写取数）、`v0.2.28`（入站 WS 过期保护）。
+- **当前源码：`0.2.31`（待发布）**：实时速度改为 1 秒显示采样
+  （§2.51、DECISIONS D056）——`src/jobs.rs` 显示 tick 与计费 tick 分离；
+  有 `/ws` 订阅者且客户端 ≤2000 时显示每 1 秒采样、写 `traffic_speeds`
+  并广播 1 秒 WS 帧；计费/在线 API/心跳/roster 仍按 `traffic_poll_secs`。
+  >2000 客户端自动回到配置轮询。现场 0.2.30 四方对照证明原管线字节与
+  计费正确，5 秒窗口在爬坡/突发时与 1 秒监控偏离最多约一个周期。
+- 源码验证：`cargo test` **121/121**、clippy 零警告、fmt；fake-stats
+  计费 e2e 13/13、无头 Chrome UI+WS 10/10、真实 Xray tunnel PASS
+  （WS 帧间隔 ~1.0 秒，峰值与 REST/Xray 一致）。
+- 上一发布：`v0.2.30`（采样与计费解耦，tag `c3bd5b5`，§2.50）、
+  `v0.2.29`（3x-ui 模型重写取数）、`v0.2.28`（入站 WS 过期保护）。
+- 现场部署验证仍待进行：新二进制发布后，打开入站/客户端页确认速度列
+  约每 1 秒更新、与 1 秒监控走势一致；观察 1 秒采样的 CPU/RSS。
 
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.26`；新改动须先按
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.31`；新改动须先按
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。

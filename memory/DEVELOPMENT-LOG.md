@@ -1398,3 +1398,26 @@
     （~1.5–1.8 MB/s，突发十余 MB/s）。监控 4 MB/s ≈ 代理两条腿 + 包头。
 - 未改产品代码。G14/NEXT-STEPS 记录结论；可选后续：速度标签改用
   「上传/下载」文案（待用户确认）。
+
+## 2026-11-06 — 实时速度 1 秒显示采样（0.2.31，未打包）
+
+- 用户明确要求修复入站/客户端实时速度显示不准；远程复核（Debian 面板
+  0.2.30、`traffic_poll_secs=5`）后确认：Xray 原始计数器、WS 帧增量、
+  REST `upSpeed/downSpeed`、DB 计费在 5 秒窗口内完全一致；差异来自显示
+  窗口。使用 4 MiB/s 限速下载复现窗口边界读数 3.22 / 4.00 / 2.33 MB/s
+  （真实稳定 4.00 MB/s）；5 秒平均在爬坡/结束/突发跨窗口时偏离 1 秒监控。
+- 改动：
+  - `src/jobs.rs`：显示 tick 与计费 tick 分离。`/ws` 有订阅者且客户端
+    ≤2000 时显示 tick = 1 秒；否则回到 `traffic_poll_secs`。计费、在线
+    API、`last_online` 心跳、roster 仍在计费 tick；显示 tick 复用 roster，
+    1 秒移动邮箱/活跃 tag 累积到计费 tick。
+  - 新增 `Roster` / `load_roster` / `TrafficTick`、`current_online`、
+    `frame_interval_hint`；`tick` 参数收拢，减少每 tick 的 DB 读取。
+  - 文档：`docs/DECISIONS.md` D056、`docs/ARCHITECTURE.md` §6/§6.1、
+    `memory/CURRENT-STATUS.md` §2.51。
+- 版本：`Cargo.toml` / `Cargo.lock` 0.2.30 → **0.2.31**。
+- 验证：`cargo test` **121/121**、clippy 零警告、fmt；fake-stats 计费
+  e2e 13/13；无头 Chrome UI+WS 10/10；真实 Xray tunnel 回归 PASS
+  （WS 帧间隔 ~1.0 秒，峰值 2,158,371 B/s 与 REST/Xray 一致）。
+- 未验证：真实 Linux/musl 大面板 1 秒采样的 CPU/内存；>2000 客户端自动
+  回退轮询的实际效果。

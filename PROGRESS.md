@@ -1360,3 +1360,16 @@ SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=
   asset digest
   `sha256:9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`。
 - Actions：release run `42015308253` 成功；main CI run `42015280025` 成功。
+
+### v0.2.31 实时速度 1 秒显示采样（2026-11-06）
+
+- 现场 0.2.30 四方对照（Xray 计数器 / WS 帧 / REST / DB）证明字节与计费
+  正确；5 秒显示窗口在爬坡/结束/突发跨窗口时与 1 秒网卡监控相差几十个
+  百分点（本地 4 MiB/s 限速下载实测 3.22 / 4.00 / 2.33 MB/s，真值稳定
+  4.00 MB/s）。
+- `src/jobs.rs`：显示 tick 与计费 tick 分离；有 `/ws` 订阅者且客户端
+  ≤2000 时显示每 1 秒采样并广播，计费/在线 API/心跳/roster 仍按
+  `traffic_poll_secs`；>2000 客户端自动回退轮询。
+- 验证：`cargo test` 121/121、clippy 零警告、fmt；fake-stats 计费 e2e
+  13/13、无头 Chrome UI+WS 10/10、真实 Xray tunnel PASS（帧间隔 ~1.0s）。
+- 版本 0.2.30 → 0.2.31；未在真实 Linux 大面板验证。

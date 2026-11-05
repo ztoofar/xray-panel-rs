@@ -182,8 +182,15 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 
 - 轮询周期：`traffic_poll_secs`（默认 5 秒，校验范围 2–300）；前端入站列表工具栏
   可改，保存后通过 `Notify` 立即唤醒 job。
+- **显示节拍与计费节拍分离（0.2.31）**：有浏览器持有 `/ws` 且客户端数
+  ≤ 2000 时，显示 tick 为 **1 秒**；否则显示也回到 `traffic_poll_secs`。
+  计费、在线 API、`last_online` 心跳和 roster（clients/inbounds/身份映射）
+  仍只在 `traffic_poll_secs` 的计费 tick 上执行。这样速度列按 1 秒窗口刷新，
+  接近 1 秒网卡监控，而 DB 写入不因有人看页面而增加五倍。显示 tick 的
+  增量/移动邮箱/活跃 tag 会在计费 tick 汇总后交给 writer。
 - 每 tick：
-  1. 读取 clients / client_inbounds / inbounds，构建 attachment 身份映射。
+  1. 计费 tick 读取 clients / client_inbounds / inbounds，构建 attachment
+     身份映射并缓存为 `Roster`；显示 tick 复用该缓存。
   2. `GetUsersStats`（若核心支持）拿连接级在线用户与 IP；未知统计身份直接丢弃。
    在线 IP 存在 `AppState.online_clients`，由 `POST
    /panel/api/clients/onlineIps` 提供给客户端详情弹窗。Xray 的 OnlineMap
@@ -226,10 +233,12 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
   7. 用本轮显示增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
      每个客户端邮箱的字节/秒，写入 `AppState.traffic_speeds`；空闲实体没有条目，
      UI 因此清空速度。`/panel/api/inbounds/list/slim` 返回 `upSpeed/downSpeed`，
-     客户端列表在 `traffic` 内返回同名速率。
+     客户端列表在 `traffic` 内返回同名速率。显示 tick 的间隔是 1 秒（受限时
+     为 `traffic_poll_secs`），所以 REST 兜底值也按同一窗口更新。
   8. 更新在线集合（连接信号 ∪ 本轮显示流量信号），窗口 = `2×poll` 并限制在
-     20–60 秒；`last_online` 心跳由 writer 落库。统计失败轮广播空增量清
-     速度（D054）。
+     20–60 秒；`last_online` 心跳由 writer 落库。这步只在计费 tick 执行；
+     中间的显示 tick 广播 AppState 中已有的在线集合，不重复调用在线 API。
+     统计失败轮广播空增量清速度（D054）。
 - Xray 子进程**新启动**时（supervisor 的 `start_epoch` 增加，首次启动也算），
   先在一个事务里把 clients/inbounds/outbound_traffics/client_inbound_traffic
   的 `last_*` 基准清零（不动累计 `up/down`），再开始采样；内存显示基线与
@@ -280,7 +289,8 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 
 - 受会话 Cookie 保护的 WebSocket；base path 由现有 guard 重写
   （`/secret/ws` → `/ws`）。
-- 流量 job 每个采集周期广播一帧
+- 流量 job 在有人订阅 `/ws` 时每 **1 秒**广播一帧（客户端数 > 2000 时回到
+  配置的轮询周期）；没有订阅者不建帧、不查询额外在线 API。
   `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
   onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
   time}`；`traffics` 是入站 tag 的 `{Tag,Up,Down,IsInbound}` 增量，

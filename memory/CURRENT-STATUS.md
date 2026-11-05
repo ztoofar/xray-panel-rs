@@ -1301,6 +1301,29 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - **未验证**：真实 Linux/musl 运行；tunnel followRedirect/TPROXY 模式；
   其余入站协议的真实流量统计；超大客户端数导致 tick 超时的真实比例。
 
+## 2.51 实时速度改为 1 秒显示采样（2026-11-06，0.2.31，未打包）
+- 状态：已实现并本地验证；真实部署待验证。
+- 背景：0.2.30 部署后用户仍报入站/客户端实时速度不准。现场四方对照
+  （Xray 计数器 / WS 帧 / REST / DB）证明字节增量与 `增量 ÷ 真实间隔`
+  一致、计费累计一致；差异来自显示只有每 `traffic_poll_secs`（现场 5 秒）
+  一次，速度列是 5 秒平均值，与 1 秒网卡监控在爬坡/结束/突发跨窗口时相差
+  几十个百分点。本地 4 MiB/s 限速下载实测窗口边界 3.22 / 4.00 / 2.33 MB/s，
+  真实值稳定 4.00 MB/s。
+- 改动：
+  - `src/jobs.rs`：显示 tick 与计费 tick 分离。有 `/ws` 订阅者且客户端数
+    ≤2000 时显示 tick 为 1 秒；否则回到配置轮询。计费、在线 API、
+    `last_online` 心跳、roster 加载仍只在计费 tick 执行。显示 tick 复用
+    roster，并把 1 秒增量的移动邮箱/活跃入站 tag 累积到计费 tick。
+  - `Roster` / `TrafficTick` 结构减少 tick 参数与重复 DB 读取；
+    `frame_interval_hint` 让失败帧也携带 1 秒除数。
+  - 文档：`docs/DECISIONS.md` D056、`docs/ARCHITECTURE.md` §6/§6.1。
+- 版本：0.2.30 → 0.2.31（`Cargo.toml` / `Cargo.lock`）。
+- 验证：`cargo test` **121/121**、clippy 零警告、fmt；fake-stats 计费
+  e2e 13/13；无头 Chrome UI+WS 10/10（速度标签出现/清除、帧间隔与除数）；
+  真实 Xray tunnel 回归 PASS（WS 帧间隔 ~1.0 秒，峰值与 REST/Xray 一致）。
+- 未验证：真实 Linux/musl 大面板的 1 秒采样 CPU/内存；>2000 客户端自动
+  回退到轮询的实际效果。
+
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
 以下能力在 `PROGRESS.md` / README 中有实现与历史验证记录，本次只做了编译与
