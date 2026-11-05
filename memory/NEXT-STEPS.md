@@ -25,23 +25,22 @@
 
 ## 当前状态（2026-11-06）
 
-- 源码版本 **0.2.30**（未打包）：采样与计费彻底解耦（`CURRENT-STATUS.md`
-  §2.49、DECISIONS D055、KNOWN-ISSUES G14）。`src/jobs.rs`：tick 显示路径
+- **当前发布：GitHub `v0.2.30`**（tag → `c3bd5b5`，§2.50）：采样与计费解耦
+  （§2.49、DECISIONS D055、KNOWN-ISSUES G14）——`src/jobs.rs` tick 显示路径
   （`traffic_speeds`/在线活跃/WS 广播）先跑完，原始计数器装 `BillingSample`
-  推入 `BillingSink`（单槽合并、新样本取代旧样本、内存上界一个样本），
-  独立 tokio 任务 `run_billing_writer`→`apply_billing` 串行落库（计费/禁用/
-  重置/心跳/出站/历史），失败只记 warn；epoch 不符的旧进程样本丢弃。
-  修复 poll=2s 大部署下速度列被计费尾工摊薄（用户报 tunnel「比 3x-ui 小
-  很多」）。新增 2 个合并槽单测：`cargo test` **121/121**、clippy 零警告、
-  fmt；真实 Xray tunnel（帧间隔稳定 ~2015ms）与 fake-stats（1.01/2.03 vs
-  真值 1.0/2.0 MB/s）两条链路回归 PASS。
-- 当前发布：GitHub **`v0.2.29`**（tag → `117b418`，§2.48）。内容：按 3x-ui
-  模型重写实时流量取数（§2.47、D054、G13）：gRPC 接收上限 64 MiB、
-  user/inbound/outbound 分族查询、显示增量改内存基线引擎（DB 只管计费）。
+  推入 `BillingSink`（单槽合并、新样本取代旧样本、内存上界一个样本），独立
+  tokio 任务 `run_billing_writer`→`apply_billing` 串行落库（计费/禁用/重置/
+  心跳/出站/历史），失败只记 warn；epoch 不符的旧进程样本丢弃。修复 poll=2s
+  大部署下速度列被计费尾工摊薄（用户报 tunnel「比 3x-ui 小很多」）。
+- 发布复核：main CI `42067360254`、release `42068104145` 成功；包 sha256 与
+  GitHub digest、包内 `SHA256SUMS`、`LUMEN_VERSION=0.2.30` 一致（§2.50）。
+- 源码验证：`cargo test` **121/121**（含 2 个合并槽单测）、clippy 零警告、
+  fmt；真实 Xray tunnel 与 fake-stats 两条本地链路 PASS。前端未改动，
+  WS 帧协议与 0.2.25 一致。
 - **待用户现场验证**：tunnel 实时速度是否追平 3x-ui/网卡监控（允许包头
   3–8% 结构差）。若仍偏小：`journalctl` 找 `traffic billing failed`，
   确认 `traffic_poll_secs` 与 WS 帧 `clientTrafficIntervalMs` 是否≈设置值。
-- 前端未改动；WS 帧协议与 0.2.25 一致。上一发布 `v0.2.28`。
+- 上一发布：`v0.2.29`（3x-ui 模型重写取数）、`v0.2.28`（入站 WS 过期保护）。
 
 ## 下一步（按用户任务二选一）
 

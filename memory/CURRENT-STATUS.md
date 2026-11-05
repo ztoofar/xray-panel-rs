@@ -1146,7 +1146,26 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   的实际比例；前端未改动，构建产物沿用 0.2.26。
 - 已随 0.2.27 发布（§2.44）。
 
-## 2.49 采样与计费解耦：串行计费 writer（2026-11-06，0.2.30）—— 已实现，未验证
+## 2.50 v0.2.30 发布（2026-11-06）—— 已验证（GitHub Actions + 本地包级复核）
+
+- 版本：`Cargo.toml` / `Cargo.lock` = `0.2.30`；提交 `c3bd5b5`，tag `v0.2.30`。
+- Release：<https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.30>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,527,291 字节**，
+  GitHub asset digest
+  `sha256:d4c2c816efa440567bb9271211e675e6af1d5bb31f589d06af95f39ad70bf429`。
+- Actions：main CI run `42067360254` 成功；release run `42068104145`
+  （head_sha = `c3bd5b5`）成功。Release body 四条更新内容中文 UTF-8 存储正确。
+- 本地包级复核（走 `192.168.1.251:10813` HTTP 代理下载）：包 sha256 与
+  digest 一致；解包校验包内 `SHA256SUMS` 与二进制
+  `ba98ca739144ae24bb9b453a76f417ebbe911950e9e20b3989dfc2975f7ab50c` 匹配；
+  二进制 13,000,368 字节，含 `LUMEN_VERSION=0.2.30` 与 WS 帧字段
+  `clientTrafficIntervalMs`。解包产物存 `tmp/pkg-0.2.30/`。
+- 发布前验证：`cargo test` **121/121**、clippy 零警告、fmt；真实 Xray tunnel
+  与 fake-stats 两条本地链路 PASS（§2.49）。
+- **未验证**：真实 Linux/musl 大面板运行效果——tunnel 实时速度是否追平
+  3x-ui/网卡监控（允许包头 3–8% 结构差），待用户部署反馈（G14）。
+
+## 2.49 采样与计费解耦：串行计费 writer（2026-11-06，0.2.30）—— 已发布
 
 用户报「tunnel 协议的流量显示还是不准确」（v0.2.29 部署后），追问确认：
 累计量正常、**实时速度比 3x-ui 小很多**，轮询间隔设置是 **2 秒**。

@@ -1342,3 +1342,20 @@
   两条本地链路回归 PASS（前端未改动）。
 - 未验证：真实 Linux 大面板（本轮症状场景）；待用户部署 0.2.30 对照
   3x-ui/网卡监控确认收敛到包头级差异（3–8%）。
+
+## 2026-11-06 02:20 — v0.2.30 发布（GitHub Actions + 本地包级复核）
+
+- 用户确认「发布」。main CI run `42067360254` 成功 → tag `v0.2.30`
+  （提交 `c3bd5b5`）→ release run `42068104145` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.30>
+  资产 5,527,291 字节，asset digest
+  `sha256:d4c2c816efa440567bb9271211e675e6af1d5bb31f589d06af95f39ad70bf429`；
+  body 四条更新内容中文 UTF-8 存储正确。
+- 复核（经 `192.168.1.251:10813` HTTP 代理下载）：包 sha256 与 digest 一致；
+  解包校验包内 `SHA256SUMS` 与二进制
+  `ba98ca739144ae24bb9b453a76f417ebbe911950e9e20b3989dfc2975f7ab50c` 匹配；
+  二进制 13,000,368 字节含 `LUMEN_VERSION=0.2.30` 与 `clientTrafficIntervalMs`；
+  解包产物存 `tmp/pkg-0.2.30/`。
+- 文档：CURRENT-STATUS §2.50（新增发布记录；§2.49 标为已发布）、
+  NEXT-STEPS 当前状态改 0.2.30、CLAUDE.md「待发布→已发布」。
+- 未验证：真实 Linux/musl 大面板运行效果（等待用户部署反馈）。
