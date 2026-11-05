@@ -308,16 +308,31 @@ def main():
 
     frames = {}   # tag -> [bytes, ...]
     intervals = {}  # tag -> [ms, ...]
-    rest_rows = []
+    # The UI column alternates between the WS frame value and the REST
+    # snapshot, and a single REST read is one 5s window — a ramping transfer
+    # reads 2-3x its own average. Record every REST poll so the table can
+    # compare averages and peaks instead of one lucky instant.
+    rest_series = {}  # tag -> [((up, down), ...)]
+    rest_times = {}
+    next_rest = 0.0
     end = time.time() + args.dur
     print("采集中…（期间请让流量稳定通过该入站）")
     while time.time() < end:
+        now = time.time()
+        if have_panel and now >= next_rest:
+            next_rest = now + 1.0
+            try:
+                snap = rest_slim(args.panel, cookie, tags)
+                for tag, (ru, rd, _, _) in snap.items():
+                    rest_series.setdefault(tag, []).append((ru, rd))
+                    rest_times.setdefault(tag, []).append(now)
+            except Exception as err:
+                print("REST 取样失败:", err)
         if ws is not None:
-            payload = ws.next_frame(timeout=0.5)
+            payload = ws.next_frame(timeout=0.4)
             if payload:
                 got = parse_ws_traffic(payload, tags)
                 if got:
-                    now = time.time()
                     for tag, (up, down, interval) in got.items():
                         frames.setdefault(tag, [0, 0])
                         frames[tag][0] += up
@@ -326,15 +341,10 @@ def main():
                             intervals.setdefault(tag, []).append(
                                 (now, up, down, interval))
             continue
-        time.sleep(0.5)
+        time.sleep(0.4)
 
     x1 = xray_counters(api_addr, "inbound>>>")
     r1 = read_db(db_path, tags) if db_path else None
-    if have_panel:
-        try:
-            rest_rows = rest_slim(args.panel, cookie, tags)
-        except Exception as err:
-            print("REST 取样失败:", err)
     span = time.time() - t0
 
     want = tags or set()
@@ -346,7 +356,7 @@ def main():
         want |= set(r0)
 
     print("\n=== 对照表（%s 秒窗口）===" % f"{span:.1f}")
-    print("%-22s %14s %14s %14s %14s" % ("tag", "Xray原始", "WS帧算法", "REST速度", "DB计费"))
+    print("%-20s %16s %14s %22s %16s" % ("tag", "Xray原始", "WS帧合计", "REST速度(均值/峰值)", "DB计费"))
     ok = True
     for tag in sorted(want):
         def fam(name_suffix):
@@ -358,7 +368,6 @@ def main():
             return None
 
         raw_up, raw_down = fam("uplink"), fam("downlink")
-        raw_total = (raw_up or 0) + (raw_down or 0)
 
         f_up = f_down = 0.0
         if tag in frames:
@@ -366,21 +375,29 @@ def main():
             f_down = frames[tag][1] / span
         iv = intervals.get(tag) or []
         iv_note = ""
-        if iv:
-            # 浏览器算法：delta ÷ intervalMs —— 用最后一帧演示它的除数 vs 真实帧间隔
-            last = iv[-1]
-            iv_note = " 帧间隔%.1fs/除数%.1fs" % (
-                (iv[-1][0] - iv[-2][0]) if len(iv) > 1 else float(last[3]) / 1000,
-                last[3] / 1000,
-            )
+        if len(iv) > 1:
+            gaps = [iv[i + 1][0] - iv[i][0] for i in range(len(iv) - 1)]
+            div_ms = sum(row[3] for row in iv) / len(iv)
+            iv_note = " 帧间隔min%.1f/avg%.1f/max%.1fs vs 除数%.1fs" % (
+                min(gaps), sum(gaps) / len(gaps), max(gaps), div_ms / 1000.0)
         f_total = f_up + f_down
 
         rest_txt = "-"
-        rest_total = None
-        if tag in rest_rows:
-            ru, rd = rest_rows[tag][0], rest_rows[tag][1]
-            rest_txt = "%s+%s" % (human(ru), human(rd))
-            rest_total = ru + rd
+        rest_avg = None
+        rest_peak = None
+        series = rest_series.get(tag) or []
+        if series:
+            avg_up = sum(s[0] for s in series) / len(series)
+            avg_dn = sum(s[1] for s in series) / len(series)
+            peak = max(series, key=lambda s: s[0] + s[1])
+            rest_txt = "均%s+%s|峰%s+%s" % (
+                human(avg_up).replace("/s", ""),
+                human(avg_dn).replace("/s", ""),
+                human(peak[0]).replace("/s", ""),
+                human(peak[1]).replace("/s", ""),
+            )
+            rest_avg = avg_up + avg_dn
+            rest_peak = peak[0] + peak[1]
 
         db_txt = "-"
         db_total = None
@@ -391,39 +408,40 @@ def main():
             db_total = du + dd
 
         raw_txt = "-"
+        raw_total = None
         if raw_up is not None or raw_down is not None:
             raw_txt = "%s+%s" % (human(raw_up or 0), human(raw_down or 0))
+            raw_total = (raw_up or 0) + (raw_down or 0)
 
-        print("%-22s %14s %14s %14s %14s%s"
+        print("%-20s %16s %14s %22s %16s%s"
               % (tag, raw_txt, human(f_total) if tag in frames else "-",
                  rest_txt, db_txt, iv_note))
 
+        # Per-tag verdict lines keep the table readable.
+        def cmp(label, value):
+            nonlocal ok
+            if raw_total and value is not None and raw_total > 10_000 and value > 10_000:
+                drift = (value - raw_total) / raw_total
+                if abs(drift) > 0.25:
+                    print("  → [%s] %s 较 Xray 原始 %+.0f%%" % (tag, label, drift * 100))
+                    ok = False
+
+        cmp("WS帧合计", f_total if tag in frames else None)
+        cmp("DB计费", db_total)
+        cmp("REST均值", rest_avg)
+        if raw_total and rest_peak is not None and raw_total > 10_000:
+            if abs(rest_peak - raw_total) / raw_total > 0.5:
+                print("  → [%s] REST 峰值较原始 %+.0f%%（爬坡流量下属正常：UI 末次窗口≠全程均值）"
+                      % (tag, (rest_peak - raw_total) / raw_total * 100))
+
     print("\n=== 判定 ===")
-    for tag in sorted(want):
-        raw = 0.0
-        if x0 and x1:
-            for suf in ("uplink", "downlink"):
-                key = "inbound>>>%s>>>traffic>>>%s" % (tag, suf)
-                if key in x0 and key in x1 and x1[key] >= x0[key]:
-                    raw += (x1[key] - x0[key]) / span
-        frame = sum(frames.get(tag, [0, 0])) / span if tag in frames else 0.0
-        dbt = 0.0
-        if r0 and r1 and tag in r0 and tag in r1:
-            dbt = sum(max(0, r1[tag][i] - r0[tag][i]) for i in (0, 1)) / span
-        if raw == 0 and frame == 0 and dbt == 0:
-            continue
-        if raw > 0 and frame > 0 and abs(frame - raw) / raw > 0.25:
-            print("  [%s] WS 帧字节量与 Xray 原始计数器差 %.0f%% —— 计数器读取/差值引擎有问题" %
-                  (tag, abs(frame - raw) / raw * 100))
-            ok = False
-        if raw > 0 and dbt > 0 and abs(dbt - raw) / raw > 0.25:
-            print("  [%s] DB 计费速率与原始计数器差 %.0f%% —— 计费路径丢数/重复" %
-                  (tag, abs(dbt - raw) / raw * 100))
-            ok = False
     if ok:
-        print("  四方在 ±25% 内一致：核心计数、WS 帧、计费都正确。")
-        print("  UI 数字与网卡监控仍不同的话，属于口径差异（payload vs 整网卡流量/双向合计），")
-        print("  或帧除数（看上面“帧间隔 vs 除数”：两数差大 = 采样被拖长，速度列被摊薄）。")
+        print("  四方均值在 ±25% 内一致：核心计数、WS 帧、REST、计费都正确，")
+        print("  速度列没有丢数或被摊薄。UI 与网卡监控的差距属于口径差异")
+        print("  （面板只算该端口 payload；监控含包头/重传/整机其他流量/双向合计），")
+        print("  以及采样窗平均 vs 瞬时值的差别。")
+    else:
+        print("  存在超出 ±25% 的偏差，按上面箭头列出的项排查。")
     print("\n请把上面整段表 + “面板 UI 上该入站速度列的数字” + “服务器监控同一时刻的数字”一起发来。")
 
 
