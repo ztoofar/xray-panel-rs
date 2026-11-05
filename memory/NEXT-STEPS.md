@@ -28,8 +28,9 @@
 - 源码 **0.2.26**：优化 0.2.25 实时 WS 流量帧的内存占用——无订阅者不构建
   帧、增量改为直接序列化、广播缓冲 8→2、WS ping/空闲/发送超时。协议字段
   与 0.2.25 一致。详见 `CURRENT-STATUS.md` §2.42、`DECISIONS.md` D051。
-- 上一版：GitHub `v0.2.25`（tag → `ade85bd`，资产 5,516,624 字节，
-  digest `sha256:d9128d0c...92a5`；Actions run `41884947044` 成功）。
+- 发布：GitHub `v0.2.26`（tag → `4ccbec5`，资产 5,518,877 字节，
+  digest `sha256:9c223ffa...ae2f`；release run `42015308253`、main CI
+  `42015280025` 成功）。上一版 `v0.2.25`：5,516,624 字节。
 - 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13；
   无客户端入站 4/4；无头 Chrome UI+WS 10/10；3000 客户端 RSS 对比见
   §2.42。

@@ -1352,3 +1352,11 @@ SOCKS→VLESS→本地限速 HTTP，15/15 PASS：8 MiB 下载后客户端 `down=
 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13、无客户端
 入站 4/4、无头 Chrome UI+WS 10/10；抓包确认 WS 帧字段与 0.2.25 一致。
 未验证：真实 Linux/musl 长时 RSS、超大客户端规模的真实内存曲线。
+
+### v0.2.26 发布（2026-11-05）
+
+- 提交 `4ccbec5`，tag `v0.2.26`。
+- Release 资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,518,877 字节，
+  asset digest
+  `sha256:9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`。
+- Actions：release run `42015308253` 成功；main CI run `42015280025` 成功。

@@ -8,10 +8,11 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.26`（已实现，待发布） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.25`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,516,624 字节**，asset digest `sha256:d9128d0c...92a5`；Release 页面只显示更新内容 |
+| `Cargo.toml` 版本 | `0.2.26`（发布 v0.2.26） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.26`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,877 字节**，asset digest `sha256:9c223ffa...ae2f`；Release 页面只显示更新内容 |
 | 当前源码 | `0.2.26`：优化 §2.40 实时 WS 推送的内存占用——无订阅者时不构建流量帧、增量改为直接序列化、广播缓冲降到 2 帧、WS 增加 ping/空闲/发送超时。详见 §2.42 |
-| 上一版 | GitHub Release `v0.2.24`：tar 5,467,602 字节，asset digest `sha256:88471d1f...30eb` |
+| 上一版 | GitHub Release `v0.2.25`：tar 5,516,624 字节，asset digest `sha256:d9128d0c...92a5` |
+| 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
 | 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
 | 0.2.24 SHA256 | `88471d1f81d1e287c069c10b2753702dc2da7b177fa27cd3bb7cecde897330eb`（tar.gz，GitHub asset digest） |
 | 0.2.23 SHA256 | `9bd16e8409f3c38098ef730f05bfb8f8e7bd49764eedab8225e9e5f40ced3811`（tar.gz，GitHub asset digest） |
@@ -21,7 +22,7 @@
 | 源码包 | GitHub Release 自动提供 source 归档；本地 0.2.16 源码包保留在 `dist/` 仅作备份 |
 | 前端构建产物 | `web/dist/` 已在 2026-11-05 02:1x 由当前 `frontend-3xui/` 源码重建（启用实时 WS） |
 | 当前生效前端 | `frontend-3xui/`，七个路由：`/`、入站、客户端、出站、路由、Xray、设置 |
-| musl 产物 | 0.2.25 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
+| musl 产物 | 0.2.26 Release tar 内含静态 ELF 二进制（已 strip）；本地不生成备用二进制 |
 | 运行验证环境 | Windows debug + fake xray 端到端；真实 Xray 26.10.31（Windows）+ 无头浏览器；**未在真实 Linux 上运行 musl 二进制** |
 | 记忆系统 | 已启用：根 `CLAUDE.md` + `memory/` + `docs/`（2026-10-31 建立） |
 
@@ -1064,6 +1065,14 @@ HTTP 头/协议帧等少量字节（本次实测 117 B），不要求逐字节�
 - **未验证**：真实 Linux/musl 运行、真实公网网络抖动、gRPC 故障注入。
 
 ## 2.42 实时 WS 流量帧内存优化（2026-11-05，0.2.26）—— 已验证并发布
+
+- 版本 `Cargo.toml` / `Cargo.lock` = `0.2.26`；提交 `4ccbec5`，tag `v0.2.26`
+  （指向 `4ccbec5`）。Release
+  <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.26>
+  唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,877 字节**，
+  asset digest
+  `sha256:9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`。
+- Actions：release run `42015308253` 成功；main CI run `42015280025` 成功。
 
 用户反馈 0.2.25 之后面板内存一直很高。定位到 0.2.25 的流量广播路径引入的
 常驻/瞬时占用，已优化：

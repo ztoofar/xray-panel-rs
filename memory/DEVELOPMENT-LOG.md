@@ -1167,3 +1167,14 @@
 - 验证：`cargo test` 113/113、clippy 零警告、fmt；fake e2e 13/13、
   无客户端入站 4/4、无头 Chrome UI+WS 10/10；WS 帧字段与 0.2.25 一致。
 - 未验证：真实 Linux/musl 长时 RSS、超大客户端规模的真实内存曲线。
+
+## 2026-11-05 19:05 — v0.2.26 发布
+
+- 版本 0.2.26；提交 `4ccbec5`，tag `v0.2.26`。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.26>
+  资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,518,877 字节，
+  GitHub asset digest
+  `sha256:9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`。
+- Actions：release run `42015308253` 成功；main CI run `42015280025` 成功。
+- 内容：0.2.25 实时 WS 流量帧的内存优化（无订阅者不建帧、直接序列化、
+  缓冲 2 帧、WS 保活/空闲/发送超时）。
