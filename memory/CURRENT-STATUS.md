@@ -8,12 +8,13 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.34`（未发布；最近发布 v0.2.33） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.33`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,531,253 字节**，asset digest `sha256:2439a1f7...306c`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.34`（未发布）：不再注入 `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由 `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核计数（按监听端口归属，仅显示，计费仍用 Xray 计数）。详见 §2.54 / D059。0.2.33 的关闭 splice 方案见 §2.53 / D058；0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| `Cargo.toml` 版本 | `0.2.34`（已发布 v0.2.34） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.34`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,533,163 字节**，asset digest `sha256:7b50e743...ff60`；Release 页面只显示更新内容 |
+| 当前源码 | `0.2.34`（已发布）：不再注入 `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由 `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核计数（按监听端口归属，仅显示，计费仍用 Xray 计数）。详见 §2.54 / D059。0.2.33 的关闭 splice 方案见 §2.53 / D058；0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| 0.2.34 SHA256 | `7b50e7437f19d2b0bc58f6c5541044cf6a86680994ee296a9fa99e626607ff60`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `8be945d3c39f57da48e9596c77d281e44d0305efdd6506dfd65b2ca9d7536ec4`（13,015,312 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.34` |
 | 0.2.33 SHA256 | `2439a1f7ea7e6f6f869c93b924ab7ae788130352e8e0ecdf53d9a170c7af306c`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `ecaaec3fa3305f1ae9dfc68e33a39a5eb9fecd988cd5060172fc34554228e49f`（13,008,928 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.33` |
 | 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
-| 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
+| 上一版 | GitHub Release `v0.2.33`：tar 5,531,253 字节，asset digest `sha256:2439a1f7...306c` |
 | 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
 | 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
 | 0.2.25 SHA256 | `d9128d0c349011dd0f8d22829857c8cf4c3b3e8002e8d3f62c0bb8d84db792a5`（tar.gz，GitHub asset digest） |
@@ -1424,9 +1425,9 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   `LUMEN_VERSION=0.2.33`。Release 说明只列本次更新内容，未写安装说明，
   未启用 `generate_release_notes`（D046/D047）。
 
-## 2.54 保留 splice 零拷贝，tunnel 实时速度改用内核 socket 计数（2026-11-06，0.2.34，未发布）
-- 状态：已实现、本地验证；**Linux 实际效果未验证**（Windows 无 sock_diag，
-  也没有 splice），未打包、未发布。
+## 2.54 保留 splice 零拷贝，tunnel 实时速度改用内核 socket 计数（2026-11-06，0.2.34，已发布 v0.2.34）
+- 状态：已实现、本地验证并发布 `v0.2.34`；**Linux 实际效果未验证**
+  （Windows 无 sock_diag，也没有 splice）。
 - 需求：用户要求“不关闭零拷贝也能实时显示 tunnel 速度”，并明确
   **不改 Xray**（不打补丁、不换自建二进制）。
 - 实现：
@@ -1468,8 +1469,14 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   `cargo clippy --all-targets -- -D warnings` 零警告、
   `cargo zigbuild --release --target x86_64-unknown-linux-musl` 成功
   （Linux netlink 分支可编译）。前端无改动。**未在真实 Linux 运行。**
-- 版本：0.2.33 → 0.2.34（`Cargo.toml` / `Cargo.lock`）。未打包、未打 tag、
-  未创建 Release。
+- 版本：0.2.33 → 0.2.34（`Cargo.toml` / `Cargo.lock`）。
+- 发布：提交 `5201899`，tag `v0.2.34`；main CI run `42225524738` 成功，
+  release run `42225960322` 成功；Release id `436540977`，资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,533,163 字节，asset digest
+  `sha256:7b50e743...ff60`；本机经代理下载复核：sha256 一致，包内
+  `SHA256SUMS` 与二进制 `8be945d3...6ec4` 匹配（13,015,312 字节，静态 ELF
+  已 strip），含 `LUMEN_VERSION=0.2.34`。Release 说明只列本次更新内容，
+  未写安装说明，未启用 `generate_release_notes`（D046/D047）。
 - 待验证（T32 改写 / T33）：真实 Linux 上 tunnel 下载 ↓ 连续非零、结束后
   无爆发；sock_diag 权限/失败回退；Xray 重启后基线重置；CPU/RSS 影响；
   `http`/`mixed` CONNECT 的剩余限制。详见 `TODO.md`。

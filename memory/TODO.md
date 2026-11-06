@@ -32,7 +32,7 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 ## P1 — 重要
 
 ### T32. 真实 Linux 验证 0.2.34 内核 socket 计数驱动的 tunnel 下行速度
-- 现状：0.2.34（未发布）不再注入 `XRAY_BUF_SPLICE`，保留 Xray 默认 splice；
+- 现状：0.2.34（已发布 v0.2.34）不再注入 `XRAY_BUF_SPLICE`，保留 Xray 默认 splice；
   tunnel 入站实时速度改由 `src/net_diag.rs` 的 `NETLINK_SOCK_DIAG`/tcp_info
   计数提供（D059）。Windows 无 sock_diag，也没有 splice，本地只验证了
   编译、报文解析单测（`cargo test` 132/132）和 clippy；**真实 Linux 效果

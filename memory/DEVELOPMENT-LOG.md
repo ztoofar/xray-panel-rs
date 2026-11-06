@@ -1573,3 +1573,21 @@
   未重建、未打包、未打 tag、未发布。
 - 未验证：Linux 上实际 sock_diag 行为与速度显示、权限回退、CPU/RSS；短连接
   漏计、http/mixed CONNECT 仍未覆盖（见 G15/T32/T33）。
+
+## 2026-11-06 — 发布 v0.2.34（保留 splice，内核 socket 计数）
+
+- 用户要求发布。提交 `5201899` 推送 `main`，main CI run `42225524738`
+  成功；推送轻量 tag `v0.2.34`，release run `42225960322` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.34>，
+  id `436540977`，资产 `xray-panel-rs-linux-amd64-lumen.tar.gz`
+  **5,533,163 字节**，asset digest
+  `sha256:7b50e7437f19d2b0bc58f6c5541044cf6a86680994ee296a9fa99e626607ff60`。
+- 本机经代理 `192.168.1.251:10813` 下载复核：tar.gz sha256 与 asset
+  digest 一致；包内含 `xray-panel-rs`、`SHA256SUMS`、`install.sh`、
+  `README.md`、`xray-panel.service`、`xray-panel.env.example`；包内
+  `sha256sum -c` 通过，二进制 `8be945d3...6ec4`（13,015,312 字节，静态
+  ELF 已 strip），含 `LUMEN_VERSION=0.2.34`。
+- Release 说明只列本次更新内容（恢复 freedom splice 零拷贝；tunnel 实时
+  下行改用内核 socket 计数；内核计数仅显示；短连接与 http/mixed 剩余限制），
+  未写安装说明，未启用 `generate_release_notes`（D046/D047）。
+- 未验证：真实 Linux/musl 部署运行 0.2.34（见 TODO T32）。

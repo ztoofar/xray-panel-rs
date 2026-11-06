@@ -18,14 +18,14 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 132/132、clippy 零警告、Cargo 版本 `0.2.34`（未发布）、
-   `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
+   期望：`cargo test` 132/132、clippy 零警告、Cargo 版本 `0.2.34`（已发布
+   v0.2.34）、`web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-06）
 
-- **当前源码：`0.2.34`（未发布）**（§2.54、D059）：不再注入
+- **当前源码：`0.2.34`（已发布 v0.2.34）**（§2.54、D059）：不再注入
   `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由
   `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核 socket 计数（按监听
   端口归属，仅显示；计费仍用 Xray 计数）。验证：`cargo test` **132/132**、
@@ -34,15 +34,17 @@
 - 0.2.33（已发布 v0.2.33，§2.53、D058）：曾默认注入
   `XRAY_BUF_SPLICE=disable` 关闭零拷贝换连续计数；0.2.34 已改为保留零拷贝 +
   内核计数显示。
-- **当前发布：GitHub `v0.2.33`**（tag `d6238b7`，§2.53、D058）：
-  main CI `42219286821`、release `42219725879` 成功；资产 5,531,253 字节，
-  digest `sha256:2439a1f7...306c`；包内二进制 `ecaaec3f...8e49f`
-  （13,008,928 字节，静态 ELF 已 strip）、`LUMEN_VERSION=0.2.33`，
+- **当前发布：GitHub `v0.2.34`**（tag `5201899`，§2.54、D059）：
+  main CI `42225524738`、release `42225960322` 成功；资产 5,533,163 字节，
+  digest `sha256:7b50e743...ff60`；包内二进制 `8be945d3...6ec4`
+  （13,015,312 字节，静态 ELF 已 strip）、`LUMEN_VERSION=0.2.34`，
   本机经代理下载校验通过。
-- 上一发布：`v0.2.32`（tag `9e79339`，§2.52、D057）：原生绝对速率快照；
+- 上一发布：`v0.2.33`（tag `d6238b7`，§2.53、D058）：关闭 splice 换连续
+  计数；资产 5,531,253 字节，digest `sha256:2439a1f7...306c`；包内二进制
+  `ecaaec3f...8e49f`、`LUMEN_VERSION=0.2.33`，本机经代理下载校验通过。
+- 更早：`v0.2.32`（tag `9e79339`，§2.52、D057）：原生绝对速率快照；
   资产 5,528,182 字节，digest `sha256:5414dff9...b224`；包内二进制
   `5971da08...eee0`、`LUMEN_VERSION=0.2.32`，本机下载校验通过。
-- 更早：`v0.2.31`（tag → `f3e0509`，§2.51、D056）：1 秒显示节拍。
 - 0.2.32（§2.52、D057）：`/ws` 的 `traffic` 帧改为**原生绝对速率快照**
   `{inbounds:{tag:{up,down}}, clients:{email:{up,down}}, intervalMs, ttlMs}`
   （字节/秒），移除 3x-ui 的 `traffics`/`clientTraffics`/
@@ -66,9 +68,9 @@
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.34` 已实现、未发布；
-   若本次没有新改动就直接发 0.2.34，有新改动则继续 bump），同步
-   `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.34` 已发布；任何新
+   改动先 bump 到 `0.2.35`），同步 `memory/CURRENT-STATUS.md`、
+   `memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
