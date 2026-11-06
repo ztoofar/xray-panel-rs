@@ -19,6 +19,8 @@ DATA_DIR=${PANEL_DATA_DIR:-/etc/xray-panel}
 ENV_FILE=${PANEL_ENV_FILE:-/etc/xray-panel.env}
 XRAY_DIR=${XRAY_DIR:-/usr/local/etc/xray}
 XRAY_CONFIG=${XRAY_CONFIG:-$XRAY_DIR/config.json}
+# Default geodata location written by the panel (and read by Xray).
+ASSET_DIR=${XRAY_ASSET_DIR:-/usr/local/share/xray}
 
 # The panel owns Xray's config from here on; keep a timestamped copy first.
 if [ -f "$XRAY_CONFIG" ]; then
@@ -33,6 +35,9 @@ if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet xray-pane
 fi
 install -m 0755 "$BIN" /usr/local/bin/xray-panel-rs
 install -d -m 0750 "$DATA_DIR"
+# ReadWritePaths entries must exist before the service starts; the panel also
+# creates this directory on demand, but ProtectSystem=full would block that.
+install -d -m 0750 "$ASSET_DIR"
 
 if [ ! -f "$ENV_FILE" ]; then
   umask 077

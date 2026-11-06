@@ -74,6 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/ztoofar/xray-panel-rs/main/install.
 ```sh
 sudo install -d -m 0750 /etc/xray-panel
 sudo install -d -m 0750 /usr/local/etc/xray
+sudo install -d -m 0750 /usr/local/share/xray
 sudo install -m 0755 target/release/xray-panel-rs /usr/local/bin/xray-panel-rs
 sudo cp deploy/xray-panel.env.example /etc/xray-panel.env
 sudo cp deploy/xray-panel.service /etc/systemd/system/xray-panel.service

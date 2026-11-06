@@ -15,8 +15,9 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-# Xray binary replacement and the default geofile location (XRAY_BIN dir).
-ReadWritePaths=/etc/xray-panel /usr/local/etc/xray /usr/local/bin
+# Xray binary replacement, the default geofile location (/usr/local/share/xray)
+# and the legacy geofile location (the XRAY_BIN directory).
+ReadWritePaths=/etc/xray-panel /usr/local/etc/xray /usr/local/bin /usr/local/share/xray
 UMask=0077
 
 [Install]

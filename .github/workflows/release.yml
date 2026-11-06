@@ -74,6 +74,9 @@ jobs:
               ext-ip:、`!` 取反、`@attribute`）
             - Geofile 默认存放目录改为 `/usr/local/share/xray`（不存在时创建），
               优先使用 `XRAY_LOCATION_ASSET`
+            - 修复 systemd 部署下更新 Geofile 报
+              `Read-only file system (os error 30)`：服务单元放行并预先创建
+              `/usr/local/share/xray`，下载前先探测目录可写性，错误提示修复方式
             - 新增远端证书 SHA-256 查询：域名解析后固定 IP，经 `xray tls ping`
               获取证书链哈希（含私网目标拦截）
             - 删除无后端的前端入口：赞助商、Fail2ban、订阅负载均衡、

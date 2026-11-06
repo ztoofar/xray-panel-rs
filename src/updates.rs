@@ -430,6 +430,10 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
     // that is the download default; XRAY_LOCATION_ASSET still wins when set.
     let bin_dir = crate::geodata::asset_dir();
     let result = tokio::task::spawn_blocking(move || -> Result<usize> {
+        // Fail before downloading tens of megabytes when the directory is
+        // read-only (systemd ProtectSystem=full without this path in
+        // ReadWritePaths, or a read-only container mount).
+        ensure_geodata_dir(&bin_dir)?;
         let agent = agent(proxy.as_deref(), DOWNLOAD_TIMEOUT)?;
         let mut installed = 0;
         let mut errors = Vec::new();
@@ -474,9 +478,9 @@ fn install_one_geofile(
         bail!("SHA-256 校验失败（期望 {expected}，实际 {got}）");
     }
     std::fs::create_dir_all(bin_dir)
-        .with_context(|| format!("create geodata directory {}", bin_dir.display()))?;
+        .map_err(|err| io_error("创建 Geodata 目录失败", bin_dir, err))?;
     let temp = bin_dir.join(format!(".{file}.{}.tmp", uuid::Uuid::new_v4()));
-    std::fs::write(&temp, &bytes).with_context(|| format!("write {}", temp.display()))?;
+    std::fs::write(&temp, &bytes).map_err(|err| io_error("写入", &temp, err))?;
     #[cfg(windows)]
     {
         let target = bin_dir.join(file);
@@ -485,7 +489,40 @@ fn install_one_geofile(
         }
     }
     std::fs::rename(&temp, bin_dir.join(file))
-        .with_context(|| format!("install {file} into {}", bin_dir.display()))?;
+        .map_err(|err| io_error(&format!("安装 {file} 到"), bin_dir, err))?;
+    Ok(())
+}
+
+/// Read-only/permission failures need an actionable hint: the default geodata
+/// directory lives under `/usr`, which systemd units with `ProtectSystem=full`
+/// keep read-only unless the path is listed in `ReadWritePaths`.
+fn write_failure_hint(err: &std::io::Error) -> Option<&'static str> {
+    // EROFS (Linux). ErrorKind::ReadOnlyFilesystem needs a newer Rust.
+    let read_only_fs = cfg!(unix) && err.raw_os_error() == Some(30);
+    if read_only_fs || err.kind() == std::io::ErrorKind::PermissionDenied {
+        Some(
+            "目录不可写：请把该目录加入 systemd 单元的 ReadWritePaths，\
+             或设置 XRAY_LOCATION_ASSET 指向可写目录",
+        )
+    } else {
+        None
+    }
+}
+
+fn io_error(action: &str, path: &Path, err: std::io::Error) -> anyhow::Error {
+    let message = match write_failure_hint(&err) {
+        Some(hint) => format!("{action} {}（{hint}）", path.display()),
+        None => format!("{action} {}", path.display()),
+    };
+    anyhow::Error::new(err).context(message)
+}
+
+/// Creates the asset directory and proves it is writable before any download.
+fn ensure_geodata_dir(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).map_err(|err| io_error("创建 Geodata 目录失败", dir, err))?;
+    let probe = dir.join(format!(".lumen-write-{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&probe, b"").map_err(|err| io_error("Geodata 目录不可写", dir, err))?;
+    let _ = std::fs::remove_file(&probe);
     Ok(())
 }
 
@@ -563,6 +600,34 @@ mod tests {
             "0123456789012345678901234567890123456789012345678901234567890123"
         );
         assert!(parse_sha256sum(b"bad", "geoip.dat").is_err());
+    }
+
+    #[test]
+    fn geodata_preflight_accepts_writable_dirs_and_rejects_files() {
+        let base = std::env::temp_dir().join(format!("lumen-geodata-{}", uuid::Uuid::new_v4()));
+        ensure_geodata_dir(&base).unwrap();
+        assert!(base.is_dir());
+        let file = base.join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        let err = ensure_geodata_dir(&file).unwrap_err();
+        assert!(format!("{err:#}").contains("创建 Geodata 目录失败"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn write_failure_hint_covers_permission_denied() {
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert!(write_failure_hint(&denied).is_some());
+        let other = std::io::Error::other("other");
+        assert!(write_failure_hint(&other).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_failure_hint_covers_read_only_filesystem() {
+        // EROFS
+        let err = std::io::Error::from_raw_os_error(30);
+        assert!(write_failure_hint(&err).is_some());
     }
 
     #[test]
