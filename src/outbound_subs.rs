@@ -375,7 +375,7 @@ pub fn sanitize_http_url(raw: &str) -> Result<String> {
     Ok(clean.to_string())
 }
 
-fn blocked_ip(ip: IpAddr) -> bool {
+pub(crate) fn blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             let octets = v4.octets();

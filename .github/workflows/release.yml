@@ -69,10 +69,15 @@ jobs:
           body: |
             ## 更新内容
 
-            - 撤销 0.2.33 / 0.2.34 的 tunnel 实时速度方案，恢复到 0.2.32 的
-              行为：不注入 `XRAY_BUF_SPLICE`，tunnel 速度继续使用 Xray 统计
-            - Linux 上 Xray 默认的 freedom splice 保持开启；tunnel 下行速度
-              仍会在连接结束时一次性入账
-            - 如需连续显示 tunnel 下行速度，可显式设置
-              `XRAY_BUF_SPLICE=disable`，代价是失去零拷贝
+            - 新增 Geodata 浏览/校验：浏览 geosite.dat / geoip.dat 的分类与
+              条目（分页），校验路由 token（ext:/ext-domain:/ext-site:/
+              ext-ip:、`!` 取反、`@attribute`）
+            - Geofile 默认存放目录改为 `/usr/local/share/xray`（不存在时创建），
+              优先使用 `XRAY_LOCATION_ASSET`
+            - 新增远端证书 SHA-256 查询：域名解析后固定 IP，经 `xray tls ping`
+              获取证书链哈希（含私网目标拦截）
+            - 删除无后端的前端入口：赞助商、Fail2ban、订阅负载均衡、
+              AmneziaWG 就绪、日历续期预览、2FA、备份迁移、未使用的通知 UI
+            - 仓库清理：移除早期自研前端 frontend/ 与 memory/、docs/、
+              PROGRESS.md、CLAUDE.md 等非源码文件，仓库只保留源代码与脚本
 

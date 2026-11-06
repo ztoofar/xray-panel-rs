@@ -3,6 +3,7 @@ pub mod backup;
 pub mod clients;
 pub mod compat;
 pub mod dashboard;
+pub mod geodata;
 pub mod inbounds;
 pub mod ip_location;
 pub mod logs;
@@ -177,6 +178,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/panel/api/server/getCertHash",
             post(compat::server_cert_hash),
+        )
+        .route(
+            "/panel/api/server/getRemoteCertHash",
+            post(compat::server_remote_cert_hash),
         )
         .route("/panel/api/inbounds/list", get(compat::inbounds_list))
         .route("/panel/api/inbounds/list/slim", get(compat::inbounds_slim))
@@ -376,6 +381,13 @@ pub fn router(state: AppState) -> Router {
             "/panel/api/xray/getDefaultJsonConfig",
             get(compat::xray_default_config).post(compat::xray_default_config),
         )
+        .route("/panel/api/xray/geodata/files", get(geodata::files))
+        .route(
+            "/panel/api/xray/geodata/categories",
+            get(geodata::categories),
+        )
+        .route("/panel/api/xray/geodata/entries", get(geodata::entries))
+        .route("/panel/api/xray/geodata/validate", post(geodata::validate))
         .route("/panel/api/{*rest}", any(compat::stub))
         .route("/panel/api", any(compat::stub))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))

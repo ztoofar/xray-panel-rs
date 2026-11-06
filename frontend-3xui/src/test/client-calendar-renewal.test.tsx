@@ -2,23 +2,10 @@ import { expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 
 import ClientFormModal from '@/pages/clients/ClientFormModal';
-import { HttpUtil, Msg } from '@/utils';
+import { Msg } from '@/utils';
 import { chooseSelectOption, renderWithProviders } from './test-utils';
 
-it('preserves monthly clients, previews backend dates, and saves exclusive weekly or disabled modes', async () => {
-  const post = vi.spyOn(HttpUtil, 'post').mockResolvedValue(
-    new Msg(true, '', {
-      timeZone: 'Asia/Taipei',
-      renewAt: '2030-01-01T00:00:00+08:00',
-      validThrough: '2029-12-31T23:59:59+08:00',
-      nextExpiry: '2030-02-01T00:00:00+08:00',
-      suggestedExpiryTime: 1893427200000,
-      suggestedExpiry: '2030-01-01T00:00:00+08:00',
-      renewals: 1,
-      canRenew: true,
-      delayedStart: false,
-    }),
-  );
+it('preserves monthly clients and saves exclusive weekly or disabled modes', async () => {
   const save = vi.fn().mockResolvedValue(new Msg(true, '', null));
   async function submit() {
     const button = document.querySelector('.ant-modal-footer .ant-btn-primary');
@@ -53,11 +40,6 @@ it('preserves monthly clients, previews backend dates, and saves exclusive weekl
     await waitFor(() =>
       expect(document.body.textContent).toContain('2029-12-31 23:59:59 UTC+08:00'),
     );
-    expect(post).toHaveBeenCalledWith(
-      '/panel/api/clients/renewalPreview',
-      expect.objectContaining({ resetMax: 3, resetCount: 2 }),
-      expect.anything(),
-    );
     await submit();
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(
@@ -73,13 +55,6 @@ it('preserves monthly clients, previews backend dates, and saves exclusive weekl
     chooseSelectOption(mode.id, 'Calendar weekly');
     const weekday = screen.getByLabelText('Renew on weekday');
     chooseSelectOption(weekday.id, 'Sunday');
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith(
-        '/panel/api/clients/renewalPreview',
-        expect.objectContaining({ reset: 0, resetDay: 0, resetWeekday: 7 }),
-        expect.anything(),
-      ),
-    );
     await submit();
     await waitFor(() =>
       expect(save).toHaveBeenCalledWith(

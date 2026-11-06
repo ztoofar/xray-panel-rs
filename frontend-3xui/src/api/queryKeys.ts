@@ -1,8 +1,6 @@
 export const keys = {
-  sponsors: () => ['sponsors'] as const,
   server: {
     status: () => ['server', 'status'] as const,
-    fail2banStatus: () => ['server', 'fail2banStatus'] as const,
   },
   nodes: {
     root: () => ['nodes'] as const,
@@ -15,10 +13,6 @@ export const keys = {
     byInbound: (inboundId: number) => ['hosts', 'byInbound', inboundId] as const,
     tags: () => ['hosts', 'tags'] as const,
   },
-  subBalancers: {
-    root: () => ['sub-balancers'] as const,
-    list: () => ['sub-balancers', 'list'] as const,
-  },
   settings: {
     root: () => ['settings'] as const,
     all: () => ['settings', 'all'] as const,
@@ -29,7 +23,6 @@ export const keys = {
     root: () => ['inbounds'] as const,
     slim: () => ['inbounds', 'slim'] as const,
     options: () => ['inbounds', 'options'] as const,
-    amneziawgKernelReadiness: () => ['inbounds', 'amneziawgKernelReadiness'] as const,
   },
   clients: {
     root: () => ['clients'] as const,

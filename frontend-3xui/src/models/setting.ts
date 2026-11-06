@@ -46,8 +46,6 @@ export class AllSetting {
   tgCpu = 80;
   tgMemory = 80;
   tgLang = 'en-US';
-  twoFactorEnable = false;
-  twoFactorToken = '';
   xrayTemplateConfig = '';
   happLinkEnable = false;
   subEnable = true;
@@ -188,7 +186,6 @@ export class AllSetting {
   outboundDownThreshold = 3;
   nodeDownThreshold = 1;
   hasTgBotToken = false;
-  hasTwoFactorToken = false;
   hasLdapPassword = false;
   hasApiToken = false;
   hasWarpSecret = false;

@@ -426,21 +426,9 @@ pub async fn update_geofile(state: &AppState, only: Option<&str>) -> Result<usiz
     }
     let proxy = update_proxy(state).await;
     let proxy_hint = proxy.clone();
-    // Xray resolves geodata from XRAY_LOCATION_ASSET when set; otherwise the
-    // conventional location is the binary's own folder.
-    let bin_dir = std::env::var("XRAY_LOCATION_ASSET")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
-        .unwrap_or_else(|| {
-            state
-                .cfg
-                .xray_bin
-                .parent()
-                .filter(|path| !path.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("."))
-        });
+    // Xray probes /usr/local/share/xray after its executable directory, so
+    // that is the download default; XRAY_LOCATION_ASSET still wins when set.
+    let bin_dir = crate::geodata::asset_dir();
     let result = tokio::task::spawn_blocking(move || -> Result<usize> {
         let agent = agent(proxy.as_deref(), DOWNLOAD_TIMEOUT)?;
         let mut installed = 0;
@@ -485,7 +473,8 @@ fn install_one_geofile(
     if got != expected {
         bail!("SHA-256 校验失败（期望 {expected}，实际 {got}）");
     }
-    std::fs::create_dir_all(bin_dir).ok();
+    std::fs::create_dir_all(bin_dir)
+        .with_context(|| format!("create geodata directory {}", bin_dir.display()))?;
     let temp = bin_dir.join(format!(".{file}.{}.tmp", uuid::Uuid::new_v4()));
     std::fs::write(&temp, &bytes).with_context(|| format!("write {}", temp.display()))?;
     #[cfg(windows)]

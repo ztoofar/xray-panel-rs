@@ -19,3 +19,10 @@
 Thumbs.db
 .idea/
 .vscode/
+
+# Local-only (kept on disk, not published): dev notes and the abandoned frontend
+/frontend
+/memory
+/docs
+/PROGRESS.md
+/CLAUDE.md

@@ -948,6 +948,146 @@ pub async fn server_cert_hash(State(state): State<AppState>, req: Request) -> Js
     }
 }
 
+// `xray tls ping` prints one section without SNI and one with it. The SNI
+// handshake is the one the inbound will actually present, so prefer it.
+fn remote_cert_hashes(stdout: &str) -> Vec<String> {
+    let (section, has_sni) = match stdout.rsplit_once("Pinging with SNI") {
+        Some((_, rest)) => (rest, true),
+        None => (stdout, false),
+    };
+    let mut hashes = extract_cert_hashes(section);
+    if has_sni && hashes.is_empty() {
+        hashes = extract_cert_hashes(stdout);
+    }
+    hashes
+}
+
+fn extract_cert_hashes(text: &str) -> Vec<String> {
+    let mut hashes: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some((label, value)) = line.split_once("SHA256:") else {
+            continue;
+        };
+        if !label.contains("Cert's ") {
+            continue;
+        }
+        let hash = value.trim().to_ascii_lowercase();
+        if hash.len() == 64
+            && hash.chars().all(|c| c.is_ascii_hexdigit())
+            && !hashes.contains(&hash)
+        {
+            hashes.push(hash);
+        }
+    }
+    hashes
+}
+
+fn split_host_port(raw: &str) -> Option<(String, u16)> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 300 {
+        return None;
+    }
+    if let Some(rest) = raw.strip_prefix('[') {
+        let (host, after) = rest.split_once(']')?;
+        let port = if after.is_empty() {
+            443
+        } else {
+            after.strip_prefix(':')?.parse::<u16>().ok()?
+        };
+        return (!host.is_empty() && port > 0).then(|| (host.to_string(), port));
+    }
+    if !raw.contains(':') || raw.parse::<std::net::IpAddr>().is_ok() {
+        return Some((raw.to_string(), 443));
+    }
+    let (host, port) = raw.rsplit_once(':')?;
+    if host.contains(':') {
+        return None;
+    }
+    let port = port.parse::<u16>().ok()?;
+    (!host.is_empty() && port > 0).then(|| (host.to_string(), port))
+}
+
+fn valid_remote_host(host: &str) -> bool {
+    !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':'))
+}
+
+pub async fn server_remote_cert_hash(State(state): State<AppState>, req: Request) -> Json<Value> {
+    let params = match read_params(req).await {
+        Ok(params) => params,
+        Err(err) => return fail(err.to_string()),
+    };
+    let raw = params.get("server").map(|value| value.trim()).unwrap_or("");
+    let allow_private = params
+        .get("allowPrivate")
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    let Some((host, port)) = split_host_port(raw) else {
+        return fail("目标地址无效，应为域名或 host:port");
+    };
+    if !valid_remote_host(&host) {
+        return fail("目标地址包含无效字符");
+    }
+    let addrs = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::lookup_host((host.as_str(), port)),
+    )
+    .await
+    {
+        Err(_) => return fail("解析目标主机超时"),
+        Ok(Err(err)) => return fail(format!("无法解析目标主机：{err}")),
+        Ok(Ok(addrs)) => addrs.collect::<Vec<_>>(),
+    };
+    let Some(address) = addrs.first().copied() else {
+        return fail("目标主机没有可用地址");
+    };
+    if !allow_private && crate::outbound_subs::blocked_ip(address.ip()) {
+        // The frontend confirms with allowPrivate=true after showing this flag.
+        return Json(json!({
+            "success": false,
+            "msg": "目标地址属于内网或回环地址，确认后才能访问",
+            "obj": { "privateTarget": true },
+        }));
+    }
+    let target = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    let mut command = tokio::process::Command::new(&state.cfg.xray_bin);
+    // The resolved IP is pinned so the TLS handshake cannot be rebound to a
+    // different address between the guard and the probe.
+    command
+        .args(["tls", "ping", "-ip", &address.ip().to_string(), &target])
+        .kill_on_drop(true);
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(20), command.output()).await {
+            Err(_) => return fail("获取远程证书超时"),
+            Ok(Err(err)) => return fail(format!("运行 Xray TLS 探测失败：{err}")),
+            Ok(Ok(output)) => output,
+        };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hashes = remote_cert_hashes(&stdout);
+    if hashes.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return fail(format!(
+            "未能从远程服务获取证书 SHA-256{}",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!("：{detail}")
+            }
+        ));
+    }
+    ok(json!(hashes))
+}
+
 async fn known_cert_files(state: &AppState) -> Result<HashSet<std::path::PathBuf>, anyhow::Error> {
     let mut known = HashSet::new();
     for inbound in db::inbounds::list(&state.db).await? {
@@ -984,7 +1124,46 @@ fn collect_cert_files(stream: &Value, known: &mut HashSet<std::path::PathBuf>) {
 
 #[cfg(test)]
 mod security_helper_tests {
-    use super::{certificate_der_hashes, parse_key_pair_output};
+    use super::{
+        certificate_der_hashes, parse_key_pair_output, remote_cert_hashes, split_host_port,
+    };
+
+    #[test]
+    fn parses_hashes_from_the_sni_section() {
+        let leaf = "a".repeat(64);
+        let ca = "b".repeat(64);
+        let other = "c".repeat(64);
+        let output = format!(
+            "TLS ping: example.com:443\nCert's leaf SHA256:\t{other}\n-------------------\n\
+             Pinging with SNI\nHandshake succeeded\n\
+             Cert's leaf SHA256:\t{leaf}\n\
+             Cert's CA <Root> SHA256:\t{ca}\nTLS ping finished\n"
+        );
+        assert_eq!(remote_cert_hashes(&output), vec![leaf, ca]);
+    }
+
+    #[test]
+    fn splits_host_port_variants() {
+        assert_eq!(
+            split_host_port("example.com"),
+            Some(("example.com".into(), 443))
+        );
+        assert_eq!(
+            split_host_port("example.com:8443"),
+            Some(("example.com".into(), 8443))
+        );
+        assert_eq!(
+            split_host_port("[2001:db8::1]:8443"),
+            Some(("2001:db8::1".into(), 8443))
+        );
+        assert_eq!(
+            split_host_port("2001:db8::1"),
+            Some(("2001:db8::1".into(), 443))
+        );
+        assert_eq!(split_host_port("example.com:"), None);
+        assert_eq!(split_host_port("example.com:0"), None);
+        assert_eq!(split_host_port("https://example.com"), None);
+    }
 
     #[test]
     fn parses_labelled_key_pair_output() {

@@ -6,6 +6,7 @@ mod auth;
 mod config;
 mod db;
 mod error;
+mod geodata;
 mod jobs;
 mod notify;
 mod outbound_check;
