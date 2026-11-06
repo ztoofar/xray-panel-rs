@@ -395,7 +395,6 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     use super::{parse::parse_dump, SocketCounters, SocketSampler};
-
     fn counters(cookie: u64, up: u64, down: u64) -> SocketCounters {
         SocketCounters {
             cookie,
@@ -512,5 +511,67 @@ mod tests {
         let mut message = diag_message(8443, 1, 500, 1_000);
         message[0..4].copy_from_slice(&10_000u32.to_ne_bytes());
         assert!(parse_dump(&message[..20], &ports, &mut out).is_err());
+    }
+}
+
+/// Exercises the real netlink dump on the CI Linux kernel (the synthetic
+/// messages above cannot catch a layout or permission mistake). Skipped on
+/// Windows, where `sock_diag` does not exist.
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use std::{
+        collections::HashSet,
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        time::Duration,
+    };
+
+    use super::SocketSampler;
+
+    #[test]
+    fn a_live_tcp_socket_reports_kernel_byte_deltas() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let (mut server, _) = listener.accept().expect("accept");
+        let ports: HashSet<u16> = [port].into_iter().collect();
+        let mut sampler = SocketSampler::default();
+
+        let first = sampler.sample(&ports).expect("sock_diag dump");
+        assert!(
+            first.iter().any(|delta| delta.local_port == port),
+            "dump has no socket for port {port} ({} sockets seen)",
+            first.len()
+        );
+
+        let down = vec![0x5au8; 64 * 1024];
+        server.write_all(&down).expect("server write");
+        let mut received = vec![0u8; down.len()];
+        client.read_exact(&mut received).expect("client read");
+
+        let up = vec![0xa5u8; 16 * 1024];
+        client.write_all(&up).expect("client write");
+        let mut received = vec![0u8; up.len()];
+        server.read_exact(&mut received).expect("server read");
+
+        // Let the loopback ACKs reach the sending sockets before the dump.
+        std::thread::sleep(Duration::from_millis(200));
+        let second = sampler.sample(&ports).expect("sock_diag dump");
+        let delta = second
+            .iter()
+            .find(|delta| delta.local_port == port)
+            .expect("socket still present");
+        assert!(
+            delta.down >= down.len() as u64,
+            "down delta {} < {}",
+            delta.down,
+            down.len()
+        );
+        assert!(
+            delta.up >= up.len() as u64,
+            "up delta {} < {}",
+            delta.up,
+            up.len()
+        );
     }
 }
