@@ -18,33 +18,30 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 132/132、clippy 零警告、Cargo 版本 `0.2.34`（已发布
-   v0.2.34）、`web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
+   期望：`cargo test` **122/122**、clippy 零警告、Cargo 版本 `0.2.36`
+   （未发布；部署使用 v0.2.32）、`web/dist` 不旧于前端源码；工作区除本次
+   未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-06）
 
-- **当前源码：`0.2.34`（已发布 v0.2.34）**（§2.54、D059）：不再注入
-  `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由
-  `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核 socket 计数（按监听
-  端口归属，仅显示；计费仍用 Xray 计数）。验证：`cargo test` **132/132**、
-  clippy 零警告、fmt、musl 交叉构建；前端无改动。**Linux 实际效果未验证**
-  （Windows 无 sock_diag/无 splice），见 TODO T32。
-- 0.2.33（已发布 v0.2.33，§2.53、D058）：曾默认注入
-  `XRAY_BUF_SPLICE=disable` 关闭零拷贝换连续计数；0.2.34 已改为保留零拷贝 +
-  内核计数显示。
-- **当前发布：GitHub `v0.2.34`**（tag `5201899`，§2.54、D059）：
-  main CI `42225524738`、release `42225960322` 成功；资产 5,533,163 字节，
-  digest `sha256:7b50e743...ff60`；包内二进制 `8be945d3...6ec4`
-  （13,015,312 字节，静态 ELF 已 strip）、`LUMEN_VERSION=0.2.34`，
-  本机经代理下载校验通过。
-- 上一发布：`v0.2.33`（tag `d6238b7`，§2.53、D058）：关闭 splice 换连续
-  计数；资产 5,531,253 字节，digest `sha256:2439a1f7...306c`；包内二进制
-  `ecaaec3f...8e49f`、`LUMEN_VERSION=0.2.33`，本机经代理下载校验通过。
-- 更早：`v0.2.32`（tag `9e79339`，§2.52、D057）：原生绝对速率快照；
-  资产 5,528,182 字节，digest `sha256:5414dff9...b224`；包内二进制
-  `5971da08...eee0`、`LUMEN_VERSION=0.2.32`，本机下载校验通过。
+- **当前源码：`0.2.36`（未发布）**（§2.55、D060）：撤销 0.2.33/0.2.34 的
+  tunnel 速度方案，`src/` 与 `v0.2.32` 标签逐字节一致——不注入
+  `XRAY_BUF_SPLICE`，tunnel 速度使用 Xray 统计。验证：`cargo test`
+  **122/122**、clippy 零警告、fmt；前端无改动。未在 Linux 重新验证（与
+  v0.2.32 相同代码路径）。
+- **当前部署：v0.2.32**（tag `9e79339`，§2.52、D057）。0.2.34 现场 tunnel
+  不显示速度，用户决定不再修、继续用 v0.2.32；0.2.36 只是把仓库代码恢复到
+  该行为。
+- **最新 Release（不再使用）：`v0.2.34`**（tag `5201899`，§2.54、D059）：
+  资产 5,533,163 字节，digest `sha256:7b50e743...ff60`；包内二进制
+  `8be945d3...6ec4`、`LUMEN_VERSION=0.2.34`。该方案已撤销。
+- 更早：`v0.2.33`（tag `d6238b7`，§2.53、D058）：关闭 splice 换连续计数；
+  资产 5,531,253 字节，digest `sha256:2439a1f7...306c`，已撤销。
+- `v0.2.32`：原生绝对速率快照；资产 5,528,182 字节，digest
+  `sha256:5414dff9...b224`；包内二进制 `5971da08...eee0`、
+  `LUMEN_VERSION=0.2.32`，本机下载校验通过。
 - 0.2.32（§2.52、D057）：`/ws` 的 `traffic` 帧改为**原生绝对速率快照**
   `{inbounds:{tag:{up,down}}, clients:{email:{up,down}}, intervalMs, ttlMs}`
   （字节/秒），移除 3x-ui 的 `traffics`/`clientTraffics`/
@@ -68,16 +65,15 @@
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.34` 已发布；任何新
-   改动先 bump 到 `0.2.35`），同步 `memory/CURRENT-STATUS.md`、
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.36` 未发布；有新
+   改动则继续 bump），同步 `memory/CURRENT-STATUS.md`、
    `memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
    （不带版本号），只列本次更新条目；不写安装/更新说明，不启用
-   `generate_release_notes`（D046/D047）。v0.2.33 的条目已随上一版发布，
-   0.2.34 必须换成本次实际改动（保留 splice 零拷贝；tunnel 实时速度改用
-   内核 socket 计数；http/mixed 的剩余限制）。
+   `generate_release_notes`（D046/D047）。当前 body 已是 0.2.36 的回退
+   内容（撤销 tunnel 速度方案、回到 0.2.32 行为），发布前再核对一次。
 4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
 5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**
@@ -107,11 +103,8 @@
 
 ## 当前悬而未决的验证项
 
-- **T32（最高优先）**：真实 Linux/musl 部署验证 0.2.34 内核 socket 计数
-  驱动的 tunnel 下行速度（连续非零、无一次性爆发、网卡对照、sock_diag 权限
-  回退、重启后基线重置、CPU/RSS），见 `TODO.md`。
-- **T33（P2）**：评估 http/mixed CONNECT 是否也纳入内核计数（当前仍会一次性
-  爆发），见 `TODO.md`。
+- ~~T32/T33~~：已随 0.2.36 回退撤销（D060），不再执行。tunnel 下行显示
+  仍是未修复缺陷，见 `KNOWN-ISSUES.md` G15。
 - **T31**：真实 Linux/musl 部署验证 0.2.32 原生速度快照（1 秒刷新、关闭
   面板 REST 速度为 0 但计费继续、CPU/RSS）。
 - **T26**：真实 Linux + systemd + musl 回归增强（在线公网 IP、日志目录

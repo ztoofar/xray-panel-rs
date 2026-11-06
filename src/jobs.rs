@@ -14,7 +14,7 @@ use crate::{
         client_traffic::{AttachmentSample, ClientSamples},
         models::{Client, Inbound},
     },
-    net_diag, service,
+    service,
     state::{AppState, SpeedSample, TrafficPoint, TrafficSpeeds},
     traffic::counter_delta,
     xray::{identity::stat_email, stats::FamilyStats},
@@ -79,8 +79,6 @@ pub fn spawn(state: AppState) {
         // the window still gets its last-online bump.
         let mut moved_since_bill: HashSet<String> = HashSet::new();
         let mut active_since_bill: HashSet<String> = HashSet::new();
-        // Tunnel display baselines, kept only while a page is watching.
-        let mut kernel = KernelSpeeds::new(freedom_splice_enabled());
         loop {
             // Xray restarts (manual, config apply, crash) drop every live
             // connection. 3x-ui keeps its online map inside the Xray process;
@@ -96,7 +94,6 @@ pub fn spawn(state: AppState) {
                 moved_since_bill.clear();
                 active_since_bill.clear();
                 last_bill_at = None;
-                kernel.reset();
             }
 
             // A new process starts with zero counters, so every stored
@@ -121,7 +118,6 @@ pub fn spawn(state: AppState) {
                         moved_since_bill.clear();
                         active_since_bill.clear();
                         last_bill_at = None;
-                        kernel.reset();
                         tracing::info!(epoch, "xray started; traffic baselines reset");
                     }
                     Err(err) => {
@@ -173,7 +169,6 @@ pub fn spawn(state: AppState) {
                     stats_baselined: &mut stats_baselined,
                     billing: &billing,
                     roster: roster.as_ref().expect("roster loaded above"),
-                    kernel: &mut kernel,
                     bill,
                     watching,
                     display_interval_ms: tick_secs.saturating_mul(1000),
@@ -263,177 +258,6 @@ async fn load_roster(state: &AppState) -> anyhow::Result<Roster> {
     })
 }
 
-/// Live speeds for tunnel inbounds from kernel socket counters.
-///
-/// Xray's Linux splice path credits a tunnel download only when the connection
-/// closes, so its stats deltas show nothing for the whole transfer and one
-/// lump at the end. While a panel page is watching, tunnel inbounds read the
-/// kernel's per-socket counters instead; the panel keeps Xray's zero-copy
-/// path, and billing still uses Xray's counters. Disabled when the operator
-/// sets `xray.buf.splice` / `XRAY_BUF_SPLICE` to anything but `auto`/`enable`
-/// (Xray counts per write then) and on non-Linux platforms.
-struct KernelSpeeds {
-    enabled: bool,
-    sampler: net_diag::SocketSampler,
-    warned_at: Option<std::time::Instant>,
-}
-
-impl KernelSpeeds {
-    fn new(splice_enabled: bool) -> Self {
-        Self {
-            enabled: splice_enabled && cfg!(target_os = "linux"),
-            sampler: net_diag::SocketSampler::default(),
-            warned_at: None,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.sampler.clear();
-    }
-
-    /// Tag -> (uplink bytes, downlink bytes) moved since the previous sample.
-    /// `None` means the caller must keep using Xray's counters for this tick.
-    fn sample(&mut self, inbounds: &[Inbound]) -> Option<HashMap<String, (i64, i64)>> {
-        if !self.enabled {
-            return None;
-        }
-        let targets = kernel_targets(inbounds);
-        if targets.is_empty() {
-            return None;
-        }
-        let ports: HashSet<u16> = targets.iter().map(|target| target.port).collect();
-        match self.sampler.sample(&ports) {
-            Ok(deltas) => Some(attribute_kernel_deltas(&targets, &deltas)),
-            Err(err) => {
-                // A permission or kernel limitation would otherwise warn every
-                // second; retry each tick but log at most once per five
-                // minutes.
-                let now = std::time::Instant::now();
-                let log = self
-                    .warned_at
-                    .map(|at| now.duration_since(at) >= Duration::from_secs(300))
-                    .unwrap_or(true);
-                if log {
-                    self.warned_at = Some(now);
-                    tracing::warn!(
-                        error = %err,
-                        "kernel socket speeds unavailable; tunnel speeds fall back to Xray counters"
-                    );
-                }
-                None
-            }
-        }
-    }
-}
-
-/// One tunnel inbound the kernel sampler should attribute sockets to.
-struct KernelTarget<'a> {
-    tag: &'a str,
-    port: u16,
-    listen: ListenMatch,
-}
-
-/// How an inbound's configured listen address matches a socket's local
-/// address. Xray binds only the configured family: an empty listen means
-/// `0.0.0.0`, `::` is IPv6-only (its accepted IPv4 clients appear as mapped
-/// IPv6 sockets).
-#[derive(Clone, Copy)]
-enum ListenMatch {
-    Any,
-    AnyV4,
-    AnyV6,
-    Exact(std::net::IpAddr),
-}
-
-impl ListenMatch {
-    fn parse(listen: &str) -> Self {
-        let listen = listen.trim();
-        if listen.is_empty() || listen == "0.0.0.0" {
-            return Self::AnyV4;
-        }
-        if matches!(listen, "::" | "[::]" | "::0") {
-            return Self::AnyV6;
-        }
-        match listen.parse::<std::net::IpAddr>() {
-            Ok(ip) if ip.is_unspecified() => {
-                if ip.is_ipv4() {
-                    Self::AnyV4
-                } else {
-                    Self::AnyV6
-                }
-            }
-            Ok(ip) => Self::Exact(ip),
-            // A hostname listen address cannot be compared to the socket's
-            // local IP; attribute by port alone.
-            Err(_) => Self::Any,
-        }
-    }
-
-    fn matches(self, ip: std::net::IpAddr) -> bool {
-        match self {
-            Self::Any => true,
-            Self::AnyV4 => ip.is_ipv4(),
-            Self::AnyV6 => ip.is_ipv6(),
-            Self::Exact(want) => want == ip,
-        }
-    }
-}
-
-/// Only tunnel (dokodemo-door) inbounds take the splice path on every
-/// connection and have no clients of their own, so a per-port kernel rate is
-/// both accurate and sufficient. HTTP/mixed inbounds splice only CONNECT
-/// traffic and keep Xray counters (see KNOWN-ISSUES G15).
-fn kernel_targets(inbounds: &[Inbound]) -> Vec<KernelTarget<'_>> {
-    inbounds
-        .iter()
-        .filter(|inbound| inbound.enable && inbound.protocol == "tunnel")
-        .filter_map(|inbound| {
-            let port = u16::try_from(inbound.port).ok().filter(|port| *port != 0)?;
-            Some(KernelTarget {
-                tag: inbound.tag.as_str(),
-                port,
-                listen: ListenMatch::parse(&inbound.listen),
-            })
-        })
-        .collect()
-}
-
-fn attribute_kernel_deltas(
-    targets: &[KernelTarget<'_>],
-    deltas: &[net_diag::SocketDelta],
-) -> HashMap<String, (i64, i64)> {
-    let mut out: HashMap<String, (i64, i64)> = HashMap::new();
-    for delta in deltas {
-        let Some(target) = targets.iter().find(|target| {
-            target.port == delta.local_port && target.listen.matches(delta.local_ip)
-        }) else {
-            continue;
-        };
-        let slot = out.entry(target.tag.to_string()).or_insert((0, 0));
-        slot.0 = slot
-            .0
-            .saturating_add(i64::try_from(delta.up).unwrap_or(i64::MAX));
-        slot.1 = slot
-            .1
-            .saturating_add(i64::try_from(delta.down).unwrap_or(i64::MAX));
-    }
-    out
-}
-
-/// Xray turns freedom splice on unless the environment disables it; the panel
-/// deliberately leaves the variable alone (D059).
-fn freedom_splice_enabled() -> bool {
-    let value = std::env::var_os("xray.buf.splice").or_else(|| std::env::var_os("XRAY_BUF_SPLICE"));
-    splice_enabled_from(value.as_deref().and_then(|value| value.to_str()))
-}
-
-fn splice_enabled_from(value: Option<&str>) -> bool {
-    match value {
-        None => true,
-        Some(value) => matches!(value, "auto" | "enable"),
-    }
-}
-
 /// Mutable loop state handed to one tick. Bundled so the display/billing split
 /// keeps the tick signature readable.
 struct TrafficTick<'a> {
@@ -442,8 +266,6 @@ struct TrafficTick<'a> {
     stats_baselined: &'a mut HashSet<&'static str>,
     billing: &'a BillingSink,
     roster: &'a Roster,
-    /// Kernel socket counters for tunnel inbounds.
-    kernel: &'a mut KernelSpeeds,
     bill: bool,
     /// A panel page is watching, so live speeds are wanted this tick.
     watching: bool,
@@ -460,7 +282,6 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         stats_baselined,
         billing,
         roster,
-        kernel,
         bill,
         watching,
         display_interval_ms,
@@ -638,17 +459,6 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         email_by_identity,
         client_emails,
     );
-    // Tunnel inbounds read the kernel's per-socket counters while watching:
-    // Xray's splice path only reports their bytes at connection close. The
-    // sampler runs once per display tick so its window matches the stats
-    // window. Without a watcher the baseline is dropped, so reopening the
-    // panel starts a fresh window instead of a catch-up spike.
-    let kernel_speeds = if watching {
-        kernel.sample(inbounds)
-    } else {
-        kernel.reset();
-        None
-    };
 
     for client in clients {
         let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
@@ -665,19 +475,8 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
     }
 
     for inbound in inbounds {
-        let from_kernel = kernel_speeds
-            .as_ref()
-            .and_then(|speeds| speeds.get(&inbound.tag).copied());
-        let (display_up, display_down) = match from_kernel {
-            Some(deltas) => deltas,
-            // Kernel data is available, so a tunnel inbound must not fall back
-            // to Xray's close-time lump (the 0 B/s -> 17 MB/s bug).
-            None if kernel_speeds.is_some() && inbound.protocol == "tunnel" => (0, 0),
-            None => (
-                display.inbound_up.get(&inbound.tag).copied().unwrap_or(0),
-                display.inbound_down.get(&inbound.tag).copied().unwrap_or(0),
-            ),
-        };
+        let display_up = display.inbound_up.get(&inbound.tag).copied().unwrap_or(0);
+        let display_down = display.inbound_down.get(&inbound.tag).copied().unwrap_or(0);
         if display_up > 0 || display_down > 0 {
             active_since_bill.insert(inbound.tag.clone());
         }
@@ -1702,77 +1501,6 @@ mod tests {
         // Idle or unmeasured windows produce no entry, which clears the UI.
         assert_eq!(speed_sample(0, 0, 5_000), None);
         assert_eq!(speed_sample(100, 100, 0), None);
-    }
-
-    #[test]
-    fn splice_defaults_on_and_can_be_turned_off() {
-        // Mirrors Xray's xray.buf.splice parsing: unset/auto/enable mean the
-        // splice path is live, anything else disables it.
-        assert!(splice_enabled_from(None));
-        assert!(splice_enabled_from(Some("auto")));
-        assert!(splice_enabled_from(Some("enable")));
-        assert!(!splice_enabled_from(Some("disable")));
-        assert!(!splice_enabled_from(Some("")));
-    }
-
-    #[test]
-    fn kernel_listen_matching_handles_wildcards_and_exact_addresses() {
-        let localhost: std::net::IpAddr = "127.0.0.1".parse().unwrap();
-        let v6: std::net::IpAddr = "::1".parse().unwrap();
-        assert!(ListenMatch::parse("").matches(localhost));
-        assert!(ListenMatch::parse("0.0.0.0").matches(localhost));
-        assert!(!ListenMatch::parse("").matches(v6));
-        assert!(ListenMatch::parse("::").matches(v6));
-        assert!(ListenMatch::parse("127.0.0.1").matches(localhost));
-        assert!(!ListenMatch::parse("127.0.0.1").matches("127.0.0.2".parse().unwrap()));
-    }
-
-    #[test]
-    fn kernel_deltas_land_on_the_matching_tunnel_port_and_address() {
-        let targets = vec![
-            KernelTarget {
-                tag: "tunnel-a",
-                port: 8443,
-                listen: ListenMatch::parse("0.0.0.0"),
-            },
-            KernelTarget {
-                tag: "tunnel-b",
-                port: 9000,
-                listen: ListenMatch::parse("127.0.0.1"),
-            },
-        ];
-        let deltas = [
-            crate::net_diag::SocketDelta {
-                local_ip: "10.0.0.1".parse().unwrap(),
-                local_port: 8443,
-                up: 10,
-                down: 100,
-            },
-            crate::net_diag::SocketDelta {
-                local_ip: "127.0.0.1".parse().unwrap(),
-                local_port: 9000,
-                up: 1,
-                down: 2,
-            },
-            // Right port, wrong bound address: another inbound's socket.
-            crate::net_diag::SocketDelta {
-                local_ip: "10.0.0.2".parse().unwrap(),
-                local_port: 9000,
-                up: 5,
-                down: 5,
-            },
-            // Unrelated socket.
-            crate::net_diag::SocketDelta {
-                local_ip: "10.0.0.1".parse().unwrap(),
-                local_port: 1234,
-                up: 7,
-                down: 7,
-            },
-        ];
-        let mapped = attribute_kernel_deltas(&targets, &deltas);
-        assert_eq!(mapped.len(), 2);
-        assert_eq!(mapped.get("tunnel-a"), Some(&(10, 100)));
-        assert_eq!(mapped.get("tunnel-b"), Some(&(1, 2)));
     }
 
     #[test]

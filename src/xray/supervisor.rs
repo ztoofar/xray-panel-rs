@@ -252,11 +252,6 @@ async fn start_child(
         bail!("找不到 Xray 可执行文件：{}", cfg.xray_bin.display());
     }
 
-    // The child inherits the panel's environment, including `xray.buf.splice`
-    // / `XRAY_BUF_SPLICE`. The panel deliberately does not override it: Xray's
-    // default keeps freedom splice (zero-copy) on, and live tunnel speeds come
-    // from kernel socket counters (`net_diag`) instead of Xray's close-time
-    // counters. Operators can still export `...=disable` to turn splice off.
     let mut command = Command::new(&cfg.xray_bin);
     command
         .arg("run")

@@ -69,13 +69,10 @@ jobs:
           body: |
             ## 更新内容
 
-            - 恢复 Xray 的 freedom splice 零拷贝：面板不再注入
-              `XRAY_BUF_SPLICE=disable`
-            - tunnel（dokodemo）入站的实时下行速度改由 Linux 内核 socket
-              计数提供，下载过程中连续显示，不再在结束后一次性爆发
-            - 内核计数只用于显示与入站活跃判定，流量计费仍以 Xray 计数为准；
-              只在打开面板时采样
-            - 仍可显式设置 `XRAY_BUF_SPLICE=disable` 关闭零拷贝；采样间隔内
-              结束的短连接不计入显示速度，http/mixed 的 CONNECT 下载仍按
-              Xray 口径在连接结束时入账
+            - 撤销 0.2.33 / 0.2.34 的 tunnel 实时速度方案，恢复到 0.2.32 的
+              行为：不注入 `XRAY_BUF_SPLICE`，tunnel 速度继续使用 Xray 统计
+            - Linux 上 Xray 默认的 freedom splice 保持开启；tunnel 下行速度
+              仍会在连接结束时一次性入账
+            - 如需连续显示 tunnel 下行速度，可显式设置
+              `XRAY_BUF_SPLICE=disable`，代价是失去零拷贝
 

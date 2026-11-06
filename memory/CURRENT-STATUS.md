@@ -8,9 +8,10 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.34`（已发布 v0.2.34） |
+| `Cargo.toml` 版本 | `0.2.36`（未发布；部署使用已发布的 v0.2.32） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.34`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,533,163 字节**，asset digest `sha256:7b50e743...ff60`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.34`（已发布）：不再注入 `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由 `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核计数（按监听端口归属，仅显示，计费仍用 Xray 计数）。详见 §2.54 / D059。0.2.33 的关闭 splice 方案见 §2.53 / D058；0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| 当前源码 | `0.2.36`（未发布）：撤销 0.2.33/0.2.34 的 tunnel 速度方案，`src/` 与 `v0.2.32` 标签逐字节一致——不注入 `XRAY_BUF_SPLICE`，tunnel 速度使用 Xray 统计；Linux 默认 splice 下下行仍在连接结束时一次性入账。详见 §2.55 / D060。0.2.34 的内核计数见 §2.54 / D059（已撤销）；0.2.33 的关闭 splice 见 §2.53 / D058（已撤销） |
+| 当前部署 | 用户继续使用 **v0.2.32** 二进制（0.2.34 现场 tunnel 不显示速度，原因未定位，不再继续修） |
 | 0.2.34 SHA256 | `7b50e7437f19d2b0bc58f6c5541044cf6a86680994ee296a9fa99e626607ff60`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `8be945d3c39f57da48e9596c77d281e44d0305efdd6506dfd65b2ca9d7536ec4`（13,015,312 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.34` |
 | 0.2.33 SHA256 | `2439a1f7ea7e6f6f869c93b924ab7ae788130352e8e0ecdf53d9a170c7af306c`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `ecaaec3fa3305f1ae9dfc68e33a39a5eb9fecd988cd5060172fc34554228e49f`（13,008,928 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.33` |
 | 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
@@ -1391,7 +1392,7 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   本次推送时本机代理 `192.168.1.251:10813` 一度返回 503/重置，已改直连
   推送完成；代理恢复后复核 200。
 
-## 2.53 tunnel 下行速度为 0、结束时一次性爆发（2026-11-06，0.2.33，已发布 v0.2.33）
+## 2.53 tunnel 下行速度为 0、结束时一次性爆发（2026-11-06，0.2.33，已发布 v0.2.33；已在 0.2.36 撤销）
 - 状态：已实现并发布 `v0.2.33`；**Linux 实际效果仍未验证**（Xray 的 splice
   仅在 Linux/Android 生效，Windows 上无法复现），待真实 Linux 部署验证。
 - 现象（用户现场）：tunnel 协议入站下载时实时下行一直 `0 B/s`，下载结束
@@ -1425,7 +1426,7 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   `LUMEN_VERSION=0.2.33`。Release 说明只列本次更新内容，未写安装说明，
   未启用 `generate_release_notes`（D046/D047）。
 
-## 2.54 保留 splice 零拷贝，tunnel 实时速度改用内核 socket 计数（2026-11-06，0.2.34，已发布 v0.2.34）
+## 2.54 保留 splice 零拷贝，tunnel 实时速度改用内核 socket 计数（2026-11-06，0.2.34，已发布 v0.2.34；已在 0.2.36 撤销）
 - 状态：已实现、本地验证并发布 `v0.2.34`；**Linux 实际效果未验证**
   （Windows 无 sock_diag，也没有 splice）。
 - 需求：用户要求“不关闭零拷贝也能实时显示 tunnel 速度”，并明确
@@ -1480,6 +1481,27 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - 待验证（T32 改写 / T33）：真实 Linux 上 tunnel 下载 ↓ 连续非零、结束后
   无爆发；sock_diag 权限/失败回退；Xray 重启后基线重置；CPU/RSS 影响；
   `http`/`mixed` CONNECT 的剩余限制。详见 `TODO.md`。
+
+## 2.55 撤销 0.2.33/0.2.34 方案，回到 0.2.32 行为（2026-11-06，0.2.36，未发布）
+- 状态：已实现、本地验证；**未发布**，用户继续使用 v0.2.32 二进制。
+- 背景：用户实际 Linux 部署升级 0.2.34 后 tunnel 完全不显示速度；现场信息
+  有限，未定位原因（CI 的真实内核 `sock_diag` 测试通过，说明协议解析/权限
+  可用）。用户决定不再修，回到 0.2.32 行为。
+- 改动：
+  - `src/jobs.rs`、`src/main.rs`、`src/xray/supervisor.rs` 恢复为
+    `v0.2.32`（`git checkout 9e79339 -- ...`），删除 `src/net_diag.rs`。
+    现在 `src/` 与 `v0.2.32` 标签逐字节一致（`git diff 9e79339 -- src`
+    为空）。
+  - `.github/workflows/release.yml` 的 Release 说明改为本次回退内容。
+- 行为：不注入 `XRAY_BUF_SPLICE`；tunnel 速度使用 Xray 统计；Linux 默认
+  splice 下下行仍是下载中 0、连接结束时一次性入账。需要连续显示可显式
+  `XRAY_BUF_SPLICE=disable`。
+- 保留：D058/D059、§2.53/§2.54、v0.2.33/v0.2.34 Release 均保留为历史；
+  新增 D060 说明撤销。
+- 验证：`cargo fmt --check` 通过、`cargo test` **122/122**、`cargo clippy
+  --all-targets -- -D warnings` 零警告；前端无改动。**未在真实 Linux
+  重新验证**（代码路径与已发布的 v0.2.32 相同）。
+- 版本：0.2.35 → 0.2.36（`Cargo.toml` / `Cargo.lock`）。未打包、未打 tag。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

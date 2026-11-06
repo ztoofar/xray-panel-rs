@@ -124,7 +124,7 @@ GitHub Releases 下载 tar.gz，使用 GitHub 为资产计算的 SHA-256 digest 
 | `PANEL_WORKERS` | `2` | Tokio 工作线程数 |
 | `PANEL_LOG` | `info` | 日志级别 |
 | `PANEL_SECURE_COOKIE` | `false` | 仅 HTTPS 反向代理后设为 `true` |
-| `XRAY_BUF_SPLICE` | 不设置（Xray 默认开启 splice） | Xray 的 freedom splice 开关。面板不再注入此变量，默认保留零拷贝；tunnel 入站的实时速度由内核 socket 计数提供（0.2.34）。显式设为 `disable`（或 `xray.buf.splice=disable`）可关闭零拷贝，让 http/mixed 的 CONNECT 下载也按每次读写连续计数 |
+| `XRAY_BUF_SPLICE` | 不设置（Xray 默认开启 splice） | Xray 的 freedom splice 开关。面板不注入此变量，默认保留零拷贝；因此 Linux 上 tunnel 下载的实时下行会在连接结束时一次性入账。显式设为 `disable`（或 `xray.buf.splice=disable`）可关闭零拷贝、改为按每次读写连续计数（0.2.36 已回到 0.2.32 行为） |
 
 `PANEL_DB`、`PANEL_LOG`、`PANEL_WORKERS` 仅从环境变量读取。监听地址、面板
 路径、Xray 路径、日志路径与安全 Cookie 可在面板设置中覆盖，重启后生效；面板

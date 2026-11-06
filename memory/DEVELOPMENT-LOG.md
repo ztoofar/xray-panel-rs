@@ -1591,3 +1591,25 @@
   下行改用内核 socket 计数；内核计数仅显示；短连接与 http/mixed 剩余限制），
   未写安装说明，未启用 `generate_release_notes`（D046/D047）。
 - 未验证：真实 Linux/musl 部署运行 0.2.34（见 TODO T32）。
+
+## 2026-11-06 — 0.2.36 撤销 tunnel 速度方案，回到 0.2.32 行为
+
+- 背景：用户现场升级 0.2.34 后 tunnel 完全不显示速度。先加了 Linux CI
+  真实 `sock_diag` 测试（提交 `e0024f0`，CI run `42228806288` 通过，
+  普通用户权限下 dump/计数正常），但未能定位现场原因。用户决定不再修，
+  改为继续使用已发布的 v0.2.32。
+- 改动：
+  - `git checkout 9e79339 -- src/jobs.rs src/main.rs
+    src/xray/supervisor.rs`，删除 `src/net_diag.rs`；`src/` 与 `v0.2.32`
+    标签逐字节一致。
+  - `.github/workflows/release.yml` 的 Release 说明改为回退内容。
+  - 版本 0.2.35 → **0.2.36**（`Cargo.toml` / `Cargo.lock`）。
+- 文档：新增 `docs/DECISIONS.md` D060（撤销 D058/D059 的方案）；
+  `docs/ARCHITECTURE.md` §6 恢复 0.2.32 描述；`docs/KNOWN-ISSUES.md` G15
+  标记为未修复并给出 `XRAY_BUF_SPLICE=disable` 临时规避；`README.md`、
+  `CLAUDE.md`、`memory/CURRENT-STATUS.md` §1/§2.55、`memory/TODO.md`
+  T32/T33、`memory/NEXT-STEPS.md` 同步。
+- 验证：`cargo fmt --check` 通过、`cargo test` **122/122**、`cargo clippy
+  --all-targets -- -D warnings` 零警告；前端无改动。**未在 Linux 重新
+  验证**（与已发布 v0.2.32 相同代码路径）。
+- 未打包、未打 tag、未创建 Release。部署继续使用 v0.2.32。

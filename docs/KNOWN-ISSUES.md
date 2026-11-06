@@ -535,7 +535,7 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   直接后果，已写入 API 文档。**未验证**：真实 Linux/大面板部署下 1 秒
   原生快照的 CPU/RSS 与前端观感。
 
-### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 显示侧已用内核计数规避（0.2.34），未在 Linux 验证
+### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 0.2.36 回到 0.2.32 行为，未修复
 - 症状（用户现场）：tunnel 协议入站下载时，↓ 列一直 `0 B/s`；下载结束后
   突然出现一次很大的速率（如 17 MB/s）。VLESS 入站正常。
 - 根因（读 Xray-core 源码确认）：`tunnel` 是 `dokodemo-door` 的别名，
@@ -547,26 +547,19 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   仍按块计数，所以只有下行异常；VLESS 入站不置 `CanSpliceCopy=1`，所以正常。
 - 0.2.33 的处理（D058）：面板启动 Xray 时注入 `XRAY_BUF_SPLICE=disable`，
   用关闭零拷贝换连续计数。已发布 v0.2.33。
-- 0.2.34 的处理（D059）：**不再注入该变量，恢复 Xray 默认 splice 零拷贝**。
-  tunnel 入站的实时速度改由 `src/net_diag.rs` 每秒读取 Linux
-  `NETLINK_SOCK_DIAG`/`INET_DIAG_INFO`（`tcpi_bytes_acked` 下行 /
-  `tcpi_bytes_received` 上行），按“本地地址:端口”归属到 tunnel 入站。
-  内核速率只驱动显示与入站活跃判定；**计费仍用 Xray 计数**。
-- 剩余限制：
-  - 两次采样之间建立并关闭的连接不会被计入显示速率（长时间传输不受影响）。
-  - 只有 `tunnel` 入站使用内核速率；`http`/`mixed` 仅在 CONNECT 上 splice，
-    仍用 Xray 计数，因此它们的 CONNECT 下载仍有一次性爆发（需要连续显示可
-    显式 `XRAY_BUF_SPLICE=disable`）。
-  - 仅 Linux、仅 TCP。Windows 没有 sock_diag，相关代码不可用，面板回退到
-    Xray 计数（Windows 本就没有 splice，计数本身连续）。
-  - sock_diag dump 需要面板以 root（或具备相应权限）运行；失败时限频告警
-    并回退 Xray 计数。面板 systemd 单元以 root 运行、`NoNewPrivileges=true`，
-    预期可用。
-  - 计费仍是 Xray 口径：splice 下入站累计在连接结束时入账；核心在传输中
-    被杀会丢该段字节。
-- 验证边界：**Windows 不启用 splice，也没有 sock_diag，本地无法复现/验证
-  实际效果**；已验证 `cargo test` 132/132（含 netlink 报文解析单测）、
-  clippy 零警告、musl 交叉构建通过。需要在真实 Linux/musl 部署上复核：
-  tunnel 下载时 ↓ 列连续非零、结束后无爆发、dump 失败时回退正常、进程重启
-  后基线重置、CPU/RSS 影响。见 `TODO.md` T32/T33。
-- 影响版本：0.2.32 及更早（含 3x-ui 同源行为）。
+- 0.2.34 的处理（D059）：不再注入该变量，tunnel 实时速度改由
+  `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG`。已发布 v0.2.34。
+  用户现场升级后 tunnel **完全不显示速度**，原因未定位（CI 的真实内核测试
+  通过，netlink 解析/权限本身可用；现场更像端口归属不匹配或 UDP 流量）。
+- 0.2.36（D060）：**撤销以上两条方案，代码回到 0.2.32 行为**——不注入
+  `XRAY_BUF_SPLICE`，tunnel 速度使用 Xray 统计。缺陷因此恢复存在：
+  Linux 默认 splice 下，tunnel 下载期间 ↓ 为 0，连接结束时一次性入账；
+  核心在传输中被杀会丢该段计费。部署继续使用 v0.2.32 二进制。
+- 临时规避：显式设置 `XRAY_BUF_SPLICE=disable`（环境变量或
+  `xray.buf.splice`）可关闭零拷贝、让速度连续，代价是 direct 转发失去
+  零拷贝、CPU/内存带宽略升。
+- 验证边界：0.2.36 的 `src/` 与 `v0.2.32` 标签逐字节一致，本地只跑了
+  `cargo test` 122/122、clippy、fmt；未在 Linux 重新验证。0.2.34 的
+  内核计数方案在 CI（Ubuntu 24.04）上通过了真实 dump 测试，但现场失败，
+  不再使用。
+- 影响版本：0.2.32 及更早、0.2.36 及以后（含 3x-ui 同源行为）。

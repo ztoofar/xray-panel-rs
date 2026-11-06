@@ -61,12 +61,12 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.34`（以 `Cargo.toml` 为准）。0.2.34 不再注入
-  `XRAY_BUF_SPLICE`，恢复 Xray 默认的 splice 零拷贝；tunnel 入站的实时
-  速度改由 `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 的内核 socket
-  计数（按监听端口归属，仅显示，计费仍用 Xray 计数），解决下载期间 ↓ 为 0、
-  结束后一次性爆发的问题（D059/G15）。0.2.33 曾默认注入
-  `XRAY_BUF_SPLICE=disable` 关闭零拷贝来换连续计数（D058）。0.2.32 把 `/ws`
+- **当前源码版本**：`0.2.36`（以 `Cargo.toml` 为准）。0.2.36 撤销
+  0.2.33/0.2.34 的 tunnel 速度方案，代码行为回到 0.2.32：不注入
+  `XRAY_BUF_SPLICE`，tunnel 速度继续使用 Xray 统计，Linux 默认 splice 下
+  下行仍会在连接结束时一次性入账（D060/G15）。0.2.33 曾默认注入
+  `XRAY_BUF_SPLICE=disable`（D058）；0.2.34 曾用内核 `sock_diag` 计数只驱动
+  tunnel 显示（D059）。0.2.32 把 `/ws`
   实时流量帧改为原生绝对速率快照（入站/客户端字节/秒 + `intervalMs`/
   `ttlMs`），只有存在 `/ws` 订阅者（面板打开）时才计算速度；无订阅者时
   `traffic_speeds` 与 REST `upSpeed/downSpeed` 为空，但流量计费仍按

@@ -964,3 +964,22 @@
 - 版本 0.2.33 → 0.2.34（`cargo test` 132/132、clippy 零警告、fmt、
   `cargo zigbuild --release --target x86_64-unknown-linux-musl` 通过；
   **Windows 没有 sock_diag，实际效果未验证**，见 TODO T32）。
+
+## D060 撤销 0.2.33/0.2.34 的 tunnel 速度方案，回到 0.2.32 行为
+- 日期：2026-11-06
+- 背景：用户在实际 Linux 部署升级到 0.2.34 后，tunnel 入站完全不显示速度。
+  现场信息有限，尚未定位是归属不匹配（`followRedirect`/TProxy、UDP 流量）
+  还是其他环境差异；CI 上新增的真实内核测试通过，说明 netlink 解析与权限
+  本身可用。
+- 决定（用户明确要求）：放弃上述两条方案，代码恢复 0.2.32 行为——
+  `src/xray/supervisor.rs` 不注入 `XRAY_BUF_SPLICE`，`src/jobs.rs` 不做内核
+  速率采样，删除 `src/net_diag.rs`。仓库版本递增到 0.2.36；部署继续使用
+  已发布的 v0.2.32。
+- 后果：tunnel（dokodemo）在 Linux 默认 splice 下，下行速度仍是下载中 0、
+  连接结束时一次性入账（G15 回到未修复状态）。确需连续显示可显式设置
+  `XRAY_BUF_SPLICE=disable`（0.2.33 的行为），代价是失去零拷贝。
+- 历史保留：D058/D059 不删除，作为被撤销的方案记录；0.2.33/0.2.34 的
+  Release 仍存在，但不再作为后续开发基线。
+- 版本 0.2.35 → 0.2.36（`cargo test` 122/122、clippy 零警告、fmt；
+  `src/` 与 `v0.2.32` 标签逐字节一致）。未在 Linux 重新验证（代码路径与
+  已发布的 0.2.32 相同）。

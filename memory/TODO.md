@@ -31,7 +31,10 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 
 ## P1 — 重要
 
-### T32. 真实 Linux 验证 0.2.34 内核 socket 计数驱动的 tunnel 下行速度
+### T32（已撤销 2026-11-06）. 真实 Linux 验证 0.2.34 内核 socket 计数驱动的 tunnel 下行速度
+- **已撤销**：0.2.34 在用户现场 tunnel 不显示速度，原因未定位；0.2.36 已把
+  代码恢复到 0.2.32 行为（D060），本项不再执行。当前缺陷与临时规避见
+  `KNOWN-ISSUES.md` G15。
 - 现状：0.2.34（已发布 v0.2.34）不再注入 `XRAY_BUF_SPLICE`，保留 Xray 默认 splice；
   tunnel 入站实时速度改由 `src/net_diag.rs` 的 `NETLINK_SOCK_DIAG`/tcp_info
   计数提供（D059）。Windows 无 sock_diag，也没有 splice，本地只验证了
@@ -50,7 +53,8 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
   5. 记录 1 秒 dump 的 CPU/RSS 影响（低内存约束）。
 - 验收：记录数值、日志与 CPU/RSS；更新 `KNOWN-ISSUES.md` G15 的验证状态。
 
-### T33. 评估 http/mixed CONNECT 的实时下行显示（P2）
+### T33（已撤销 2026-11-06）. 评估 http/mixed CONNECT 的实时下行显示（P2）
+- **已撤销**：内核计数方案已随 0.2.36 回退（D060），本项不再执行。
 - 现状：0.2.34 的内核计数只覆盖 `tunnel` 入站；`http`/`mixed` 仅 CONNECT
   走 splice，仍用 Xray 计数，CONNECT 下载仍会一次性爆发。
 - 内容：评估按 CONNECT 的目标地址/端口无法提前归属的问题，以及是否需要
