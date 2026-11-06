@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.33`（已发布 v0.2.33） |
+| `Cargo.toml` 版本 | `0.2.34`（未发布；最近发布 v0.2.33） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.33`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,531,253 字节**，asset digest `sha256:2439a1f7...306c`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.33`（已发布）：面板启动 Xray 子进程时默认设置 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel（dokodemo）下载实时速度为 0、连接结束时才一次性出现巨大速率的问题；流量按每次读写计入，计费更稳。详见 §2.53 / D058。0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| 当前源码 | `0.2.34`（未发布）：不再注入 `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由 `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核计数（按监听端口归属，仅显示，计费仍用 Xray 计数）。详见 §2.54 / D059。0.2.33 的关闭 splice 方案见 §2.53 / D058；0.2.32 的原生绝对速率快照见 §2.52 / D057 |
 | 0.2.33 SHA256 | `2439a1f7ea7e6f6f869c93b924ab7ae788130352e8e0ecdf53d9a170c7af306c`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `ecaaec3fa3305f1ae9dfc68e33a39a5eb9fecd988cd5060172fc34554228e49f`（13,008,928 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.33` |
 | 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
 | 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
@@ -1423,6 +1423,56 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   `SHA256SUMS` 与二进制 `ecaaec3f...8e49f` 匹配（静态 ELF 已 strip），含
   `LUMEN_VERSION=0.2.33`。Release 说明只列本次更新内容，未写安装说明，
   未启用 `generate_release_notes`（D046/D047）。
+
+## 2.54 保留 splice 零拷贝，tunnel 实时速度改用内核 socket 计数（2026-11-06，0.2.34，未发布）
+- 状态：已实现、本地验证；**Linux 实际效果未验证**（Windows 无 sock_diag，
+  也没有 splice），未打包、未发布。
+- 需求：用户要求“不关闭零拷贝也能实时显示 tunnel 速度”，并明确
+  **不改 Xray**（不打补丁、不换自建二进制）。
+- 实现：
+  - `src/xray/supervisor.rs` 不再注入 `XRAY_BUF_SPLICE`（0.2.33 的
+    `apply_accurate_traffic_env` / `splice_env_override` 已删除），Xray
+    恢复默认的 freedom splice；运维显式 `disable` 仍生效。
+  - 新增 `src/net_diag.rs`（Linux + 单测）：
+    - `platform` 用 `AF_NETLINK` + `NETLINK_SOCK_DIAG`、`SOCK_DIAG_BY_FAMILY`
+      发起 `NLM_F_DUMP`，分别 dump AF_INET/AF_INET6 的 TCP socket；
+      解析 `inet_diag_msg` 与 `INET_DIAG_INFO`（`tcp_info`），读取
+      `tcpi_bytes_acked`（下行，偏移 120）与 `tcpi_bytes_received`
+      （上行，偏移 128）；跳过 `TCP_LISTEN`；socket cookie 取消息里两个
+      u32（为 0 时用地址/端口 FNV 兜底）。
+    - `SocketSampler` 以 cookie 为键保存上一轮计数：首次见到只建基线，
+      增长时产出差分，计数回退视为新 socket；本轮 dump 缺失的 socket 被
+      清理（关闭后不再贡献）。
+    - 非 Linux 平台返回 `Unsupported`。
+  - `src/jobs.rs`：新增 `KernelSpeeds`（`enabled = splice_enabled &&
+    target_os = "linux"`）。只在 `watching`（有 `/ws` 订阅者）时采样；
+    非 watching 的 tick 调 `reset()`；Xray generation/start_epoch 变化时
+    重置基线。`freedom_splice_enabled()` 先读 `xray.buf.splice` 再读
+    `XRAY_BUF_SPLICE`，未设置视为开启。
+  - `kernel_targets()` 只包含 `enable && protocol == "tunnel"` 的入站：
+    tunnel 的每条连接都走 splice，且没有客户端，按监听地址/端口归属足够；
+    `http`/`mixed` 只在 CONNECT 上 splice，继续用 Xray 计数。
+    `ListenMatch` 处理 `0.0.0.0`/`::`/空/具体地址及主机名。
+  - 显示的入站速率：有内核数据用内核差分；tunnel 无数据时显示 0（不回退
+    到 Xray，避免结束时的整段爆发）；非 tunnel 或内核未启用时仍用
+    `display_deltas`。**计费完全不变，仍按 Xray 计数落库。**
+- 已知限制（写入 G15 / D059）：
+  - 采样间隔内建立并关闭的连接不计入显示速度（长传输不受影响）。
+  - `http`/`mixed` 的 CONNECT 下载仍会一次性爆发；需要连续显示可显式
+    `XRAY_BUF_SPLICE=disable`。
+  - 仅 Linux、仅 TCP；dump 失败（权限/内核）回退 Xray 计数并限频告警
+    （每 300 秒最多一次）。
+  - 计费仍是 Xray 口径：splice 下连接结束时入账，核心被杀会丢该段。
+- 验证：`cargo fmt --check` 通过、`cargo test` **132/132**（新增 netlink
+  报文解析/端口过滤/截断、splice 开关解析、监听匹配、按端口归属等单测）、
+  `cargo clippy --all-targets -- -D warnings` 零警告、
+  `cargo zigbuild --release --target x86_64-unknown-linux-musl` 成功
+  （Linux netlink 分支可编译）。前端无改动。**未在真实 Linux 运行。**
+- 版本：0.2.33 → 0.2.34（`Cargo.toml` / `Cargo.lock`）。未打包、未打 tag、
+  未创建 Release。
+- 待验证（T32 改写 / T33）：真实 Linux 上 tunnel 下载 ↓ 连续非零、结束后
+  无爆发；sock_diag 权限/失败回退；Xray 重启后基线重置；CPU/RSS 影响；
+  `http`/`mixed` CONNECT 的剩余限制。详见 `TODO.md`。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

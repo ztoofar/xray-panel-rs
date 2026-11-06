@@ -929,3 +929,38 @@
   仍会一次性出现）。
 - 版本 0.2.32 → 0.2.33（`cargo test` 123/123、clippy 零警告、fmt；
   **Windows 上 splice 不生效，实际效果待真实 Linux 部署验证**）。
+
+## D059 保留 Xray splice 零拷贝，tunnel 实时速度改由内核 socket 计数提供
+- 日期：2026-11-06
+- 背景：D058 用 `XRAY_BUF_SPLICE=disable` 换连续计数，代价是 direct 转发
+  失去内核零拷贝。用户要求**既保留零拷贝、又实时显示 tunnel 速度**，并明确
+  “不改 Xray”（不打补丁、不换自建二进制）。
+- 被否方案：修改 Xray 的 `CopyRawConnIfExist`，用 `io.LimitedReader` 驱动
+  `TCPConn.ReadFrom` 分块返回（现代 Go 的 `net/spliceFrom` 会把
+  `LimitedReader` 的剩余长度作为 splice 上限），从而零拷贝与逐块计数兼得。
+  技术上可行，但需要维护自建 Xray，和面板“下载官方 Xray、随官方版本更新”
+  的机制冲突，用户否决。
+- 决策：
+  1. `src/xray/supervisor.rs` 不再注入 `XRAY_BUF_SPLICE`，恢复 Xray 默认的
+     freedom splice（零拷贝）；运维仍可显式设为 `disable`。
+  2. 新增 `src/net_diag.rs`：Linux `NETLINK_SOCK_DIAG` / `INET_DIAG_INFO`
+     只读 dump 所有 TCP socket 的 `tcpi_bytes_acked`（下行）与
+     `tcpi_bytes_received`（上行）。splice 由内核搬字节，socket 计数在 ACK
+     时持续增长，不依赖 Xray 何时记账。
+  3. 只有存在 `/ws` 订阅者时采样；每 socket 以内核 cookie 为键做基线差分，
+     首次见到只建基线（避免把连接历史一次性算进一秒）。
+  4. 速率按“本地地址:端口”归属到 **tunnel（dokodemo）** 入站。tunnel 的
+     每条连接都走 splice，且没有客户端，按端口归属足够。
+     `http`/`mixed` 只在 CONNECT 上 splice，仍用 Xray 计数（见 G15）。
+  5. 内核速率只驱动显示与入站活跃判定；**计费仍用 Xray 计数**。
+- 已知代价/限制：
+  - 两次采样之间建立并关闭的连接看不到，这类短连接不计入显示速率；长时间
+    传输（用户报告的 17MB/s 场景）完整可见。
+  - 只能按监听地址/端口归属，无法按用户归属（tunnel 无用户，不受影响）。
+  - 仅 Linux、仅 TCP；dump 失败（权限/内核不支持）时退回 Xray 计数，并
+    限频告警（每 5 分钟一次）。
+  - 计费仍是 Xray 口径：splice 下入站累计在连接结束时入账，核心在传输中
+    被杀会丢该段字节。
+- 版本 0.2.33 → 0.2.34（`cargo test` 132/132、clippy 零警告、fmt、
+  `cargo zigbuild --release --target x86_64-unknown-linux-musl` 通过；
+  **Windows 没有 sock_diag，实际效果未验证**，见 TODO T32）。

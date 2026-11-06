@@ -31,19 +31,32 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 
 ## P1 — 重要
 
-### T32. 真实 Linux 验证 0.2.33 关闭 splice 后的 tunnel 下行速度
-- 现状：0.2.33 已发布（GitHub `v0.2.33`，tag → `d6238b7`），让面板启动
-  Xray 时注入 `XRAY_BUF_SPLICE=disable`，修复
-  tunnel 下载实时下行长期为 0、连接结束时一次性爆发的问题。Windows 不启用
-  splice，本地无法复现该现象，也无法验证修复；只验证了环境变量注入逻辑
-  （单测 123/123、clippy、fmt）。
-- 内容：真实 Linux/musl 部署 0.2.33，用 tunnel（dokodemo，rewriteAddress 或
-  portMap）下载大文件：确认 WS `payload.inbounds[tag].down` 与 REST
-  `downSpeed` 连续非零（约 1 秒刷新），下载过程中不再出现一次性 17MB/s
-  爆发；同时核对入站累计与 DB 计费；传输中途 `kill -9 xray`，确认已传字节
-  按块计费（最多丢一个计费窗口，而不是整段丢失）；记录关闭 splice 前后的
-  CPU 差异。
-- 验收：记录数值、日志与 CPU 对比；更新 `KNOWN-ISSUES.md` G15 的验证状态。
+### T32. 真实 Linux 验证 0.2.34 内核 socket 计数驱动的 tunnel 下行速度
+- 现状：0.2.34（未发布）不再注入 `XRAY_BUF_SPLICE`，保留 Xray 默认 splice；
+  tunnel 入站实时速度改由 `src/net_diag.rs` 的 `NETLINK_SOCK_DIAG`/tcp_info
+  计数提供（D059）。Windows 无 sock_diag，也没有 splice，本地只验证了
+  编译、报文解析单测（`cargo test` 132/132）和 clippy；**真实 Linux 效果
+  未验证**。0.2.33 曾用关闭 splice 的方案，已发布但同样未在 Linux 实测。
+- 内容：真实 Linux/musl 部署 0.2.34，用 tunnel（dokodemo，rewriteAddress 或
+  portMap）下载大文件：
+  1. WS `payload.inbounds[tag].down` 与 REST `downSpeed` 连续非零（约 1 秒
+     刷新），下载过程中不再出现一次性 17MB/s 爆发；同时用 `nload`/网卡计数
+     对照，确认数值量级正确。
+  2. 核对 Xray 入站累计与 DB 计费仍按连接结束入账且数值正确；传输中途
+     `kill -9 xray`，确认这是已知限制（该段计费丢失），但面板不应崩溃。
+  3. 确认面板以 systemd root 运行时 sock_diag dump 成功（无 5 分钟一次的
+     warn 日志）；若以非 root 运行，确认回退到 Xray 计数且界面不空。
+  4. Xray 重启/配置重载后，速度基线重置，不出现旧连接残留速率。
+  5. 记录 1 秒 dump 的 CPU/RSS 影响（低内存约束）。
+- 验收：记录数值、日志与 CPU/RSS；更新 `KNOWN-ISSUES.md` G15 的验证状态。
+
+### T33. 评估 http/mixed CONNECT 的实时下行显示（P2）
+- 现状：0.2.34 的内核计数只覆盖 `tunnel` 入站；`http`/`mixed` 仅 CONNECT
+  走 splice，仍用 Xray 计数，CONNECT 下载仍会一次性爆发。
+- 内容：评估按 CONNECT 的目标地址/端口无法提前归属的问题，以及是否需要
+  把 http/mixed 也纳入内核归属（风险：普通 HTTP 请求被重复计入、非 splice
+  连接与 Xray 计数不一致）。在真实 Linux 上先量化影响再决定。
+- 验收：给出结论（实现或明确不做），写入 DECISIONS/KNOWN-ISSUES。
 
 ### T31. 真实 Linux 验证 0.2.32 原生速度快照
 - 现状：0.2.32 只在 Windows debug + fake StatsService/真实 Xray tunnel 路径

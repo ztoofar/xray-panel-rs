@@ -7,6 +7,7 @@ mod config;
 mod db;
 mod error;
 mod jobs;
+mod net_diag;
 mod notify;
 mod outbound_check;
 mod outbound_subs;

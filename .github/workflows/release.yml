@@ -69,11 +69,13 @@ jobs:
           body: |
             ## 更新内容
 
-            - 修复 Linux 上 tunnel（dokodemo）协议下载时实时下行长期显示 0、
-              下载结束后一次性出现很大速率（如 17MB/s）的问题
-            - 面板启动 Xray 时关闭 freedom 的 splice 零拷贝，流量改为按每次
-              读写计入，实时速度与计费都连续；Xray 在传输中途被杀时不再整段
-              丢失计费
-            - 仍可通过环境变量 `XRAY_BUF_SPLICE`（或 `xray.buf.splice`）显式
-              覆盖，恢复零拷贝；代价是 direct 转发的 CPU 占用略高
+            - 恢复 Xray 的 freedom splice 零拷贝：面板不再注入
+              `XRAY_BUF_SPLICE=disable`
+            - tunnel（dokodemo）入站的实时下行速度改由 Linux 内核 socket
+              计数提供，下载过程中连续显示，不再在结束后一次性爆发
+            - 内核计数只用于显示与入站活跃判定，流量计费仍以 Xray 计数为准；
+              只在打开面板时采样
+            - 仍可显式设置 `XRAY_BUF_SPLICE=disable` 关闭零拷贝；采样间隔内
+              结束的短连接不计入显示速度，http/mixed 的 CONNECT 下载仍按
+              Xray 口径在连接结束时入账
 

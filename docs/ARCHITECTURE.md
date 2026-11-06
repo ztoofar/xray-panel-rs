@@ -190,13 +190,16 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
   这样速度列按 1 秒窗口刷新，接近 1 秒网卡监控，而 DB 写入不因有人看页面
   而增加五倍。显示 tick 的增量/移动邮箱/活跃 tag 会在计费 tick 汇总后交给
   writer。
-- **Xray 子进程环境（0.2.33）**：supervisor 启动 Xray 时默认注入
-  `XRAY_BUF_SPLICE=disable`。Xray 在 Linux/Android 上对 tunnel（dokodemo）/
-  Vision 直连的响应方向使用 `splice` 零拷贝，字节只在连接结束时入账，
-  会让下行速度长时间为 0、结束时一次性爆发，核心被杀时还会丢失计费；
-  关闭后按每次读写计数，速度与计费连续。运维显式设置 `XRAY_BUF_SPLICE`
-  或 `xray.buf.splice` 时不覆盖。代价是 direct 转发 CPU/内存带宽略升
-  （见 D058/G15）。
+- **Xray 子进程环境（0.2.34）**：supervisor 不再注入 `XRAY_BUF_SPLICE`，
+  子进程继承面板环境；Xray 默认保持 freedom splice 零拷贝。运维显式设置
+  `XRAY_BUF_SPLICE` / `xray.buf.splice` 为 `disable` 时回到逐次读写计数
+  （0.2.33 的默认行为，见 D058）。
+- **tunnel 实时速度（0.2.34）**：`src/net_diag.rs` 用 Linux
+  `NETLINK_SOCK_DIAG` 每秒只读 dump 一次 TCP socket 的
+  `tcpi_bytes_acked`/`tcpi_bytes_received`，按“本地地址:端口”归属到
+  `tunnel` 入站；有 `/ws` 订阅者且 splice 未被关闭时才采样。这样 Xray 的
+  splice 仍然生效，显示不再等连接结束（D059/G15）。内核速率只用于显示与
+  入站活跃判定，计费仍读取 Xray 的统计计数器。
 - 每 tick：
   1. 计费 tick 读取 clients / client_inbounds / inbounds，构建 attachment
      身份映射并缓存为 `Roster`；显示 tick 复用该缓存。

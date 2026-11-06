@@ -18,19 +18,22 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 123/123、clippy 零警告、Cargo 版本 `0.2.33`、
+   期望：`cargo test` 132/132、clippy 零警告、Cargo 版本 `0.2.34`（未发布）、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-06）
 
-- **当前源码：`0.2.33`（已发布 v0.2.33）**（§2.53、D058）：面板启动
-  Xray 子进程时默认注入 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel
-  下载实时下行长期 0、结束后一次性爆发（如 17MB/s）的问题；显式设置
-  `XRAY_BUF_SPLICE`/`xray.buf.splice` 时不覆盖。验证：`cargo test`
-  **123/123**、clippy 零警告、fmt；前端无改动。**Linux 实际效果未验证**
-  （Windows 不启用 splice），见 TODO T32。
+- **当前源码：`0.2.34`（未发布）**（§2.54、D059）：不再注入
+  `XRAY_BUF_SPLICE`，恢复 Xray 默认 splice 零拷贝；tunnel 入站实时速度改由
+  `src/net_diag.rs` 读取 Linux `NETLINK_SOCK_DIAG` 内核 socket 计数（按监听
+  端口归属，仅显示；计费仍用 Xray 计数）。验证：`cargo test` **132/132**、
+  clippy 零警告、fmt、musl 交叉构建；前端无改动。**Linux 实际效果未验证**
+  （Windows 无 sock_diag/无 splice），见 TODO T32。
+- 0.2.33（已发布 v0.2.33，§2.53、D058）：曾默认注入
+  `XRAY_BUF_SPLICE=disable` 关闭零拷贝换连续计数；0.2.34 已改为保留零拷贝 +
+  内核计数显示。
 - **当前发布：GitHub `v0.2.33`**（tag `d6238b7`，§2.53、D058）：
   main CI `42219286821`、release `42219725879` 成功；资产 5,531,253 字节，
   digest `sha256:2439a1f7...306c`；包内二进制 `ecaaec3f...8e49f`
@@ -63,16 +66,16 @@
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.33` 已发布；任何新
-   改动先 bump 到 `0.2.34`），同步 `memory/CURRENT-STATUS.md`、
-   `memory/DEVELOPMENT-LOG.md`。
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.34` 已实现、未发布；
+   若本次没有新改动就直接发 0.2.34，有新改动则继续 bump），同步
+   `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
    （不带版本号），只列本次更新条目；不写安装/更新说明，不启用
-   `generate_release_notes`（D046/D047）。v0.2.33 的条目（tunnel 下行、
-   关闭 freedom splice、可用环境变量覆盖）已随上一版发布，新版本必须换成
-   本次实际改动。
+   `generate_release_notes`（D046/D047）。v0.2.33 的条目已随上一版发布，
+   0.2.34 必须换成本次实际改动（保留 splice 零拷贝；tunnel 实时速度改用
+   内核 socket 计数；http/mixed 的剩余限制）。
 4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
 5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**
@@ -102,9 +105,11 @@
 
 ## 当前悬而未决的验证项
 
-- **T32（最高优先）**：真实 Linux/musl 部署验证 0.2.33 关闭 splice 后的
-  tunnel 下行速度（连续非零、无一次性爆发、传输中杀核心不丢整段计费、
-  CPU 变化），见 `TODO.md`。
+- **T32（最高优先）**：真实 Linux/musl 部署验证 0.2.34 内核 socket 计数
+  驱动的 tunnel 下行速度（连续非零、无一次性爆发、网卡对照、sock_diag 权限
+  回退、重启后基线重置、CPU/RSS），见 `TODO.md`。
+- **T33（P2）**：评估 http/mixed CONNECT 是否也纳入内核计数（当前仍会一次性
+  爆发），见 `TODO.md`。
 - **T31**：真实 Linux/musl 部署验证 0.2.32 原生速度快照（1 秒刷新、关闭
   面板 REST 速度为 0 但计费继续、CPU/RSS）。
 - **T26**：真实 Linux + systemd + musl 回归增强（在线公网 IP、日志目录

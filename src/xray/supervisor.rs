@@ -252,6 +252,11 @@ async fn start_child(
         bail!("找不到 Xray 可执行文件：{}", cfg.xray_bin.display());
     }
 
+    // The child inherits the panel's environment, including `xray.buf.splice`
+    // / `XRAY_BUF_SPLICE`. The panel deliberately does not override it: Xray's
+    // default keeps freedom splice (zero-copy) on, and live tunnel speeds come
+    // from kernel socket counters (`net_diag`) instead of Xray's close-time
+    // counters. Operators can still export `...=disable` to turn splice off.
     let mut command = Command::new(&cfg.xray_bin);
     command
         .arg("run")
@@ -260,7 +265,6 @@ async fn start_child(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    apply_accurate_traffic_env(&mut command);
 
     let mut started = command
         .spawn()
@@ -294,28 +298,6 @@ async fn start_child(
     }
     append_log_line(&cfg.xray_log_file, &started_line).await;
     Ok(started)
-}
-
-/// Xray's freedom spliced copy (Linux/Android) tallies a stream's bytes only
-/// when the connection ends: a tunnel download reads 0 B/s for its whole
-/// lifetime, lands as one lump at close, and is lost entirely if the core is
-/// killed mid-transfer. The panel needs per-write counters for both the live
-/// speed and stable billing, so splice is off unless the operator chose it.
-fn apply_accurate_traffic_env(command: &mut Command) {
-    if let Some((name, value)) = splice_env_override(|key| std::env::var_os(key).is_some()) {
-        tracing::debug!(name, value, "xray child environment override");
-        command.env(name, value);
-    }
-}
-
-fn splice_env_override(configured: impl Fn(&str) -> bool) -> Option<(&'static str, &'static str)> {
-    const NAME: &str = "XRAY_BUF_SPLICE";
-    const ALT_NAME: &str = "xray.buf.splice";
-    if configured(NAME) || configured(ALT_NAME) {
-        None
-    } else {
-        Some((NAME, "disable"))
-    }
 }
 
 async fn stop_child(child: &mut Option<Child>, generation: &AtomicU64) {
@@ -489,7 +471,7 @@ pub async fn test_config(cfg: &Config, path: &Path) -> Result<()> {
 mod tests {
     use std::path::Path;
 
-    use super::{parse_version_line, splice_env_override, temp_config_path};
+    use super::{parse_version_line, temp_config_path};
 
     #[test]
     fn version_line_keeps_only_the_short_version() {
@@ -500,16 +482,6 @@ mod tests {
             Some("25.3.6")
         );
         assert_eq!(parse_version_line("unknown"), None);
-    }
-
-    #[test]
-    fn splice_is_disabled_unless_the_operator_set_it() {
-        assert_eq!(
-            splice_env_override(|_| false),
-            Some(("XRAY_BUF_SPLICE", "disable"))
-        );
-        assert_eq!(splice_env_override(|key| key == "XRAY_BUF_SPLICE"), None);
-        assert_eq!(splice_env_override(|key| key == "xray.buf.splice"), None);
     }
 
     #[test]

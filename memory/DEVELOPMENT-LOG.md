@@ -1542,3 +1542,34 @@
   `internal/xray/process.go` 直接用 `exec.CommandContext` 继承环境，
   systemd 单元只设 `XRAY_VMESS_AEAD_FORCED=false`，Dockerfile 也未设置），
   因此 3x-ui 同样受 splice 一次性入账影响，不存在更细的统计粒度。
+
+## 2026-11-06 — 0.2.34 保留 splice，tunnel 实时速度改用内核 socket 计数
+
+- 背景：用户要求“不关闭零拷贝也能实时显示 tunnel 速度”，并明确「不改 XRAY」
+  （不打补丁、不换自建二进制）。0.2.33 的 `XRAY_BUF_SPLICE=disable` 方案
+  （D058）会让 freedom 直连失去零拷贝。
+- 调研：Go `net/spliceFrom` 可配合 `*io.LimitedReader` 做分块 splice，理论上
+  可零拷贝且逐块计数，但需要维护自建 Xray，与官方二进制/更新机制冲突，
+  用户已否决；最终选择内核 socket 计数（方案二）。
+- 改动：
+  - 新增 `src/net_diag.rs`：Linux `NETLINK_SOCK_DIAG` 只读 dump，解析
+    `inet_diag_msg` + `INET_DIAG_INFO`（`tcpi_bytes_acked` 下行 /
+    `tcpi_bytes_received` 上行），跳过 LISTEN；`SocketSampler` 以 socket
+    cookie 做基线差分，缺失 socket 自动清理；非 Linux 返回 Unsupported。
+  - `src/jobs.rs`：新增 `KernelSpeeds`，仅在 `watching` 时采样，非 watching
+    tick 与 Xray generation/start_epoch 变化时重置；`kernel_targets()` 只取
+    `protocol == "tunnel"` 的入站，按监听地址/端口归属；tunnel 有内核数据
+    时不回退 Xray 计数（避免结束时爆发）；计费路径完全不变。
+  - `src/xray/supervisor.rs`：删除 `apply_accurate_traffic_env` /
+    `splice_env_override` 及其单测，不再注入 `XRAY_BUF_SPLICE`。
+  - `src/main.rs`：注册 `mod net_diag;`。
+- 文档：`docs/DECISIONS.md` D059、`docs/ARCHITECTURE.md` §6、
+  `docs/KNOWN-ISSUES.md` G15、`README.md` 环境变量表、`CLAUDE.md` 版本段、
+  `memory/CURRENT-STATUS.md` §1/§2.54、`memory/TODO.md` T32/T33。
+- 版本：0.2.33 → **0.2.34**（`Cargo.toml` / `Cargo.lock`）。
+- 验证：`cargo fmt --check` 通过、`cargo test` **132/132**、`cargo clippy
+  --all-targets -- -D warnings` 零警告、`cargo zigbuild --release --target
+  x86_64-unknown-linux-musl` 成功（Linux netlink 分支可编译）。前端无改动，
+  未重建、未打包、未打 tag、未发布。
+- 未验证：Linux 上实际 sock_diag 行为与速度显示、权限回退、CPU/RSS；短连接
+  漏计、http/mixed CONNECT 仍未覆盖（见 G15/T32/T33）。

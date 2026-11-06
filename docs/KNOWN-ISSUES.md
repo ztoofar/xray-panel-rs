@@ -535,7 +535,7 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   直接后果，已写入 API 文档。**未验证**：真实 Linux/大面板部署下 1 秒
   原生快照的 CPU/RSS 与前端观感。
 
-### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 已实现修复（0.2.33，已发布 v0.2.33），未在 Linux 验证
+### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 显示侧已用内核计数规避（0.2.34），未在 Linux 验证
 - 症状（用户现场）：tunnel 协议入站下载时，↓ 列一直 `0 B/s`；下载结束后
   突然出现一次很大的速率（如 17 MB/s）。VLESS 入站正常。
 - 根因（读 Xray-core 源码确认）：`tunnel` 是 `dokodemo-door` 的别名，
@@ -545,14 +545,28 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   `writeCounter.Add(w)`（`proxy/proxy.go`）。于是下载期间下行计数器不动，
   结束时整段一次性入账；若核心在传输中被杀，这部分字节不进统计。上传方向
   仍按块计数，所以只有下行异常；VLESS 入站不置 `CanSpliceCopy=1`，所以正常。
-- 修复（0.2.33，D058）：`src/xray/supervisor.rs` 启动 Xray 子进程时默认设置
-  `XRAY_BUF_SPLICE=disable`；运维显式设置 `XRAY_BUF_SPLICE` /
-  `xray.buf.splice` 时不覆盖。关闭后下行按每次写计数，速度与计费连续。
-- 代价：direct 转发（tunnel、Vision 直连段）失去内核零拷贝，CPU/内存带宽
-  略升。需要极限吞吐可显式设置 `XRAY_BUF_SPLICE=enable`（tunnel 下行速度
-  会回到一次性爆发）。
-- 验证边界：**Windows 不启用 splice，本地无法复现也无法验证修复**；仅在
-  Windows 上验证了环境变量注入逻辑（单测 123/123、clippy、fmt）。需要在
-  真实 Linux/musl 部署上复核：tunnel 下载时 ↓ 列连续非零、结束后无爆发、
-  进程重启不丢计费。见 `TODO.md` T32。
+- 0.2.33 的处理（D058）：面板启动 Xray 时注入 `XRAY_BUF_SPLICE=disable`，
+  用关闭零拷贝换连续计数。已发布 v0.2.33。
+- 0.2.34 的处理（D059）：**不再注入该变量，恢复 Xray 默认 splice 零拷贝**。
+  tunnel 入站的实时速度改由 `src/net_diag.rs` 每秒读取 Linux
+  `NETLINK_SOCK_DIAG`/`INET_DIAG_INFO`（`tcpi_bytes_acked` 下行 /
+  `tcpi_bytes_received` 上行），按“本地地址:端口”归属到 tunnel 入站。
+  内核速率只驱动显示与入站活跃判定；**计费仍用 Xray 计数**。
+- 剩余限制：
+  - 两次采样之间建立并关闭的连接不会被计入显示速率（长时间传输不受影响）。
+  - 只有 `tunnel` 入站使用内核速率；`http`/`mixed` 仅在 CONNECT 上 splice，
+    仍用 Xray 计数，因此它们的 CONNECT 下载仍有一次性爆发（需要连续显示可
+    显式 `XRAY_BUF_SPLICE=disable`）。
+  - 仅 Linux、仅 TCP。Windows 没有 sock_diag，相关代码不可用，面板回退到
+    Xray 计数（Windows 本就没有 splice，计数本身连续）。
+  - sock_diag dump 需要面板以 root（或具备相应权限）运行；失败时限频告警
+    并回退 Xray 计数。面板 systemd 单元以 root 运行、`NoNewPrivileges=true`，
+    预期可用。
+  - 计费仍是 Xray 口径：splice 下入站累计在连接结束时入账；核心在传输中
+    被杀会丢该段字节。
+- 验证边界：**Windows 不启用 splice，也没有 sock_diag，本地无法复现/验证
+  实际效果**；已验证 `cargo test` 132/132（含 netlink 报文解析单测）、
+  clippy 零警告、musl 交叉构建通过。需要在真实 Linux/musl 部署上复核：
+  tunnel 下载时 ↓ 列连续非零、结束后无爆发、dump 失败时回退正常、进程重启
+  后基线重置、CPU/RSS 影响。见 `TODO.md` T32/T33。
 - 影响版本：0.2.32 及更早（含 3x-ui 同源行为）。
