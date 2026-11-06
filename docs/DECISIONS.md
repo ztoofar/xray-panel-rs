@@ -865,3 +865,38 @@
 - 版本 0.2.30 → 0.2.31（`cargo test` 121/121、clippy 零警告、fmt；
   fake-stats 计费 13/13、无头 Chrome UI+WS 10/10、真实 Xray tunnel 回归
   PASS；**未在真实 Linux/大面板部署上验证**）。
+
+## D057 实时速度改为原生绝对速率快照；无人查看时不计算速度，计费始终运行
+- 日期：2026-11-06
+- 背景：用户明确要求「重新设计入站和客户端的速度显示，不要参考 3x-ui，
+  用原生代码实现；流量统计要准确；实时速度只在打开面板时显示，没打开面板
+  就不要统计速度，但流量要一直统计」。0.2.31 仍沿用 3x-ui 的
+  `traffics`/`clientTraffics` 增量 + `clientTrafficIntervalMs` 除数协议：
+  前端要自己差分/换算，且没有订阅者时后端仍会走完整显示路径。
+- 决策：
+  1. `/ws` 的 `traffic` 帧改为原生快照：
+     `{inbounds: {tag: {up, down}}, clients: {email: {up, down}}, ...,
+     intervalMs, ttlMs}`。`up/down` 是服务端已按真实采样间隔算好的
+     **字节/秒**，浏览器直接渲染，不再差分、不再除以任何字段。
+  2. 「打开面板」的判定就是 `/ws` 订阅者数（`ws_events.receiver_count() > 0`）。
+     没有订阅者时不换算速率、不建帧、不序列化 JSON，`traffic_speeds` 置空；
+     REST 的 `upSpeed/downSpeed` 因此同样为 0。有订阅者且客户端 ≤2000 时
+     显示节拍为 1 秒，否则按 `traffic_poll_secs`。
+  3. 流量计费完全不变：DB 基准、`BillingSink` 串行 writer、在线/配额/重置
+     仍按 `traffic_poll_secs` 常驻运行，与是否有人查看面板无关。
+     `display_deltas` 每个 tick 仍推进内存基线（防止 1 秒 tick 重复计同一段
+     字节），只是速率换算受 `watching` 控制。
+  4. `ttlMs = clamp(2×intervalMs + 1000, 3000, 120000)` 下发给浏览器；超过
+     该时间没有新帧就清空速度列，替代 3x-ui 的固定过期假设。前端收到快照
+     直接替换整张速度表，缺失的实体即空闲，不再跨帧累加。
+- 被否方案：保留 3x-ui 字段以兼容旧前端——用户明确要求不参考 3x-ui，且
+  增量+除数把换算责任放在浏览器，慢 tick/漏帧时容易再次失真；无人查看
+  时仍采样速度——浪费 `QueryStats` 与内存，且与本需求冲突；用 REST 轮询
+  是否有请求判断“面板打开”——轮询频率不稳定，WS 订阅者是更准确的信号。
+- 后果：REST 速度字段只在有 WS 订阅者时有值（已写入 API 文档，e2e 显式
+  验证“关闭面板时速度为 0、累计流量照常”）；inbound/client 速度口径统一
+  为服务端字节/秒；3x-ui 的 `traffics`/`clientTraffics`/
+  `clientTrafficIntervalMs` 从帧中移除，诊断脚本同步更新。
+- 版本 0.2.31 → 0.2.32（`cargo test` 122/122、clippy 零警告、fmt；
+  fake-stats 原生 e2e 18/18、零客户端入站 4/4、无头 Chrome UI+WS 12/12、
+  `diag.py` 稳态均值 +0.10%；**未在真实 Linux/大面板部署上验证**）。

@@ -1,6 +1,6 @@
 # CURRENT-STATUS
 
-> 最后更新：2026-11-05 23:00（本地时间）
+> 最后更新：2026-11-06（本地时间）
 > 本文件只记录**当前真实状态**。历史细节见 `DEVELOPMENT-LOG.md` / `PROGRESS.md`。
 > 未验证的能力不得写成“已完成”；每项后面标注验证方式或“未验证”。
 
@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.27`（发布 v0.2.27） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.27`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,518,387 字节**，asset digest `sha256:d0209122...138b`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.27`：实时 WS 帧改用真实采样间隔做除数，修复慢 tick 下入站/客户端速度按比例虚高；首轮无速率不广播。详见 §2.43 |
+| `Cargo.toml` 版本 | `0.2.32`（未打包、未发布；最近发布仍为 v0.2.31） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.31`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,503 字节**，asset digest `sha256:77d0b706...c908`；Release 页面只显示更新内容 |
+| 当前源码 | `0.2.32`：实时速度改为原生绝对速率快照（字节/秒 + `intervalMs`/`ttlMs`），只在有 `/ws` 订阅者时计算；计费始终按 `traffic_poll_secs` 运行。详见 §2.52 / D057 |
 | 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
 | 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
 | 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
@@ -1336,6 +1336,48 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   速度数值（本地 fake-stats/真实 Xray tunnel 已覆盖）。
 - 未验证：真实 Linux/musl 大面板的 1 秒采样 CPU/内存；>2000 客户端自动
   回退到轮询的实际效果。
+
+## 2.52 原生实时速率快照；无人查看不计算速度（2026-11-06，0.2.32）
+- 状态：已实现、本地验证；**未打包、未发布**（用户未要求）。
+- 需求：用户要求重新设计入站/客户端速度显示，不参考 3x-ui；流量统计要
+  准确；实时速度只在打开面板时显示，没打开面板不统计速度，但流量一直统计。
+- 改动：
+  - `src/jobs.rs`：`watching = ws_events.receiver_count() > 0`。无订阅者时
+    不换算速率、不广播、`traffic_speeds` 置空；有订阅者且客户端 ≤2000 时
+    显示 tick 1 秒。`display_deltas` 每个 tick 仍推进内存基线，只是
+    `speed_sample` 受 `watching` 控制。`TrafficTick` 增加 `watching` /
+    `display_interval_ms`，删除 `frame_interval_hint`。
+  - `traffic` 帧改为 `{inbounds: {tag:{up,down}}, clients: {email:{up,down}},
+    onlineClients, onlineByGuid, activeInbounds, lastOnlineMap, intervalMs,
+    ttlMs}`；`up/down` 是字节/秒，`ttlMs = clamp(2×intervalMs+1000, 3000,
+    120000)`。移除 `traffics`/`clientTraffics`/`clientTrafficIntervalMs`。
+  - 前端 `useInbounds.ts` / `useClients.ts`：直接消费绝对速率，整表替换，
+    按 `ttlMs` 过期；删除 `TRAFFIC_POLL_INTERVAL_S` 除数逻辑。测试改为
+    原生快照两例。
+  - 计费路径未改：`BillingSink` 串行 writer、DB 基准、在线/配额/重置仍按
+    `traffic_poll_secs` 常驻。
+  - 诊断脚本同步：`tmp/e2e-traffic-accuracy/e2e.py`、`noclient.py`、
+    `tmp/e2e-traffic-ui/ui_check.mjs`、`tmp/diag-traffic-ws/diag.py`、
+    `tunnel_real.py`、`deploy/panel_speed_check.py`。
+  - 文档：`docs/API.md`、`docs/ARCHITECTURE.md` §6/§6.1、`docs/DECISIONS.md`
+    D057、`docs/KNOWN-ISSUES.md`。
+- 验证（本地 Windows，fake Xray + fake StatsService + 真实 debug 二进制）：
+  - `cargo test` **122/122**；`cargo clippy --all-targets -- -D warnings` 零
+    警告；`cargo fmt --check` 通过；`npm run build` 成功。
+  - `e2e.py` **18/18 ALL PASS**：无订阅者时累计 5000/9000 已计费、REST
+    速度为 0；打开 WS 后帧为绝对速率且与真值误差 <20%，`intervalMs≈1000`、
+    `ttlMs≈3000`；REST 非零；关闭后速度清零；客户端/入站重置不重复计费。
+  - `noclient.py` 4/4 PASS（零客户端入站速度、累计、清除）。
+  - 无头 Chrome `ui_check.mjs` **12/12 ALL PASS**（速度标签出现/清除、
+    原生帧字段、无 3x-ui 字段）。
+  - `diag.py`：18 帧，间隔 1000–1017 ms，ttl 3000–3034 ms，稳态均值
+    up=1,000,986 B/s（+0.10%）、down=2,001,972 B/s（+0.10%）。
+- 未验证：
+  - **未在真实 Linux/musl 部署上运行**；>2000 客户端回退轮询的效果。
+  - `tunnel_real.py` 已改为原生协议但本次未重跑（需要真实 Xray 环境）；
+    0.2.31 时该脚本曾 PASS。
+  - WS 连不上、只能靠 REST 兜底时速度会显示 0（设计后果，见 KNOWN-ISSUES）。
+- 版本：0.2.31 → 0.2.32（`Cargo.toml` / `Cargo.lock`）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

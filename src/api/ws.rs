@@ -1,7 +1,9 @@
-//! 3x-ui compatible WebSocket endpoint. The browser client connects to
-//! `<basePath>ws` and expects `{type, payload, time}` frames; the traffic job
-//! broadcasts the same delta snapshots 3x-ui does. Authentication is the
-//! normal session-cookie middleware on the protected router.
+//! Native live-speed WebSocket endpoint. A panel page connects to
+//! `<basePath>ws` while it renders speeds; the traffic job then pushes
+//! `{type, payload, time}` snapshots that already contain bytes/second. The
+//! socket is also the "somebody is watching" signal: with no subscriber the
+//! job performs no rate computation at all. Authentication is the normal
+//! session-cookie middleware on the protected router.
 
 use std::time::Duration;
 

@@ -19,7 +19,6 @@ import {
 import { DefaultsPayloadSchema, type DefaultsPayload } from '@/schemas/defaults';
 
 import type { InboundSpeedEntry } from './list/types';
-import { TRAFFIC_POLL_INTERVAL_S } from '@/lib/traffic/poll-interval';
 
 export interface SubSettings {
   // Configured public host (Web Domain) used as the share/QR link host when
@@ -28,13 +27,6 @@ export interface SubSettings {
 }
 
 type DBInboundInstance = InstanceType<typeof DBInbound>;
-
-interface TrafficDelta {
-  Tag: string;
-  Up: number;
-  Down: number;
-  IsInbound?: boolean;
-}
 
 interface ClientRollup {
   clients: number;
@@ -493,13 +485,12 @@ export function useInbounds() {
   const applyTrafficEvent = useCallback((payload: unknown) => {
     if (!payload || typeof payload !== 'object') return;
     const p = payload as {
-      traffics?: TrafficDelta[];
-      nodeTraffics?: TrafficDelta[];
+      inbounds?: Record<string, InboundSpeedEntry>;
       onlineClients?: string[];
       onlineByGuid?: Record<string, string[]>;
       activeInbounds?: Record<string, string[]>;
       lastOnlineMap?: Record<string, number>;
-      clientTrafficIntervalMs?: number;
+      ttlMs?: number;
     };
     if (Array.isArray(p.onlineClients)) {
       setOnlineClients(p.onlineClients);
@@ -515,67 +506,41 @@ export function useInbounds() {
     if (p.lastOnlineMap && typeof p.lastOnlineMap === 'object') {
       setLastOnlineMap((prev) => ({ ...prev, ...p.lastOnlineMap! }));
     }
-    // The backend poll interval is configurable, so use the interval carried
-    // by the frame instead of a fixed 5s divisor.
-    const sampleIntervalMs =
-      typeof p.clientTrafficIntervalMs === 'number' &&
-      Number.isFinite(p.clientTrafficIntervalMs) &&
-      p.clientTrafficIntervalMs > 0
-        ? p.clientTrafficIntervalMs
-        : TRAFFIC_POLL_INTERVAL_S * 1000;
-    const sampleIntervalSeconds = sampleIntervalMs / 1000;
-    // Speed arrives from two independent polls: the local Xray poll sends
-    // `traffics` (local inbounds) and the node sync sends `nodeTraffics` (node
-    // inbounds). Each replaces speed only within its own scope so the two don't
-    // clobber each other; an idle in-scope inbound — absent from its payload —
-    // clears instead of showing a stale value.
-    const applyTraffics = (
-      traffics: TrafficDelta[],
-      inScope: (ib: DBInboundInstance) => boolean,
-    ) => {
-      const byTag = new Map<string, TrafficDelta>();
-      for (const tr of traffics) {
-        if (!tr || typeof tr.Tag !== 'string') continue;
-        if (tr.IsInbound === false) continue;
-        byTag.set(tr.Tag, tr);
-      }
-      setWsInboundSpeed((prev) => {
-        const next = { ...prev };
-        for (const ib of dbInboundsRef.current) {
-          if (!inScope(ib)) continue;
-          const delta = byTag.get(ib.tag);
-          if (delta) {
-            next[ib.id] = {
-              up: (delta.Up || 0) / sampleIntervalSeconds,
-              down: (delta.Down || 0) / sampleIntervalSeconds,
-            };
-          } else {
-            delete next[ib.id];
-          }
+    // The backend already divided the window's bytes by the measured
+    // interval: these are absolute bytes/second. An inbound absent from the
+    // snapshot is idle and clears instead of freezing on its last value.
+    const speeds = p.inbounds && typeof p.inbounds === 'object' ? p.inbounds : {};
+    setWsInboundSpeed((prev) => {
+      const next: Record<number, InboundSpeedEntry> = { ...prev };
+      for (const ib of dbInboundsRef.current) {
+        if (ib.nodeId != null) continue;
+        const speed = speeds[ib.tag];
+        if (speed && (speed.up > 0 || speed.down > 0)) {
+          next[ib.id] = { up: speed.up, down: speed.down };
+        } else {
+          delete next[ib.id];
         }
-        return next;
-      });
-    };
-    if (Array.isArray(p.traffics)) applyTraffics(p.traffics, (ib) => ib.nodeId == null);
-    if (Array.isArray(p.nodeTraffics)) applyTraffics(p.nodeTraffics, (ib) => ib.nodeId != null);
+      }
+      return next;
+    });
 
-    // The frame itself proves the socket is alive — traffic frames arrive once
-    // per poll even when nothing moved (deltas are simply empty). Reset the
-    // stale guard so live sockets never drop their speeds mid-poll, and let
-    // dead ones fall back to the REST-polling rate instead of freezing.
+    // The frame proves the socket is alive. If it stops arriving — tab closed,
+    // sleeping laptop, dead socket — drop the snapshot instead of pinning the
+    // last value.
+    const ttlMs =
+      typeof p.ttlMs === 'number' && Number.isFinite(p.ttlMs) && p.ttlMs > 0
+        ? Math.min(p.ttlMs, 120_000)
+        : 3_000;
     wsSpeedVersionRef.current += 1;
     const wsSpeedVersion = wsSpeedVersionRef.current;
     if (wsSpeedExpiryTimerRef.current !== undefined) {
       window.clearTimeout(wsSpeedExpiryTimerRef.current);
     }
-    wsSpeedExpiryTimerRef.current = window.setTimeout(
-      () => {
-        if (wsSpeedVersionRef.current !== wsSpeedVersion) return;
-        wsSpeedExpiryTimerRef.current = undefined;
-        setWsInboundSpeed((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-      },
-      Math.min(sampleIntervalMs * 2, 120_000),
-    );
+    wsSpeedExpiryTimerRef.current = window.setTimeout(() => {
+      if (wsSpeedVersionRef.current !== wsSpeedVersion) return;
+      wsSpeedExpiryTimerRef.current = undefined;
+      setWsInboundSpeed((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+    }, ttlMs);
   }, []);
   useEffect(
     () => () => {

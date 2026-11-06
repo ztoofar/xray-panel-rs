@@ -23,9 +23,9 @@ pub struct AppState {
     pub stats: StatsClient,
     pub xray_logs: LogBuffer,
     pub panel_logs: PanelLogBuffer,
-    // Serialized 3x-ui WebSocket frames (`{type,payload,time}`). The traffic
-    // job broadcasts once per poll; connected browsers get the same deltas
-    // 3x-ui pushes, so the live speed does not depend on REST polling phase.
+    // Serialized native speed snapshots (`{type,payload,time}`). Broadcast only
+    // while a panel page holds the WS open; the payload already contains
+    // bytes/second, so the browser never divides deltas itself.
     pub ws_events: broadcast::Sender<String>,
     pub online_clients: Arc<Mutex<HashMap<String, OnlineUser>>>,
     // email -> last sign of life (traffic delta or live connection), seconds.
@@ -36,9 +36,9 @@ pub struct AppState {
     pub active_inbound_last_seen: Arc<Mutex<HashMap<String, i64>>>,
     pub login_limiter: Arc<Mutex<HashMap<IpAddr, Vec<i64>>>>,
     pub traffic_history: Arc<Mutex<VecDeque<TrafficPoint>>>,
-    // Rates derived by the traffic job from this poll's deltas and the real
-    // elapsed time since the previous sample. Replaced every successful tick,
-    // so an idle entity simply has no entry (the UI shows no speed).
+    // Rates derived from this sample's deltas over the real elapsed interval.
+    // Filled only while a speed page is watching; empty otherwise, so an idle
+    // panel never pays for rate computation.
     pub traffic_speeds: Arc<Mutex<TrafficSpeeds>>,
     // Wakes the traffic job early when the admin changes the poll interval.
     pub refresh_notify: Arc<Notify>,

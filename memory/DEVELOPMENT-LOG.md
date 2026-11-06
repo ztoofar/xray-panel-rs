@@ -1443,3 +1443,37 @@
 - 部署期间服务器发生一次重启（面板日志显示 shutdown signal，07:14 自动
   恢复），重启后 0.2.31 服务与 Xray 均正常；/tmp 临时文件已随重启清除，
   无遗留测试进程。
+
+## 2026-11-06 — 0.2.32 原生实时速率快照（速度只在有人看面板时计算）
+
+- 需求：不参考 3x-ui 重写入站/客户端速度；流量统计必须准确；实时速度只在
+  打开面板时显示，关闭面板不统计速度，但流量一直统计。
+- `src/jobs.rs`：
+  - `watching = state.ws_events.receiver_count() > 0`；无订阅者时不换算
+    速率、不广播、`traffic_speeds` 置空。有订阅者且客户端 ≤2000 时显示
+    tick 1 秒。
+  - `TrafficTick` 增加 `watching` / `display_interval_ms`，删除
+    `frame_interval_hint` / `rated_interval_ms`。
+  - `traffic` 帧改为原生快照：`inbounds: {tag:{up,down}}`、
+    `clients: {email:{up,down}}`（均为字节/秒）、`intervalMs`、`ttlMs`
+    （`clamp(2×interval+1000, 3000, 120000)`）；移除 `traffics` /
+    `clientTraffics` / `clientTrafficIntervalMs`。
+  - `display_deltas` 仍每个 tick 推进基线，防止 1 秒 tick 重复计同一段
+    字节；计费路径完全未改。
+- 前端：`src/pages/inbounds/useInbounds.ts`、`src/hooks/useClients.ts`
+  直接消费绝对速率并整表替换，按 `ttlMs` 过期；删除 3x-ui 除数逻辑；
+  `src/test/clients-summary.test.tsx` 改为原生快照测试。
+- 脚本：`tmp/e2e-traffic-accuracy/e2e.py`（新增 WS 订阅者阶段与
+  “关闭面板速度为 0、累计照常”断言）、`noclient.py`、
+  `tmp/e2e-traffic-ui/ui_check.mjs`、`tmp/diag-traffic-ws/diag.py`、
+  `tunnel_real.py`、`deploy/panel_speed_check.py` 全部改为原生协议。
+- 文档：`docs/API.md`、`docs/ARCHITECTURE.md` §6/§6.1、`docs/DECISIONS.md`
+  D057、`docs/KNOWN-ISSUES.md`；本文件与 `CURRENT-STATUS.md` §2.52。
+- 版本：`Cargo.toml` / `Cargo.lock` 0.2.31 → **0.2.32**。
+- 验证：`cargo test` **122/122**；clippy 零警告；fmt 通过；前端
+  `npm run build` 成功（并按规则重新 `cargo build` 嵌入）；`e2e.py`
+  **18/18 ALL PASS**；`noclient.py` 4/4；无头 Chrome UI **12/12**；
+  `diag.py` 稳态均值 +0.10%（1.000/2.000 MB/s 真值）。
+- 未验证：真实 Linux/musl 部署与 >2000 客户端回退；`tunnel_real.py` 已改
+  协议但本次未重跑；WS 不可用时 REST 兜底速度为 0 属设计后果。
+- 未打包、未发布、未创建 tag（用户未要求）。

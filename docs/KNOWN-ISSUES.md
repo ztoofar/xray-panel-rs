@@ -524,3 +524,12 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   订阅者且客户端 ≤2000 时把显示采样改为 1 秒，计费仍按
   `traffic_poll_secs`；大面板自动回退轮询。**未验证**：真实 Linux 大面板
   1 秒采样的 CPU/RSS、>2000 客户端回退后的显示效果。
+- **后续改进（0.2.32，D057）**：WS `traffic` 帧改为原生绝对速率快照
+  （`inbounds`/`clients` 均为字节/秒，附 `intervalMs`/`ttlMs`），不再携带
+  `traffics`/`clientTraffics`/`clientTrafficIntervalMs`。前端直接渲染并
+  按 `ttlMs` 过期；没有 `/ws` 订阅者时后端不计算速度，REST
+  `upSpeed/downSpeed` 也为 0，但计费仍按 `traffic_poll_secs` 常驻。新增
+  限制：若浏览器 WS 连不上而只能靠 REST 兜底，速度会一直显示 0（因为
+  “无人订阅”就无法判定面板正在被查看）；这是「不开面板不统计速度」的
+  直接后果，已写入 API 文档。**未验证**：真实 Linux/大面板部署下 1 秒
+  原生快照的 CPU/RSS 与前端观感。

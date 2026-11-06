@@ -28,7 +28,7 @@ const MAX_HISTORY: usize = 240;
 // clients look online long after they were gone.
 const MIN_ONLINE_GRACE_SECS: i64 = 20;
 const MAX_ONLINE_GRACE_SECS: i64 = 60;
-// Fast display ticks (1s) mean three QueryStats per second. That is cheap for
+// Speed frames tick at 1s while a panel page is watching. That is cheap for
 // the panels this project targets, but on a very large client set the reply
 // itself can be tens of MB, so above this size the display falls back to the
 // configured poll instead of multiplying that load by five.
@@ -49,21 +49,19 @@ pub fn spawn(state: AppState) {
         // configured poll length: a slow tick or a missed RPC must not skew
         // the speed, and a wall-clock jump must not either.
         let mut last_stats_at: Option<std::time::Instant> = None;
-        // 3x-ui keeps the live-display delta baseline in memory
-        // (XrayAPI.StatsLastValues): it advances on every successful query and
-        // is decoupled from the database, so a failed DB billing write can
-        // never blank the speed columns or the WS frame. The DB baselines
-        // stay authoritative for billing on their own transactional path.
+        // The live-display baseline lives in memory: it advances on every
+        // successful query and is decoupled from the database, so a failed DB
+        // billing write can never blank the speed columns or the WS frame. The
+        // DB baselines stay authoritative for billing on their own
+        // transactional path.
         let mut stats_last: HashMap<DeltaKey, i64> = HashMap::new();
-        // Per-family first-pass flag (3x-ui statsBaselined): the first
-        // successful sample of a family only records baselines, since the
-        // counters may already hold traffic the panel cannot attribute.
+        // The first successful sample of a family only records baselines,
+        // since the counters may already hold traffic the panel cannot
+        // attribute.
         let mut stats_baselined: HashSet<&'static str> = HashSet::new();
-        // 3x-ui runs its DB accounting on a serialized writer goroutine
-        // (`submitTrafficWrite`) instead of inside the stats poll, so a slow
-        // write cannot stretch the gap between samples. Ours is the same task
-        // with a coalescing single-slot queue: raw counters make an older
-        // sample redundant, keeping the extra memory to one sample.
+        // DB accounting runs on a serialized writer instead of inside the
+        // stats poll, so a slow write cannot stretch the gap between samples.
+        // A coalescing single-slot queue keeps the extra memory to one sample.
         let billing = BillingSink::new();
         tokio::spawn(run_billing_writer(state.clone(), billing.clone()));
         // Clients/inbounds/identity maps used by the display path. Reloaded on
@@ -71,10 +69,10 @@ pub fn spawn(state: AppState) {
         // wake us, but reused by the faster display ticks so a 1s speed sample
         // does not run four unnecessary SELECTs each second.
         let mut roster: Option<Roster> = None;
-        // The accounting writer keeps the configured poll cadence; only the
-        // display path (speeds + WS frame) runs faster. A browser opens one
-        // WS connection for the whole session (PanelLayout), so the receiver
-        // count is the right "someone is watching" signal.
+        // The accounting writer keeps the configured poll cadence; the speed
+        // path only exists while a panel page holds the WS open. A page that
+        // renders speeds subscribes in `useWebSocket`, so the receiver count is
+        // the right "somebody is watching" signal.
         let mut last_bill_at: Option<std::time::Instant> = None;
         // Display deltas are summed across the faster ticks and handed to the
         // billing writer as one sample, so a client that moved bytes early in
@@ -149,17 +147,16 @@ pub fn spawn(state: AppState) {
                     }
                 }
             }
-            // Display cadence: 1s while a browser is connected, otherwise the
-            // configured poll. This is what makes the speed column match a
-            // 1s server monitor instead of showing a five-second average that
-            // lags every ramp-up and overstates the window after a burst.
-            // Billing stays on `secs` (the 3x-ui model): the DB never sees
-            // five times the writes just because somebody is watching.
-            let watching = state.ws_events.receiver_count() > 0
+            // Speed display only exists while a panel page holds the WS open.
+            // Without a subscriber we skip rate computation entirely and keep
+            // the accounting loop on the configured poll; traffic billing
+            // never depends on somebody watching the UI.
+            let watching = state.ws_events.receiver_count() > 0;
+            let fast_display = watching
                 && roster
                     .as_ref()
                     .is_some_and(|roster| roster.clients.len() <= FAST_DISPLAY_MAX_CLIENTS);
-            let tick_secs = if watching { 1 } else { secs };
+            let tick_secs = if fast_display { 1 } else { secs };
             // Tick before sleeping so a freshly started panel knows who is
             // online without waiting a full interval first.
             let started = std::time::Instant::now();
@@ -173,6 +170,8 @@ pub fn spawn(state: AppState) {
                     billing: &billing,
                     roster: roster.as_ref().expect("roster loaded above"),
                     bill,
+                    watching,
+                    display_interval_ms: tick_secs.saturating_mul(1000),
                     moved_since_bill: &mut moved_since_bill,
                     active_since_bill: &mut active_since_bill,
                 },
@@ -234,17 +233,6 @@ async fn current_online(state: &AppState) -> HashSet<String> {
     state.online_clients.lock().await.keys().cloned().collect()
 }
 
-/// Divisor for an empty traffic frame (a failed sample). While a browser is
-/// connected the display cadence is 1s, so the frame must not advertise the
-/// configured poll.
-fn frame_interval_hint(poll_secs: u64, ws_enabled: bool) -> u64 {
-    if ws_enabled {
-        1000
-    } else {
-        poll_secs.saturating_mul(1000)
-    }
-}
-
 /// Everything the display path needs from the database, loaded once per
 /// accounting tick and reused by the faster 1s display ticks.
 struct Roster {
@@ -279,6 +267,10 @@ struct TrafficTick<'a> {
     billing: &'a BillingSink,
     roster: &'a Roster,
     bill: bool,
+    /// A panel page is watching, so live speeds are wanted this tick.
+    watching: bool,
+    /// Cadence of the current display tick, used for empty frames.
+    display_interval_ms: u64,
     moved_since_bill: &'a mut HashSet<String>,
     active_since_bill: &'a mut HashSet<String>,
 }
@@ -291,16 +283,13 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         billing,
         roster,
         bill,
+        watching,
+        display_interval_ms,
         moved_since_bill,
         active_since_bill,
     } = ctx;
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
-    // Building the 3x-ui traffic frame is not free: it serialises every active
-    // client/inbound and the online sets. Most of the time no browser has the
-    // WS open, so skip the whole frame instead of allocating it just to have
-    // `send` return Err.
-    let ws_enabled = state.ws_events.receiver_count() > 0;
     // Captured before any work: a restart anywhere between the loop's epoch
     // check and the stats query means the sample may belong to a different
     // process than the stored baselines.
@@ -369,18 +358,19 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
                 let active: Vec<String> = active_since_bill.iter().cloned().collect();
                 refresh_active_inbounds(state, now, grace, &active).await;
             }
-            // Empty deltas clear the live speed in the browser while keeping
-            // the connection-based online set accurate.
-            broadcast_traffic(
-                state,
-                frame_interval_hint(poll_secs, ws_enabled),
-                &[],
-                &[],
-                &online_emails,
-                clients,
-                now,
-            )
-            .await;
+            // An empty snapshot clears the live speed in the browser while
+            // keeping the connection-based online set accurate.
+            if watching {
+                broadcast_traffic(
+                    state,
+                    display_interval_ms,
+                    &TrafficSpeeds::default(),
+                    &online_emails,
+                    clients,
+                    now,
+                )
+                .await;
+            }
             if bill {
                 if let Err(err) =
                     persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now)
@@ -417,16 +407,17 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
             refresh_active_inbounds(state, now, grace, &[]).await;
         }
         // Clear any speed label still pinned to the previous process.
-        broadcast_traffic(
-            state,
-            frame_interval_hint(poll_secs, ws_enabled),
-            &[],
-            &[],
-            &online_emails,
-            clients,
-            now,
-        )
-        .await;
+        if watching {
+            broadcast_traffic(
+                state,
+                display_interval_ms,
+                &TrafficSpeeds::default(),
+                &online_emails,
+                clients,
+                now,
+            )
+            .await;
+        }
         if bill {
             if let Err(err) =
                 persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now).await
@@ -446,33 +437,21 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
                 .min(i64::MAX as u128) as i64
         })
         .unwrap_or(0);
-    // The first sample after a (re)start has no previous timestamp: its deltas
-    // are real bytes but there is no window to rate them over, so no speed is
-    // advertised for it. A tick that outlasts the configured poll makes the
-    // deltas span longer than `poll_secs`; the frame must carry the interval the
-    // deltas were actually measured over or the browser inflates the rate.
-    let frame_interval = rated_interval_ms(elapsed_ms);
-    let rated = frame_interval.is_some();
-    let frame_interval_ms = frame_interval.unwrap_or_else(|| poll_secs.saturating_mul(1000));
-    // Display path first — speeds, the WS frame and the online/active sets
-    // are committed before any database work. 3x-ui's traffic job broadcasts
-    // over the hub and hands the accounting to its serialized writer
-    // (`submitTrafficWrite`); the previous arrangement ran the WS frame
-    // behind every fallible billing write, so on a big deployment the billing
-    // tail stretched the gap between two samples for seconds, and the frame
-    // divided this poll's bytes by that whole backlog — the rate read far
-    // below the instant throughput the NIC monitor shows.
+    // The first sample after a (re)start has no previous timestamp: it can be
+    // billed, but there is no window to rate it over, so no speed is shown.
+    let frame_interval_ms = if elapsed_ms > 0 {
+        elapsed_ms as u64
+    } else {
+        display_interval_ms
+    };
+    // Rates and the WS snapshot are built before any database work. Billing
+    // is handed to the serialized writer afterwards, so a slow DB can never
+    // stretch the sample gap or make the displayed rate lag the wire.
     let mut inbound_speeds: HashMap<String, SpeedSample> = HashMap::new();
     let mut client_speeds: HashMap<String, SpeedSample> = HashMap::new();
-    // 3x-ui's WS traffic frame carries this poll's deltas by tag/email; the
-    // browser divides them by `clientTrafficIntervalMs`.
-    let mut ws_traffics: Vec<InboundTraffic<'_>> = Vec::new();
-    let mut ws_client_traffics: Vec<ClientTraffic<'_>> = Vec::new();
-    // Live display deltas (WS frame + traffic_speeds) come from the in-memory
-    // baseline engine (3x-ui StatsLastValues), not from the DB: DB baselines
-    // only advance on successful billing writes, so a failed write can never
-    // stall or blank the speed columns. The in-memory baseline advances on
-    // every successful stats query instead.
+    // Display baselines live in memory and advance on every successful stats
+    // query, independent of the DB billing baselines: a failed write can never
+    // stall or blank the speed columns.
     let display = display_deltas(
         &families,
         stats_last,
@@ -484,18 +463,14 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
     for client in clients {
         let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
         let display_down = display.client_down.get(&client.email).copied().unwrap_or(0);
+        // The moved signal feeds the online set even while nobody watches.
         if display_up > 0 || display_down > 0 {
             moved_since_bill.insert(client.email.clone());
         }
-        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
-            ws_client_traffics.push(ClientTraffic {
-                email: &client.email,
-                up: display_up,
-                down: display_down,
-            });
-        }
-        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
-            client_speeds.insert(client.email.clone(), sample);
+        if watching {
+            if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
+                client_speeds.insert(client.email.clone(), sample);
+            }
         }
     }
 
@@ -505,21 +480,14 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         if display_up > 0 || display_down > 0 {
             active_since_bill.insert(inbound.tag.clone());
         }
-        if (display_up > 0 || display_down > 0) && ws_enabled && rated {
-            ws_traffics.push(InboundTraffic {
-                tag: &inbound.tag,
-                up: display_up,
-                down: display_down,
-                is_inbound: true,
-                is_outbound: false,
-            });
-        }
-        if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
-            inbound_speeds.insert(inbound.tag.clone(), sample);
+        if watching {
+            if let Some(sample) = speed_sample(display_up, display_down, elapsed_ms) {
+                inbound_speeds.insert(inbound.tag.clone(), sample);
+            }
         }
     }
 
-    *state.traffic_speeds.lock().await = TrafficSpeeds {
+    let speeds = TrafficSpeeds {
         inbounds: inbound_speeds,
         clients: client_speeds,
     };
@@ -541,16 +509,24 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         current_online(state).await
     };
 
-    broadcast_traffic(
-        state,
-        frame_interval_ms,
-        &ws_traffics,
-        &ws_client_traffics,
-        &online_emails,
-        clients,
-        now,
-    )
-    .await;
+    // No subscriber means no speed display: skip the frame entirely and keep
+    // the REST speed fields empty until somebody opens a speed page again.
+    if watching {
+        broadcast_traffic(
+            state,
+            frame_interval_ms,
+            &speeds,
+            &online_emails,
+            clients,
+            now,
+        )
+        .await;
+    }
+    *state.traffic_speeds.lock().await = if watching {
+        speeds
+    } else {
+        TrafficSpeeds::default()
+    };
 
     if !bill {
         return Ok(false);
@@ -1251,30 +1227,9 @@ async fn refresh_active_inbounds(state: &AppState, now: i64, grace: i64, moved_t
     *state.active_inbounds.lock().await = active.keys().cloned().collect();
 }
 
-// One per-poll delta, serialised directly. The frame can carry thousands of
-// entries on a busy panel, so building a serde_json::Value tree first doubled
-// the allocation count and the peak heap for every tick.
-#[derive(Serialize)]
-struct InboundTraffic<'a> {
-    #[serde(rename = "Tag")]
-    tag: &'a str,
-    #[serde(rename = "Up")]
-    up: i64,
-    #[serde(rename = "Down")]
-    down: i64,
-    #[serde(rename = "IsInbound")]
-    is_inbound: bool,
-    #[serde(rename = "IsOutbound")]
-    is_outbound: bool,
-}
-
-#[derive(Serialize)]
-struct ClientTraffic<'a> {
-    email: &'a str,
-    up: i64,
-    down: i64,
-}
-
+// Native speed snapshot. The server has already divided this window's bytes
+// by the measured interval, so the browser only renders `up`/`down`; it never
+// needs the poll length or a delta/divisor protocol.
 #[derive(Serialize)]
 struct TrafficFrame<'a, 'b> {
     #[serde(rename = "type")]
@@ -1286,24 +1241,56 @@ struct TrafficFrame<'a, 'b> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TrafficPayload<'a, 'b> {
-    traffics: &'a [InboundTraffic<'a>],
-    client_traffics: &'a [ClientTraffic<'a>],
+    /// Inbound tag -> bytes/second.
+    inbounds: &'a HashMap<String, SpeedSample>,
+    /// Client email -> bytes/second.
+    clients: &'a HashMap<String, SpeedSample>,
     online_clients: &'a [&'a String],
     online_by_guid: HashMap<&'static str, &'a [&'a String]>,
     active_inbounds: HashMap<&'static str, &'b [String]>,
     last_online_map: &'a HashMap<&'a str, i64>,
-    client_traffic_interval_ms: u64,
+    interval_ms: u64,
+    /// How long the browser may keep this snapshot before clearing it.
+    ttl_ms: u64,
 }
 
-// 3x-ui pushes one `traffic` frame per poll. The browser's existing handlers
-// divide these deltas by `client_traffic_interval_ms` and clear tags absent
-// from the frame, so the live speed no longer depends on when its REST poll
-// lands.
+/// Encode one speed snapshot. Splitting this out keeps the frame shape
+/// testable without an `AppState`.
+fn encode_traffic_frame<'a>(
+    interval_ms: u64,
+    speeds: &'a TrafficSpeeds,
+    online: &'a [&'a String],
+    active: &[String],
+    last_online: &'a HashMap<&'a str, i64>,
+) -> Option<String> {
+    let ttl_ms = interval_ms
+        .saturating_mul(2)
+        .saturating_add(1000)
+        .clamp(3_000, 120_000);
+    let frame = TrafficFrame {
+        kind: "traffic",
+        payload: TrafficPayload {
+            inbounds: &speeds.inbounds,
+            clients: &speeds.clients,
+            online_clients: online,
+            online_by_guid: HashMap::from([("", online)]),
+            active_inbounds: HashMap::from([("", active)]),
+            last_online_map: last_online,
+            interval_ms,
+            ttl_ms,
+        },
+        time: chrono::Utc::now().timestamp_millis(),
+    };
+    serde_json::to_string(&frame).ok()
+}
+
+/// Push the current rates to every panel page that asked for them. Called only
+/// while `watching`; without a subscriber the job does not compute or encode
+/// this frame at all.
 async fn broadcast_traffic<'a>(
     state: &AppState,
     interval_ms: u64,
-    traffics: &'a [InboundTraffic<'a>],
-    client_traffics: &'a [ClientTraffic<'a>],
+    speeds: &'a TrafficSpeeds,
     online_emails: &HashSet<String>,
     clients: &'a [Client],
     now: i64,
@@ -1321,20 +1308,8 @@ async fn broadcast_traffic<'a>(
         .filter(|client| online_emails.contains(&client.email))
         .map(|client| (client.email.as_str(), now.saturating_mul(1000)))
         .collect();
-    let frame = TrafficFrame {
-        kind: "traffic",
-        payload: TrafficPayload {
-            traffics,
-            client_traffics,
-            online_clients: &online,
-            online_by_guid: HashMap::from([("", online.as_slice())]),
-            active_inbounds: HashMap::from([("", active.as_slice())]),
-            last_online_map: &last_online,
-            client_traffic_interval_ms: interval_ms,
-        },
-        time: chrono::Utc::now().timestamp_millis(),
-    };
-    let Ok(message) = serde_json::to_string(&frame) else {
+    let Some(message) = encode_traffic_frame(interval_ms, speeds, &online, &active, &last_online)
+    else {
         return;
     };
     // Err only means nobody is connected; the next tick tries again.
@@ -1410,13 +1385,6 @@ fn expired_at(expiry: i64, now_secs: i64) -> bool {
         expiry
     };
     expiry_ms <= now_secs.saturating_mul(1000)
-}
-
-// The divisor the browser must use for this poll's deltas. `None` means there
-// was no previous sample (panel/Xray just started), so the bytes may be billed
-// but must not be advertised as a rate: the window they span is unknown.
-fn rated_interval_ms(elapsed_ms: i64) -> Option<u64> {
-    (elapsed_ms > 0).then_some(elapsed_ms as u64)
 }
 
 // Bytes per second for one poll window. `elapsed_ms` is the real time between
@@ -1536,14 +1504,47 @@ mod tests {
     }
 
     #[test]
-    fn ws_frame_divisor_is_the_real_window_not_the_configured_poll() {
-        // A 2s poll whose tick took 3s must tell the browser 3s: dividing the
-        // same deltas by 2s made every live speed read 50% high.
-        assert_eq!(rated_interval_ms(3_027), Some(3_027));
-        // No previous sample (panel/Xray just started): bill, but advertise no
-        // rate, otherwise the startup counters look like a huge burst.
-        assert_eq!(rated_interval_ms(0), None);
-        assert_eq!(rated_interval_ms(-1), None);
+    fn speed_frame_carries_absolute_rates_and_a_ttl() {
+        let mut speeds = TrafficSpeeds::default();
+        speeds.inbounds.insert(
+            "in-a".into(),
+            SpeedSample {
+                up: 1_500,
+                down: 3_000,
+            },
+        );
+        speeds.clients.insert(
+            "alice".into(),
+            SpeedSample {
+                up: 700,
+                down: 1_400,
+            },
+        );
+        let alice = "alice".to_string();
+        let online = [&alice];
+        let active = vec!["in-a".to_string()];
+        let last_online = HashMap::from([("alice", 1_700_000_000_000)]);
+        let frame = encode_traffic_frame(1_000, &speeds, &online, &active, &last_online)
+            .expect("frame encodes");
+        let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
+        // The browser renders these numbers directly: bytes/second, no delta
+        // and no divisor field.
+        assert_eq!(value["payload"]["inbounds"]["in-a"]["up"], 1_500);
+        assert_eq!(value["payload"]["inbounds"]["in-a"]["down"], 3_000);
+        assert_eq!(value["payload"]["clients"]["alice"]["up"], 700);
+        assert_eq!(value["payload"]["intervalMs"], 1_000);
+        assert_eq!(value["payload"]["ttlMs"], 3_000);
+        assert!(value["payload"].get("traffics").is_none());
+        assert!(value["payload"].get("clientTrafficIntervalMs").is_none());
+    }
+
+    #[test]
+    fn speed_frame_ttl_scales_with_a_slow_display_cadence() {
+        let speeds = TrafficSpeeds::default();
+        let online: [&String; 0] = [];
+        let frame = encode_traffic_frame(5_000, &speeds, &online, &[], &HashMap::new()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(value["payload"]["ttlMs"], 11_000);
     }
 
     #[test]

@@ -182,12 +182,14 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 
 - 轮询周期：`traffic_poll_secs`（默认 5 秒，校验范围 2–300）；前端入站列表工具栏
   可改，保存后通过 `Notify` 立即唤醒 job。
-- **显示节拍与计费节拍分离（0.2.31）**：有浏览器持有 `/ws` 且客户端数
-  ≤ 2000 时，显示 tick 为 **1 秒**；否则显示也回到 `traffic_poll_secs`。
-  计费、在线 API、`last_online` 心跳和 roster（clients/inbounds/身份映射）
-  仍只在 `traffic_poll_secs` 的计费 tick 上执行。这样速度列按 1 秒窗口刷新，
-  接近 1 秒网卡监控，而 DB 写入不因有人看页面而增加五倍。显示 tick 的
-  增量/移动邮箱/活跃 tag 会在计费 tick 汇总后交给 writer。
+- **显示节拍与计费节拍分离（0.2.31/0.2.32）**：有浏览器持有 `/ws` 且客户端数
+  ≤ 2000 时，显示 tick 为 **1 秒**；没有订阅者时显示回到 `traffic_poll_secs`，
+  且**不计算任何实时速度**（`traffic_speeds` 保持空）。计费、在线 API、
+  `last_online` 心跳和 roster（clients/inbounds/身份映射）仍只在
+  `traffic_poll_secs` 的计费 tick 上执行，与是否有订阅者无关——流量照常累计。
+  这样速度列按 1 秒窗口刷新，接近 1 秒网卡监控，而 DB 写入不因有人看页面
+  而增加五倍。显示 tick 的增量/移动邮箱/活跃 tag 会在计费 tick 汇总后交给
+  writer。
 - 每 tick：
   1. 计费 tick 读取 clients / client_inbounds / inbounds，构建 attachment
      身份映射并缓存为 `Roster`；显示 tick 复用该缓存。
@@ -206,13 +208,15 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
      统计回复撑爆，导致整轮失败、速度全空）。
   4. 每个统计身份拆成 `identity -> (uplink, downlink)`；缺失的方向保留为
      `None`，不当成 0。
-  5. **显示与计费分离**：显示增量（WS 帧 `traffics`/`clientTraffics`、
-     `AppState.traffic_speeds`、本轮流量信号）来自内存基线引擎
-     `display_deltas`，语义对齐 3x-ui `GetTraffic`（族首过只记基线；未见
-     过/回退的计数器从 0 起算；族失败保留基线，下轮按跨度补算；全部族
-     成功且 map > 2×live 时剪枝，键为紧凑 `DeltaKey` 省 ~30 字节/条）。
-     每个 `(client, inbound)` attachment 的**计费**增量与 DB 基准比较在
-     writer 侧进行（见 6b）。
+  5. **显示与计费分离**：显示增量（WS 帧 `inbounds`/`clients`、本轮流量
+     信号）来自内存基线引擎 `display_deltas`，语义对齐 3x-ui `GetTraffic`
+     （族首过只记基线；未见过/回退的计数器从 0 起算；族失败保留基线，下轮
+     按跨度补算；全部族成功且 map > 2×live 时剪枝，键为紧凑 `DeltaKey`
+     省 ~30 字节/条）。`display_deltas` 在**每个 tick** 都推进基线（否则
+     1 秒显示 tick 会重复计同一段字节），但只有 `watching` 时才把增量换算
+     成 `SpeedSample` 写入帧；没有订阅者时这些 map 直接保持空。每个
+     `(client, inbound)` attachment 的**计费**增量与 DB 基准比较在 writer
+     侧进行（见 6b）。
   6. 显示路径**先于一切计费写**提交：速度写入 `traffic_speeds`、推进
      `last_stats_at`、刷新在线/活跃集合并广播 WS 帧，然后把本轮**原始计数**
      装进 `BillingSample` 推入合并槽。轮询节拍（两次采样间隔）从此不再受
@@ -230,15 +234,16 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
      3x-ui 一致），最后更新出站表与全局历史。writer 失败只记 warn，下一轮
      样本按跨度补算，牵连不到显示；样本 epoch 与当前进程不符（核心已重启）
      时整份丢弃，不把死进程的累计计进清零后的基准。
-  7. 用本轮显示增量 ÷ **真实采样间隔**（单调时钟，`Instant`）计算每个入站 tag 和
-     每个客户端邮箱的字节/秒，写入 `AppState.traffic_speeds`；空闲实体没有条目，
-     UI 因此清空速度。`/panel/api/inbounds/list/slim` 返回 `upSpeed/downSpeed`，
-     客户端列表在 `traffic` 内返回同名速率。显示 tick 的间隔是 1 秒（受限时
-     为 `traffic_poll_secs`），所以 REST 兜底值也按同一窗口更新。
+  7. 仅在 `watching` 时，用本轮显示增量 ÷ **真实采样间隔**（单调时钟，
+     `Instant`）计算每个入站 tag 和每个客户端邮箱的字节/秒，写入
+     `AppState.traffic_speeds`；空闲实体没有条目，UI 因此清空速度。没有
+     订阅者时 `traffic_speeds` 置空，REST 的 `upSpeed/downSpeed` 也是 0。
+     `/panel/api/inbounds/list/slim` 与客户端列表的 `traffic` 读取同一份
+     内存值。显示 tick 的间隔是 1 秒（受限时为 `traffic_poll_secs`）。
   8. 更新在线集合（连接信号 ∪ 本轮显示流量信号），窗口 = `2×poll` 并限制在
      20–60 秒；`last_online` 心跳由 writer 落库。这步只在计费 tick 执行；
      中间的显示 tick 广播 AppState 中已有的在线集合，不重复调用在线 API。
-     统计失败轮广播空增量清速度（D054）。
+     统计失败轮在有人订阅时广播空快照清速度（D054）。
 - Xray 子进程**新启动**时（supervisor 的 `start_epoch` 增加，首次启动也算），
   先在一个事务里把 clients/inbounds/outbound_traffics/client_inbound_traffic
   的 `last_*` 基准清零（不动累计 `up/down`），再开始采样；内存显示基线与
@@ -279,8 +284,9 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 - 路由仅 7 个：`/`（系统状态）、`/inbounds`、`/clients`、`/outbound`、`/routing`、
   `/xray`、`/settings`；登录页与独立设置页是单独的 HTML 入口。
 - 数据层：TanStack Query + `HttpUtil`；REST 轮询负责状态兜底，`/ws` 推送
-  3x-ui 同款 `traffic` 帧（入站/客户端增量、在线集合、最后在线、采集间隔），
-  驱动实时速度。WS 断开时前端自动重连，期间仍由 REST 快照显示速率。
+  原生 `traffic` 快照（入站/客户端**字节/秒**、在线集合、最后在线、
+  `intervalMs`/`ttlMs`），前端直接渲染，不再做差分或除以除数。WS 断开时
+  前端自动重连，期间由 REST 快照兜底。
 - `frontend/` 与 `web/dist-custom-v2/` 是早期自研前端，保留但**不参与构建**。
 - 前端 CLAUDE.md（`frontend-3xui/CLAUDE.md`）来自上游 3x-ui，其中
   `internal/web/dist` 等描述不适用于本项目；构建输出以根 `CLAUDE.md` 为准。
@@ -289,32 +295,35 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
 
 - 受会话 Cookie 保护的 WebSocket；base path 由现有 guard 重写
   （`/secret/ws` → `/ws`）。
-- 流量 job 在有人订阅 `/ws` 时每 **1 秒**广播一帧（客户端数 > 2000 时回到
-  配置的轮询周期）；没有订阅者不建帧、不查询额外在线 API。
-  `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
-  onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
-  time}`；`traffics` 是入站 tag 的 `{Tag,Up,Down,IsInbound}` 增量，
-  `clientTraffics` 是 `{email,up,down}` 增量。
-- `clientTrafficIntervalMs` 是**本轮增量实际跨越的采样间隔**（单调时钟测得的
-  `elapsed_ms`），不是配置的轮询长度：tick 超时、漏采、设置刚改动时两者会
-  不同，用配置值做除数会把速度按比例放大。首次采样（面板/Xray 刚启动）没有
-  上一个时间点，无法计算速率，帧里不带该轮增量（累计流量仍照常计费）；
-  统计查询失败时广播空增量清空旧速度。
-- 前端用 `clientTrafficIntervalMs` 换算字节/秒；帧中缺失的入站/客户端在本轮
-  视为空闲并清除速度。慢客户端由 `broadcast` 的 `Lagged` 跳过旧帧。
-- 内存约束（0.2.26）：`receiver_count() == 0` 时流量 job 不收集增量、
-  `broadcast_traffic` 不序列化帧；帧内增量用借用 `&str` 的结构体直接
-  `serde_json::to_string`，不建 `Value` 树。广播缓冲容量为 2 帧（只有最新帧
-  有意义），每帧大小随活跃客户端数增长。
+- 0.2.32 起是**原生快照**，不再复刻 3x-ui 的增量/除数协议。流量 job 在有人
+  订阅 `/ws` 时每 **1 秒**广播一帧（客户端数 > 2000 时回到配置的轮询周期）；
+  没有订阅者时不计算速度、不建帧、不编码 JSON。
+  `{type:"traffic", payload:{inbounds, clients, onlineClients, onlineByGuid,
+  activeInbounds, lastOnlineMap, intervalMs, ttlMs}, time}`；
+  `inbounds` 是 `tag -> {up, down}`，`clients` 是 `email -> {up, down}`，
+  数值都是**字节/秒**（服务端已除以本轮真实采样间隔）。
+- `intervalMs` 是本帧速率实际跨越的采样间隔（单调时钟测得的 `elapsed_ms`），
+  供诊断和 `ttlMs` 计算；首次采样（面板/Xray 刚启动）没有上一个时间点，
+  无法计算速率，该帧的速率 map 为空（累计流量仍照常计费）；统计查询失败时
+  广播空快照清空旧速度。
+- `ttlMs = clamp(2×intervalMs + 1000, 3000, 120000)`：浏览器超过这个时间仍
+  没收到新帧就清空速度列，避免 WS 半途断开时数字冻结。帧中缺失的入站/
+  客户端在本轮视为空闲并清除速度。慢客户端由 `broadcast` 的 `Lagged`
+  跳过旧帧。
+- 内存约束（0.2.26/0.2.32）：`receiver_count() == 0` 时流量 job 不收集速率、
+  `broadcast_traffic` 不序列化帧；帧结构全部借用，直接从 map 序列化，不建
+  `Value` 树。广播缓冲容量为 2 帧（只有最新帧有意义），每帧大小随活跃
+  客户端数增长。
 - WS 连接每 30 秒 Ping，90 秒无任何入站帧（浏览器自动回 Pong）即断开，
   单次发送 10 秒超时，避免休眠/断网/半开连接长期占住任务和待发帧。
-- 独立的 `upSpeed/downSpeed` REST 字段仍保留，作为 WS 不可用时的兜底。
+- 独立的 `upSpeed/downSpeed` REST 字段仍保留，作为 WS 不可用时的兜底；
+  它们读取同一份 `traffic_speeds`，因此同样只在有 WS 订阅者时有非零值。
 
 ## 9. 后台任务
 
 | 任务 | 周期 | 作用 |
 | --- | --- | --- |
-| 流量/在线 job | `traffic_poll_secs`（2–300s，默认 5s） | 统计、在线、配额/到期/重置、历史 |
+| 流量/在线 job | 计费 `traffic_poll_secs`（2–300s，默认 5s）；有人看面板且客户端 ≤2000 时显示 1s | 计费/在线/配额/到期/重置/历史始终按计费节拍；实时速度只在有 WS 订阅者时计算并广播 |
 | 出站订阅 job | 30 秒检查一次 | 到期的启用订阅拉取/解析/保存；内容变化时重启 Xray |
 | 出站连接检测 job | 10 秒轮询配置；按设置的 1–1440 分钟频率执行 | 用临时 Xray 实例对选中的出站做 SOCKS + HTTP 204 真实探测；不可用/恢复时经企业微信通知 |
 | maintenance | 15 分钟 | 清理过期会话；`PRAGMA shrink_memory`；收缩内存容器；glibc `malloc_trim` |

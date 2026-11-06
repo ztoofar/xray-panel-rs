@@ -226,32 +226,36 @@ tuic-server、amneziawg-go）承载，本面板不内置这些运行时，因此
 | POST | `/panel/api/clients/import` | 已实现：接受 `data` 字符串数组，创建客户端、恢复流量；已存在邮箱跳过 |
 | 其他 | `/clients/happLink`、`/clients/hwids`、`/clients/ips`、`/clients/clearIps`、`/{email}/externalLinks` | 入口与后端路由已移除；未列路径走 catch-all（不应再依赖） |
 
-#### WebSocket `/ws`（0.2.25 起，3x-ui 兼容）
+#### WebSocket `/ws`（0.2.32 起原生快照）
 
-- 路径：`<basePath>ws`（默认 `/ws`），需要登录会话 Cookie。
-- 0.2.31 起，有订阅者且客户端数 ≤2000 时服务端每 **1 秒**推送一帧；否则
-  回到 `traffic_poll_secs` 的轮询周期。没有订阅者时不构建帧。
-  `{type:"traffic", payload:{traffics, clientTraffics, onlineClients,
-  onlineByGuid, activeInbounds, lastOnlineMap, clientTrafficIntervalMs},
-  time}`。
-  - `traffics`: `[{Tag, Up, Down, IsInbound, IsOutbound}]`，本轮入站增量；
-  - `clientTraffics`: `[{email, up, down}]`，本轮客户端增量；
-  - `clientTrafficIntervalMs`: 本轮增量**实际**跨越的采样间隔（毫秒，
-    单调时钟测得）；0.2.31 快速显示模式下约 1000，受限/大面板时为配置的
-    轮询长度；tick 超时或漏采时更长。首次采样没有上一时间点，不携带增量
-    （此时该字段回退为配置值）。
+- 路径：`<basePath>ws`（默认 `/ws`），需要登录会话 Cookie。入站页/客户端页
+  打开时保持连接；服务端以 `ws_events.receiver_count() > 0` 判断“面板正被
+  查看”，这也是是否计算实时速度的唯一信号。
+- 有订阅者且客户端数 ≤2000 时每 **1 秒**推送一帧；否则回到
+  `traffic_poll_secs` 的轮询周期。没有订阅者时不采样速率、不构建帧，
+  `traffic_speeds` 保持空。
+- 帧格式 `{type:"traffic", payload:{inbounds, clients, onlineClients,
+  onlineByGuid, activeInbounds, lastOnlineMap, intervalMs, ttlMs}, time}`：
+  - `inbounds`: `tag -> {up, down}`，单位 **字节/秒**。服务端已用本轮增量
+    除以真实采样间隔，浏览器直接渲染，不再做差分或除法；
+  - `clients`: `email -> {up, down}`，单位字节/秒；
+  - `intervalMs`: 本帧速率实际覆盖的采样间隔（单调时钟测得）；
+  - `ttlMs`: 浏览器保留该快照的最长时间（`2×intervalMs+1000`，限制在
+    3–120 秒）；超过仍无新帧就清空速度列；
   - `lastOnlineMap`: `email -> 毫秒时间戳`；在线集合按本地上送。
-- 前端用 `clientTrafficIntervalMs` 换算速度；帧中缺失的实体视为空闲并清空
-  速度。统计接口失败时推送空增量以清空旧速度。
-- 连接断开后浏览器自动重连；重连前/WS 不可用时，前端继续使用 REST 列表中的
-  `upSpeed/downSpeed` 兜底。
+- 帧中缺失的实体视为空闲，前端清空它的速度。统计失败时推送空
+  `inbounds`/`clients` 以清空旧值。
+- 连接断开后浏览器自动重连；WS 不可用时前端回退 REST 的 `upSpeed/downSpeed`，
+  但这两个字段同样只在有 WS 订阅者时才有值（实时速度只为“正在看面板的
+  人”计算）。
 
 #### 流量字段与重置语义（0.2.24 起）
 
 - `/panel/api/inbounds/list/slim` 的每个入站行带 `upSpeed`/`downSpeed`
   （字节/秒）；`/panel/api/clients/list`、`/list/paged`、`/get/{email}` 的
-  `traffic` 对象带 `upSpeed`/`downSpeed`。速率由流量 job 用本轮增量和真实
-  采样间隔计算，空闲时为 0/缺省；前端直接展示，不再自行差分。
+  `traffic` 对象带 `upSpeed`/`downSpeed`。速率由流量 job 在有 WS 订阅者时
+  计算，空闲或无订阅者为 0/缺省；前端直接展示，不再自行差分。流量计费
+  （`up/down` 累计值）始终运行，与是否有人查看面板无关。
 - `/panel/api/clients/resetTraffic/{email}`、`resetAllTraffics`、
   `/inbounds/{id}/resetTraffic`、`resetAllTraffics`、`/xray/resetOutboundsTraffic`
   只清数据库累计值，**不重置 Xray 计数器、不清基准**（3x-ui 模型），因此不会

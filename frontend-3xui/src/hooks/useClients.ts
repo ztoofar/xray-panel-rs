@@ -32,7 +32,6 @@ import {
 } from '@/schemas/client';
 import { DefaultsPayloadSchema } from '@/schemas/defaults';
 import { useRefreshInterval } from '@/api/queries/useRefreshInterval';
-import { TRAFFIC_POLL_INTERVAL_S } from '@/lib/traffic/poll-interval';
 
 export type { ClientRecord, ClientTraffic, ClientsSummary, InboundOption };
 
@@ -80,8 +79,6 @@ export interface ClientSpeedEntry {
   up: number;
   down: number;
 }
-
-type ClientSpeedSource = 'xray' | 'tuic';
 
 type ClientStatRow = ClientTraffic & { email?: string };
 
@@ -271,11 +268,9 @@ export function useClients(options: UseClientsOptions = {}) {
   // settings request still lets the page fall back and render.
   const settingsReady = defaultsQuery.isFetched;
 
-  const [clientSpeedBySource, setClientSpeedBySource] = useState<
-    Partial<Record<ClientSpeedSource, Record<string, ClientSpeedEntry>>>
-  >({});
-  const clientSpeedExpiryTimers = useRef<Partial<Record<ClientSpeedSource, number>>>({});
-  const clientSpeedSourceVersions = useRef<Record<ClientSpeedSource, number>>({ xray: 0, tuic: 0 });
+  const [wsClientSpeed, setWsClientSpeed] = useState<Record<string, ClientSpeedEntry>>({});
+  const wsSpeedExpiryTimer = useRef<number | undefined>(undefined);
+  const wsSpeedVersion = useRef(0);
   // Per-client rates come from the backend traffic tick, which measures each
   // delta over the real sample interval. Idle clients report 0, so the tag
   // clears instead of freezing on the last diffed snapshot.
@@ -289,24 +284,17 @@ export function useClients(options: UseClientsOptions = {}) {
     return speeds;
   }, [clients]);
 
-  const clientSpeed = useMemo(() => {
-    // WS sources add among themselves (e.g. TUIC + Xray) and replace the
-    // REST-derived fallback for the same email; adding both would double it.
-    const fromWs: Record<string, ClientSpeedEntry> = {};
-    for (const source of Object.values(clientSpeedBySource)) {
-      if (!source) continue;
-      for (const [email, speed] of Object.entries(source)) {
-        const current = fromWs[email] ?? { up: 0, down: 0 };
-        fromWs[email] = { up: current.up + speed.up, down: current.down + speed.down };
-      }
-    }
-    return { ...serverSpeed, ...fromWs };
-  }, [clientSpeedBySource, serverSpeed]);
+  const clientSpeed = useMemo(
+    // The WS snapshot is authoritative while frames arrive; the REST fields
+    // fill the same emails from the same backend tick.
+    () => ({ ...serverSpeed, ...wsClientSpeed }),
+    [serverSpeed, wsClientSpeed],
+  );
 
   useEffect(
     () => () => {
-      for (const timer of Object.values(clientSpeedExpiryTimers.current)) {
-        if (timer !== undefined) window.clearTimeout(timer);
+      if (wsSpeedExpiryTimer.current !== undefined) {
+        window.clearTimeout(wsSpeedExpiryTimer.current);
       }
     },
     [],
@@ -706,60 +694,38 @@ export function useClients(options: UseClientsOptions = {}) {
       if (!payload || typeof payload !== 'object') return;
       const p = payload as {
         onlineClients?: string[];
-        clientTraffics?: { email: string; up: number; down: number }[];
-        clientTrafficSource?: 'xray' | 'tuic';
-        clientTrafficIntervalMs?: number;
+        clients?: Record<string, ClientSpeedEntry>;
+        ttlMs?: number;
       };
       if (Array.isArray(p.onlineClients)) {
         queryClient.setQueryData(keys.clients.onlines(), p.onlineClients);
       }
-      if (Array.isArray(p.clientTraffics)) {
-        // Xray reports a row per client whether or not it moved a byte, so most of
-        // this map used to be zeros. A missing entry and a zero entry render
-        // identically (isActiveSpeed treats both as inactive), so the zeros are
-        // dropped and an unchanged result returns the previous object — which lets
-        // React bail out of the update instead of re-rendering the table.
-        const next: Record<string, ClientSpeedEntry> = {};
-        const source = p.clientTrafficSource === 'tuic' ? 'tuic' : 'xray';
-        const sampleIntervalMs =
-          typeof p.clientTrafficIntervalMs === 'number' &&
-          Number.isFinite(p.clientTrafficIntervalMs) &&
-          p.clientTrafficIntervalMs > 0
-            ? p.clientTrafficIntervalMs
-            : TRAFFIC_POLL_INTERVAL_S * 1000;
-        const sampleIntervalSeconds = sampleIntervalMs / 1000;
-        for (const ct of p.clientTraffics) {
-          if (!ct || !ct.email) continue;
-          const up = ct.up || 0;
-          const down = ct.down || 0;
-          if (up === 0 && down === 0) continue;
-          const current = next[ct.email] ?? { up: 0, down: 0 };
-          next[ct.email] = {
-            up: current.up + up / sampleIntervalSeconds,
-            down: current.down + down / sampleIntervalSeconds,
-          };
-        }
-        setClientSpeedBySource((prev) =>
-          sameSpeedMap(prev[source] ?? {}, next) ? prev : { ...prev, [source]: next },
-        );
-
-        const version = ++clientSpeedSourceVersions.current[source];
-        const previousTimer = clientSpeedExpiryTimers.current[source];
-        if (previousTimer !== undefined) window.clearTimeout(previousTimer);
-        clientSpeedExpiryTimers.current[source] = window.setTimeout(
-          () => {
-            if (clientSpeedSourceVersions.current[source] !== version) return;
-            delete clientSpeedExpiryTimers.current[source];
-            setClientSpeedBySource((prev) => {
-              if (!prev[source]) return prev;
-              const nextSources = { ...prev };
-              delete nextSources[source];
-              return nextSources;
-            });
-          },
-          Math.min(sampleIntervalMs * 2, 120_000),
-        );
+      // Absolute bytes/second from the backend, not raw deltas: an email
+      // missing from the snapshot is idle, and zeros are dropped so the table
+      // bails out of the update instead of re-rendering every row.
+      const speeds = p.clients && typeof p.clients === 'object' ? p.clients : {};
+      const next: Record<string, ClientSpeedEntry> = {};
+      for (const [email, speed] of Object.entries(speeds)) {
+        if (!speed || (speed.up === 0 && speed.down === 0)) continue;
+        next[email] = { up: speed.up || 0, down: speed.down || 0 };
       }
+      setWsClientSpeed((prev) => (sameSpeedMap(prev, next) ? prev : next));
+
+      // The frame proves the socket is alive; once frames stop, drop the
+      // snapshot instead of pinning the last rate.
+      const ttlMs =
+        typeof p.ttlMs === 'number' && Number.isFinite(p.ttlMs) && p.ttlMs > 0
+          ? Math.min(p.ttlMs, 120_000)
+          : 3_000;
+      const version = ++wsSpeedVersion.current;
+      if (wsSpeedExpiryTimer.current !== undefined) {
+        window.clearTimeout(wsSpeedExpiryTimer.current);
+      }
+      wsSpeedExpiryTimer.current = window.setTimeout(() => {
+        if (wsSpeedVersion.current !== version) return;
+        wsSpeedExpiryTimer.current = undefined;
+        setWsClientSpeed((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      }, ttlMs);
     },
     [queryClient],
   );

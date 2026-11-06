@@ -238,7 +238,10 @@ class WsCapture:
 
 
 def parse_ws_traffic(payload, tags):
-    """Return {tag: (up, down, intervalMs)} for traffic frames."""
+    """Return {tag: (up_bps, down_bps, intervalMs)} from a native snapshot.
+
+    The frame already carries bytes/second; there is no delta to divide.
+    """
     try:
         msg = json.loads(payload)
     except (ValueError, UnicodeDecodeError):
@@ -246,17 +249,16 @@ def parse_ws_traffic(payload, tags):
     body = msg.get("payload") if isinstance(msg.get("payload"), dict) else msg
     if not isinstance(body, dict):
         return None
-    rows = body.get("traffics")
-    if not isinstance(rows, list):
+    rows = body.get("inbounds")
+    if not isinstance(rows, dict):
         return None
-    interval = body.get("clientTrafficIntervalMs") or body.get("intervalMs") or 0
+    interval = body.get("intervalMs") or 0
     out = {}
-    for row in rows:
-        tag = row.get("Tag") or row.get("tag")
-        if tag and (tags is None or tag in tags):
+    for tag, row in rows.items():
+        if tags is None or tag in tags:
             out[tag] = (
-                row.get("Up", row.get("up", 0)),
-                row.get("Down", row.get("down", 0)),
+                row.get("up", 0),
+                row.get("down", 0),
                 int(interval or 0),
             )
     return out
@@ -336,9 +338,9 @@ def main():
                 got = parse_ws_traffic(payload, tags)
                 if got:
                     for tag, (up, down, interval) in got.items():
-                        frames.setdefault(tag, [0, 0])
-                        frames[tag][0] += up
-                        frames[tag][1] += down
+                        # Native snapshots are already rates: keep every sample
+                        # so the table can compare means, never a sum.
+                        frames.setdefault(tag, []).append((up, down))
                         if interval:
                             intervals.setdefault(tag, []).append(
                                 (now, up, down, interval))
@@ -358,7 +360,7 @@ def main():
         want |= set(r0)
 
     print("\n=== 对照表（%s 秒窗口）===" % f"{span:.1f}")
-    print("%-20s %16s %14s %22s %16s" % ("tag", "Xray原始", "WS帧合计", "REST速度(均值/峰值)", "DB计费"))
+    print("%-20s %16s %14s %22s %16s" % ("tag", "Xray原始", "WS帧速度(均值)", "REST速度(均值/峰值)", "DB计费"))
     ok = True
     for tag in sorted(want):
         def fam(name_suffix):
@@ -372,9 +374,10 @@ def main():
         raw_up, raw_down = fam("uplink"), fam("downlink")
 
         f_up = f_down = 0.0
-        if tag in frames:
-            f_up = frames[tag][0] / span
-            f_down = frames[tag][1] / span
+        if tag in frames and frames[tag]:
+            samples = frames[tag]
+            f_up = sum(s[0] for s in samples) / len(samples)
+            f_down = sum(s[1] for s in samples) / len(samples)
         iv = intervals.get(tag) or []
         iv_note = ""
         if len(iv) > 1:

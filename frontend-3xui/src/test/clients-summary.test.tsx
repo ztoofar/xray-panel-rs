@@ -116,65 +116,44 @@ describe('client summary always reflects the server, never a client_stats recomp
     expect(result.current.summary).toEqual(serverSummary);
   });
 
-  it('combines independently sampled TUIC and Xray speeds and replaces each source snapshot', async () => {
+  it('renders absolute bytes/second from a native speed snapshot', async () => {
     const result = await loadedHook();
 
     act(() => {
       result.current.applyTrafficEvent({
-        clientTraffics: [{ email: 'shared@example.test', up: 100, down: 150 }],
+        clients: { 'shared@example.test': { up: 2_000, down: 3_000 } },
+        ttlMs: 3_000,
       });
     });
-    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 20, down: 30 });
+    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 2_000, down: 3_000 });
 
+    // Each snapshot replaces the previous one: the browser never adds rates.
     act(() => {
       result.current.applyTrafficEvent({
-        clientTrafficSource: 'tuic',
-        clientTrafficIntervalMs: 10_000,
-        clientTraffics: [
-          { email: 'shared@example.test', up: 300, down: 100 },
-          { email: 'shared@example.test', up: 100, down: 100 },
-        ],
+        clients: { 'shared@example.test': { up: 500, down: 250 } },
+        ttlMs: 3_000,
       });
     });
-    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 60, down: 50 });
+    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 500, down: 250 });
 
+    // A missing email is idle and disappears from the speed map.
     act(() => {
-      result.current.applyTrafficEvent({
-        clientTraffics: [{ email: 'shared@example.test', up: 50, down: 25 }],
-      });
+      result.current.applyTrafficEvent({ clients: {}, ttlMs: 3_000 });
     });
-    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 50, down: 25 });
-
-    act(() => {
-      result.current.applyTrafficEvent({
-        clientTrafficSource: 'tuic',
-        clientTrafficIntervalMs: 10_000,
-        clientTraffics: [],
-      });
-    });
-    expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 10, down: 5 });
+    expect(result.current.clientSpeed).toEqual({});
   });
 
-  it('expires stale per-source speeds without clearing the other source', async () => {
+  it('expires a snapshot that stops arriving', async () => {
     const result = await loadedHook();
     vi.useFakeTimers();
     try {
       act(() => {
         result.current.applyTrafficEvent({
-          clientTrafficSource: 'xray',
-          clientTrafficIntervalMs: 1_000,
-          clientTraffics: [{ email: 'shared@example.test', up: 100, down: 200 }],
-        });
-        result.current.applyTrafficEvent({
-          clientTrafficSource: 'tuic',
-          clientTrafficIntervalMs: 2_000,
-          clientTraffics: [{ email: 'shared@example.test', up: 300, down: 400 }],
+          clients: { 'shared@example.test': { up: 2_000, down: 3_000 } },
+          ttlMs: 2_000,
         });
       });
-      expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 250, down: 400 });
-
-      act(() => vi.advanceTimersByTime(2_000));
-      expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 150, down: 200 });
+      expect(result.current.clientSpeed['shared@example.test']).toEqual({ up: 2_000, down: 3_000 });
 
       act(() => vi.advanceTimersByTime(2_000));
       expect(result.current.clientSpeed).toEqual({});
