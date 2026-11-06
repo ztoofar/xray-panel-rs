@@ -8,9 +8,9 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.32`（已发布 v0.2.32） |
+| `Cargo.toml` 版本 | `0.2.33`（未发布；最近发布 v0.2.32） |
 | 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.32`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,182 字节**，asset digest `sha256:5414dff9...b224`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.32`：实时速度改为原生绝对速率快照（字节/秒 + `intervalMs`/`ttlMs`），只在有 `/ws` 订阅者时计算；计费始终按 `traffic_poll_secs` 运行。详见 §2.52 / D057 |
+| 当前源码 | `0.2.33`：面板启动 Xray 子进程时默认设置 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel（dokodemo）下载实时速度为 0、连接结束时才一次性出现巨大速率的问题；流量按每次读写计入，计费更稳。详见 §2.53 / D058。0.2.32 的原生绝对速率快照见 §2.52 / D057 |
 | 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
 | 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
 | 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
@@ -1389,6 +1389,33 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   本次推送时本机代理 `192.168.1.251:10813` 一度返回 503/重置，已改直连
   推送完成；代理恢复后复核 200。
 
+## 2.53 tunnel 下行速度为 0、结束时一次性爆发（2026-11-06，0.2.33，已实现未发布）
+- 状态：已实现，**Windows 上无法复现/无法验证**（Xray 的 splice 仅在
+  Linux/Android 生效）；待真实 Linux 部署验证。0.2.33 未打包、未发布。
+- 现象（用户现场）：tunnel 协议入站下载时实时下行一直 `0 B/s`，下载结束
+  后突然显示一次很大的速率（如 17 MB/s）；VLESS 正常。
+- 根因（读 Xray-core 源码确认，非猜测）：
+  - `"tunnel"` 在 Xray 里就是 `dokodemo-door`（`infra/conf/xray.go`），
+    `proxy/dokodemo/dokodemo.go` 设置 `inbound.CanSpliceCopy = 1`；
+    `direct` 出站（freedom）设置 `ob.CanSpliceCopy = 1`。
+  - Linux/Android 上 `proxy.CopyRawConnIfExist` 命中 splice 条件后走
+    `TCPConn.ReadFrom` 零拷贝；**整条响应的字节数只在连接结束时**
+    `writeCounter.Add(w)`（`proxy/proxy.go`）。因此下载期间入站下行计数器
+    不动，结束后一次性入账；进程被杀则这部分字节不进统计。
+  - 请求方向（客户端→目标）仍走 `buf.Copy`，按块计数，所以上传正常；
+    VLESS 入站不置 `CanSpliceCopy=1`，所以正常。
+- 修复：`src/xray/supervisor.rs` 启动 Xray 子进程时设置
+  `XRAY_BUF_SPLICE=disable`（Xray `platform.UseFreedomSplice`，值不是
+  `auto`/`enable` 即关闭）；若运维已在环境变量 `XRAY_BUF_SPLICE` 或
+  `xray.buf.splice` 中显式设置，则尊重其选择。关闭 splice 后下行按每次
+  写计数，速度与计费都连续。
+- 代价：direct 转发（tunnel/视线 Vision 的直连部分）从零拷贝变为
+  readv+write，CPU 略升；面板定位是准确统计优先。需要零拷贝吞吐的部署可
+  显式设置 `XRAY_BUF_SPLICE=enable`（此时 tunnel 下行速度仍会一次性出现）。
+- 验证：`cargo test` **123/123**（新增 `splice_is_disabled_unless_the_operator_set_it`）、
+  clippy 零警告、fmt 通过；前端无改动，未重建。**Linux 实际效果未验证。**
+- 版本：0.2.32 → 0.2.33（`Cargo.toml` / `Cargo.lock`）。
+
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 
 以下能力在 `PROGRESS.md` / README 中有实现与历史验证记录，本次只做了编译与
@@ -1419,7 +1446,8 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - 负载均衡状态/override 已实现（RoutingService）；override 不跨 Xray 重启持久化。
   见 `KNOWN-ISSUES.md` B8、`TODO.md` T19。
 - Xray 模板里的 `inbounds` 不参与运行时；高级编辑器已隐藏该视图。
-- 无 WebSocket，全部轮询。
+- 实时通道：`/ws` 推送原生绝对速率帧（0.2.25 起，0.2.32 改为原生快照）；
+  REST 轮询仅作兜底，WS 不可用时速度会显示 0（设计后果）。
 - WireGuard/Hysteria/MASQUE 客户端管理与配置生成已实现（§2.19）；服务端
   `subLinks` 仍不生成这三种链接。`limitHwid` 只保存不强制；`limitIp` 为近似。
 - mtproto/tuic/amneziawg 入站与 amneziawg 出站不提供（sidecar 运行时未内置）。

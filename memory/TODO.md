@@ -31,6 +31,19 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 
 ## P1 — 重要
 
+### T32. 真实 Linux 验证 0.2.33 关闭 splice 后的 tunnel 下行速度
+- 现状：0.2.33 让面板启动 Xray 时注入 `XRAY_BUF_SPLICE=disable`，修复
+  tunnel 下载实时下行长期为 0、连接结束时一次性爆发的问题。Windows 不启用
+  splice，本地无法复现该现象，也无法验证修复；只验证了环境变量注入逻辑
+  （单测 123/123、clippy、fmt）。
+- 内容：真实 Linux/musl 部署 0.2.33，用 tunnel（dokodemo，rewriteAddress 或
+  portMap）下载大文件：确认 WS `payload.inbounds[tag].down` 与 REST
+  `downSpeed` 连续非零（约 1 秒刷新），下载过程中不再出现一次性 17MB/s
+  爆发；同时核对入站累计与 DB 计费；传输中途 `kill -9 xray`，确认已传字节
+  按块计费（最多丢一个计费窗口，而不是整段丢失）；记录关闭 splice 前后的
+  CPU 差异。
+- 验收：记录数值、日志与 CPU 对比；更新 `KNOWN-ISSUES.md` G15 的验证状态。
+
 ### T31. 真实 Linux 验证 0.2.32 原生速度快照
 - 现状：0.2.32 只在 Windows debug + fake StatsService/真实 Xray tunnel 路径
   上验证；真实 Linux/musl 部署、真实网卡对照、>2000 客户端回退均未验证。

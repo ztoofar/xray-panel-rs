@@ -61,7 +61,12 @@
   Xray 作为面板子进程运行，由面板生成并托管其配置。
 - **目标平台**：`x86_64-unknown-linux-musl` 静态 ELF（已 strip），无 glibc 依赖。
   开发/自测在 Windows 上进行。
-- **当前源码版本**：`0.2.32`（以 `Cargo.toml` 为准）。0.2.32 把 `/ws`
+- **当前源码版本**：`0.2.33`（以 `Cargo.toml` 为准）。0.2.33 在启动 Xray
+  子进程时默认注入 `XRAY_BUF_SPLICE=disable`：Xray 在 Linux 上对
+  tunnel（dokodemo）/Vision 直连的响应方向用 splice 零拷贝，字节只在连接
+  结束时入账，导致隧道下载实时下行长期为 0、结束后一次性爆发（如 17MB/s），
+  核心被杀时还会丢计费；关闭后按每次读写计数。运维显式设置该变量时不覆盖
+  （D058/G15）。0.2.32 把 `/ws`
   实时流量帧改为原生绝对速率快照（入站/客户端字节/秒 + `intervalMs`/
   `ttlMs`），只有存在 `/ws` 订阅者（面板打开）时才计算速度；无订阅者时
   `traffic_speeds` 与 REST `upSpeed/downSpeed` 为空，但流量计费仍按

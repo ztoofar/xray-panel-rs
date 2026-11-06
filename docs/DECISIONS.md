@@ -900,3 +900,32 @@
 - 版本 0.2.31 → 0.2.32（`cargo test` 122/122、clippy 零警告、fmt；
   fake-stats 原生 e2e 18/18、零客户端入站 4/4、无头 Chrome UI+WS 12/12、
   `diag.py` 稳态均值 +0.10%；**未在真实 Linux/大面板部署上验证**）。
+
+## D058 面板启动 Xray 时默认关闭 freedom splice，换取连续的下行计数
+- 日期：2026-11-06
+- 背景：用户现场反馈 tunnel 协议入站下载时实时下行一直 0 B/s，下载结束后
+  突然出现一次很大的速率（如 17 MB/s）；VLESS 正常。读 Xray-core 源码确认：
+  `tunnel` 就是 `dokodemo-door`（`infra/conf/xray.go`），`dokodemo.go` 设置
+  `inbound.CanSpliceCopy = 1`，`freedom` 出站设置 `ob.CanSpliceCopy = 1`；
+  Linux/Android 上 `proxy.CopyRawConnIfExist` 命中后用 `TCPConn.ReadFrom`
+  做零拷贝，**整条响应的字节数只在连接结束时才 `writeCounter.Add(w)`**
+  （`proxy/proxy.go`）。因此下载期间入站下行计数器不动，结束时一次性入账；
+  若 Xray 在传输中途被杀，这部分字节永远不进统计。上传方向仍走
+  `buf.Copy` 按块计数，所以用户只看到下行异常。
+- 决策：面板在 `src/xray/supervisor.rs` 启动 Xray 子进程时设置
+  `XRAY_BUF_SPLICE=disable`（Xray `platform.UseFreedomSplice`，值不是
+  `auto`/`enable` 即关闭）。若运维已在环境变量 `XRAY_BUF_SPLICE` 或
+  `xray.buf.splice` 中显式设置，则不覆盖。这样 tunnel/视线 Vision 的直连
+  流量按每次读写计入，实时速度与计费都连续。
+- 被否方案：
+  1. 只改显示（把一次性增量摊到更长窗口）——传输期间仍然没有字节可分摊，
+     实时速度依旧为 0；且进程被杀时计费丢字节的问题没解决。
+  2. 只在存在 tunnel 入站时关闭 splice——Vision 直连同样走 splice，问题相同；
+     行为随入站变化也难解释。
+  3. 升级/修改 Xray 核心——面板不能改核心；`XRAY_BUF_SPLICE` 是官方开关。
+- 后果：direct 转发（tunnel 与 Vision 的直连段）从内核零拷贝变为
+  readv+write，CPU 与内存带宽略升；换取连续、可计费的统计。需要极限吞吐的
+  部署可显式设置 `XRAY_BUF_SPLICE=enable` 恢复零拷贝（此时 tunnel 下行速度
+  仍会一次性出现）。
+- 版本 0.2.32 → 0.2.33（`cargo test` 123/123、clippy 零警告、fmt；
+  **Windows 上 splice 不生效，实际效果待真实 Linux 部署验证**）。

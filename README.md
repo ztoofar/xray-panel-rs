@@ -124,6 +124,7 @@ GitHub Releases 下载 tar.gz，使用 GitHub 为资产计算的 SHA-256 digest 
 | `PANEL_WORKERS` | `2` | Tokio 工作线程数 |
 | `PANEL_LOG` | `info` | 日志级别 |
 | `PANEL_SECURE_COOKIE` | `false` | 仅 HTTPS 反向代理后设为 `true` |
+| `XRAY_BUF_SPLICE` | `disable`（面板注入） | Xray 的 freedom splice 开关；关闭后 tunnel/Vision 直连流量按每次读写计数，实时速度与计费连续。显式设置此变量（或 `xray.buf.splice`）可覆盖面板默认值 |
 
 `PANEL_DB`、`PANEL_LOG`、`PANEL_WORKERS` 仅从环境变量读取。监听地址、面板
 路径、Xray 路径、日志路径与安全 Cookie 可在面板设置中覆盖，重启后生效；面板

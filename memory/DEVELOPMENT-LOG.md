@@ -1496,3 +1496,27 @@
   `git -c http.proxy= -c https.proxy= push` 直连成功；稍后代理恢复
   （HTTP/HTTPS 均 200），`git ls-remote` 正常。
 - 未验证：真实 Linux/musl 部署运行 0.2.32（见 T31）；本次未做现场部署。
+
+## 2026-11-06 — 0.2.33 修复 tunnel 下行实时速度（splice 一次性入账）
+
+- 用户反馈：tunnel 协议下载时实时下行没有速度；隔一会突然出现一次很大的
+  下行速率（如 17MB/s）；VLESS 正常。
+- 定位（读 Xray-core 源码，`tmp/xray-core/Xray-core-main`）：
+  - `tunnel` 是 `dokodemo-door` 的别名；`dokodemo.go` 置
+    `inbound.CanSpliceCopy = 1`，`freedom` 置 `ob.CanSpliceCopy = 1`。
+  - `proxy.CopyRawConnIfExist` 在 Linux/Android 用 `TCPConn.ReadFrom` 做
+    零拷贝，整条响应只在连接结束时 `writeCounter.Add(w)`；上传方向仍走
+    `buf.Copy` 按块计数，VLESS 入站不置 splice，所以只有 tunnel 下行异常。
+- 改动：`src/xray/supervisor.rs` 新增 `apply_accurate_traffic_env` /
+  `splice_env_override`，在 `start_child` 启动 Xray 前设置
+  `XRAY_BUF_SPLICE=disable`；若进程环境已有 `XRAY_BUF_SPLICE` 或
+  `xray.buf.splice` 则尊重运维设置。新增单测
+  `splice_is_disabled_unless_the_operator_set_it`。
+- 文档：`docs/DECISIONS.md` D058、`docs/KNOWN-ISSUES.md` G15（并把过时的
+  A2「无 WebSocket」改为已修复）、`docs/ARCHITECTURE.md` §6、`README.md`
+  环境变量表、`CLAUDE.md` 版本段、`memory/CURRENT-STATUS.md` §1/§2.53。
+- 版本：0.2.32 → **0.2.33**（`Cargo.toml` / `Cargo.lock`）。
+- 验证：`cargo fmt --check` 通过、`cargo test` **123/123**、`cargo clippy
+  --all-targets -- -D warnings` 零警告。前端无改动，未重建。
+- 未验证：Windows 不启用 splice，本地无法复现/验证实际效果；需真实
+  Linux/musl 部署复核（见 TODO T32）。未打包、未发布、未创建 tag。

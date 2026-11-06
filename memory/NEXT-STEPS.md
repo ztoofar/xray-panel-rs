@@ -18,13 +18,19 @@
    ls -la web/dist/index.html
    find frontend-3xui/src -newer web/dist/index.html -type f | head
    ```
-   期望：`cargo test` 122/122、clippy 零警告、Cargo 版本 `0.2.32`、
+   期望：`cargo test` 123/123、clippy 零警告、Cargo 版本 `0.2.33`、
    `web/dist` 不旧于前端源码；工作区除本次未提交改动外干净。
 3. 用户说“继续开发”但未指定任务时：先汇报核对结果，再从 `TODO.md` P1 建议，
    等用户选择。**每次代码修改都 bump 版本；不要自动打包、不要自动打 tag/Release。**
 
 ## 当前状态（2026-11-06）
 
+- **当前源码：`0.2.33`（已实现，未打包、未发布）**（§2.53、D058）：面板启动
+  Xray 子进程时默认注入 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel
+  下载实时下行长期 0、结束后一次性爆发（如 17MB/s）的问题；显式设置
+  `XRAY_BUF_SPLICE`/`xray.buf.splice` 时不覆盖。验证：`cargo test`
+  **123/123**、clippy 零警告、fmt；前端无改动。**Linux 实际效果未验证**
+  （Windows 不启用 splice），见 TODO T32。
 - **当前发布：GitHub `v0.2.32`**（tag `9e79339`，§2.52、D057）：原生绝对
   速率快照；main CI `42214397270`、release `42214464190` 成功；资产
   5,528,182 字节，digest `sha256:5414dff9...b224`；包内二进制
@@ -53,14 +59,15 @@
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.32`；新改动须先按
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.33`；新改动须先按
    规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
    （不带版本号），只列本次更新条目；不写安装/更新说明，不启用
-   `generate_release_notes`（D046/D047）。本次条目应写明：实时速度改为
-   原生绝对速率快照；只有打开面板时计算速度；流量统计始终运行。
+   `generate_release_notes`（D046/D047）。本次条目应写明：修复 Linux 上
+   tunnel（dokodemo）下载实时下行长期为 0、结束后一次性爆发的问题；
+   通过关闭 Xray freedom splice 让流量按每次读写计入（可用环境变量覆盖）。
 4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
 5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**
@@ -90,6 +97,9 @@
 
 ## 当前悬而未决的验证项
 
+- **T32（最高优先）**：真实 Linux/musl 部署验证 0.2.33 关闭 splice 后的
+  tunnel 下行速度（连续非零、无一次性爆发、传输中杀核心不丢整段计费、
+  CPU 变化），见 `TODO.md`。
 - **T31**：真实 Linux/musl 部署验证 0.2.32 原生速度快照（1 秒刷新、关闭
   面板 REST 速度为 0 但计费继续、CPU/RSS）。
 - **T26**：真实 Linux + systemd + musl 回归增强（在线公网 IP、日志目录

@@ -190,6 +190,13 @@ axum 的 `Router::layer` 在**路由选择之后**才运行：如果 guard 和�
   这样速度列按 1 秒窗口刷新，接近 1 秒网卡监控，而 DB 写入不因有人看页面
   而增加五倍。显示 tick 的增量/移动邮箱/活跃 tag 会在计费 tick 汇总后交给
   writer。
+- **Xray 子进程环境（0.2.33）**：supervisor 启动 Xray 时默认注入
+  `XRAY_BUF_SPLICE=disable`。Xray 在 Linux/Android 上对 tunnel（dokodemo）/
+  Vision 直连的响应方向使用 `splice` 零拷贝，字节只在连接结束时入账，
+  会让下行速度长时间为 0、结束时一次性爆发，核心被杀时还会丢失计费；
+  关闭后按每次读写计数，速度与计费连续。运维显式设置 `XRAY_BUF_SPLICE`
+  或 `xray.buf.splice` 时不覆盖。代价是 direct 转发 CPU/内存带宽略升
+  （见 D058/G15）。
 - 每 tick：
   1. 计费 tick 读取 clients / client_inbounds / inbounds，构建 attachment
      身份映射并缓存为 `Roster`；显示 tick 复用该缓存。

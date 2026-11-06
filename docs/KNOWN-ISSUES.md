@@ -15,9 +15,10 @@
 影响：裁剪版 3x-ui 页面上相关按钮可能报错或显示空数据。
 （出站订阅已于 2026-11-01 实现，见 B7；订阅服务器仍是另一项未实现功能。）
 
-### A2 无 WebSocket —— 确认
-前端 WebSocket 已禁用，所有数据靠轮询/操作后重新拉取。数据最多滞后一个
-轮询周期（默认 5 秒，配置范围 2–300 秒）。
+### A2 无 WebSocket —— 已修复（0.2.25 恢复；0.2.32 改为原生速率帧）
+早期版本禁用了前端 WebSocket，数据靠轮询。0.2.25 起 `/ws` 推送实时
+`traffic` 帧；0.2.32 起帧内是服务端算好的字节/秒快照，REST 轮询仍作兜底
+（WS 不可用时速度显示 0，见 G14 末尾）。
 
 ### A3 单管理员、无 2FA / API Token —— 确认
 只有 `users` 表中的单管理员；`api_tokens` 表是 0001 遗留，无对应功能。
@@ -533,3 +534,25 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   “无人订阅”就无法判定面板正在被查看）；这是「不开面板不统计速度」的
   直接后果，已写入 API 文档。**未验证**：真实 Linux/大面板部署下 1 秒
   原生快照的 CPU/RSS 与前端观感。
+
+### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 已实现修复（0.2.33），未在 Linux 验证
+- 症状（用户现场）：tunnel 协议入站下载时，↓ 列一直 `0 B/s`；下载结束后
+  突然出现一次很大的速率（如 17 MB/s）。VLESS 入站正常。
+- 根因（读 Xray-core 源码确认）：`tunnel` 是 `dokodemo-door` 的别名，
+  `dokodemo.go` 设置 `inbound.CanSpliceCopy = 1`；`freedom` 直连出站设置
+  `ob.CanSpliceCopy = 1`。Linux/Android 上 `proxy.CopyRawConnIfExist` 命中
+  后走 `TCPConn.ReadFrom` 零拷贝，**响应方向的字节只在连接结束时**
+  `writeCounter.Add(w)`（`proxy/proxy.go`）。于是下载期间下行计数器不动，
+  结束时整段一次性入账；若核心在传输中被杀，这部分字节不进统计。上传方向
+  仍按块计数，所以只有下行异常；VLESS 入站不置 `CanSpliceCopy=1`，所以正常。
+- 修复（0.2.33，D058）：`src/xray/supervisor.rs` 启动 Xray 子进程时默认设置
+  `XRAY_BUF_SPLICE=disable`；运维显式设置 `XRAY_BUF_SPLICE` /
+  `xray.buf.splice` 时不覆盖。关闭后下行按每次写计数，速度与计费连续。
+- 代价：direct 转发（tunnel、Vision 直连段）失去内核零拷贝，CPU/内存带宽
+  略升。需要极限吞吐可显式设置 `XRAY_BUF_SPLICE=enable`（tunnel 下行速度
+  会回到一次性爆发）。
+- 验证边界：**Windows 不启用 splice，本地无法复现也无法验证修复**；仅在
+  Windows 上验证了环境变量注入逻辑（单测 123/123、clippy、fmt）。需要在
+  真实 Linux/musl 部署上复核：tunnel 下载时 ↓ 列连续非零、结束后无爆发、
+  进程重启不丢计费。见 `TODO.md` T32。
+- 影响版本：0.2.32 及更早（含 3x-ui 同源行为）。
