@@ -8,9 +8,10 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.33`（未发布；最近发布 v0.2.32） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.32`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,182 字节**，asset digest `sha256:5414dff9...b224`；Release 页面只显示更新内容 |
-| 当前源码 | `0.2.33`：面板启动 Xray 子进程时默认设置 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel（dokodemo）下载实时速度为 0、连接结束时才一次性出现巨大速率的问题；流量按每次读写计入，计费更稳。详见 §2.53 / D058。0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| `Cargo.toml` 版本 | `0.2.33`（已发布 v0.2.33） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.33`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,531,253 字节**，asset digest `sha256:2439a1f7...306c`；Release 页面只显示更新内容 |
+| 当前源码 | `0.2.33`（已发布）：面板启动 Xray 子进程时默认设置 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel（dokodemo）下载实时速度为 0、连接结束时才一次性出现巨大速率的问题；流量按每次读写计入，计费更稳。详见 §2.53 / D058。0.2.32 的原生绝对速率快照见 §2.52 / D057 |
+| 0.2.33 SHA256 | `2439a1f7ea7e6f6f869c93b924ab7ae788130352e8e0ecdf53d9a170c7af306c`（tar.gz，本机经代理下载复核与 GitHub asset digest 一致）；包内 `SHA256SUMS` 与二进制 `ecaaec3fa3305f1ae9dfc68e33a39a5eb9fecd988cd5060172fc34554228e49f`（13,008,928 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.33` |
 | 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
 | 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
 | 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
@@ -1389,9 +1390,9 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
   本次推送时本机代理 `192.168.1.251:10813` 一度返回 503/重置，已改直连
   推送完成；代理恢复后复核 200。
 
-## 2.53 tunnel 下行速度为 0、结束时一次性爆发（2026-11-06，0.2.33，已实现未发布）
-- 状态：已实现，**Windows 上无法复现/无法验证**（Xray 的 splice 仅在
-  Linux/Android 生效）；待真实 Linux 部署验证。0.2.33 未打包、未发布。
+## 2.53 tunnel 下行速度为 0、结束时一次性爆发（2026-11-06，0.2.33，已发布 v0.2.33）
+- 状态：已实现并发布 `v0.2.33`；**Linux 实际效果仍未验证**（Xray 的 splice
+  仅在 Linux/Android 生效，Windows 上无法复现），待真实 Linux 部署验证。
 - 现象（用户现场）：tunnel 协议入站下载时实时下行一直 `0 B/s`，下载结束
   后突然显示一次很大的速率（如 17 MB/s）；VLESS 正常。
 - 根因（读 Xray-core 源码确认，非猜测）：
@@ -1415,6 +1416,13 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - 验证：`cargo test` **123/123**（新增 `splice_is_disabled_unless_the_operator_set_it`）、
   clippy 零警告、fmt 通过；前端无改动，未重建。**Linux 实际效果未验证。**
 - 版本：0.2.32 → 0.2.33（`Cargo.toml` / `Cargo.lock`）。
+- 发布：提交 `d6238b7`，tag `v0.2.33`；main CI run `42219286821` 成功，
+  release run `42219725879` 成功；Release id `436492115`，资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` 5,531,253 字节，asset digest
+  `sha256:2439a1f7...306c`；本机经代理下载复核：sha256 一致，包内
+  `SHA256SUMS` 与二进制 `ecaaec3f...8e49f` 匹配（静态 ELF 已 strip），含
+  `LUMEN_VERSION=0.2.33`。Release 说明只列本次更新内容，未写安装说明，
+  未启用 `generate_release_notes`（D046/D047）。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

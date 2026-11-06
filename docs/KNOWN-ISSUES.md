@@ -535,7 +535,7 @@ excludeFromSub/disableFlow 不落库。现在已实现并验证；`disableFlow` 
   直接后果，已写入 API 文档。**未验证**：真实 Linux/大面板部署下 1 秒
   原生快照的 CPU/RSS 与前端观感。
 
-### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 已实现修复（0.2.33），未在 Linux 验证
+### G15 Linux 上 tunnel 下行速度 0、结束时一次性爆发 —— 已实现修复（0.2.33，已发布 v0.2.33），未在 Linux 验证
 - 症状（用户现场）：tunnel 协议入站下载时，↓ 列一直 `0 B/s`；下载结束后
   突然出现一次很大的速率（如 17 MB/s）。VLESS 入站正常。
 - 根因（读 Xray-core 源码确认）：`tunnel` 是 `dokodemo-door` 的别名，

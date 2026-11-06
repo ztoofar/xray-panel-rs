@@ -1520,3 +1520,25 @@
   --all-targets -- -D warnings` 零警告。前端无改动，未重建。
 - 未验证：Windows 不启用 splice，本地无法复现/验证实际效果；需真实
   Linux/musl 部署复核（见 TODO T32）。未打包、未发布、未创建 tag。
+
+## 2026-11-06 — 发布 v0.2.33（关闭 Xray splice）
+
+- 用户要求发布。提交 `d6238b7` 推送 `main`，main CI run `42219286821`
+  成功；推送轻量 tag `v0.2.33`，release run `42219725879` 成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.33>，
+  id `436492115`，资产 `xray-panel-rs-linux-amd64-lumen.tar.gz`
+  **5,531,253 字节**，asset digest
+  `sha256:2439a1f7ea7e6f6f869c93b924ab7ae788130352e8e0ecdf53d9a170c7af306c`。
+- 本机下载复核（直连被重置，改用代理 `192.168.1.251:10813` 成功）：tar.gz
+  sha256 与 asset digest 一致；包内 `SHA256SUMS` 与二进制
+  `ecaaec3fa3305f1ae9dfc68e33a39a5eb9fecd988cd5060172fc34554228e49f`
+  （13,008,928 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.33`。
+- Release 说明只列本次更新内容（tunnel 下行实时速度为 0 / 结束后爆发；
+  关闭 freedom splice 改为逐次读写计数；可用 `XRAY_BUF_SPLICE` 覆盖，
+  零拷贝时 CPU 略低），未写安装说明，未启用 `generate_release_notes`
+  （D046/D047）。
+- 未验证：真实 Linux/musl 部署运行 0.2.33（见 TODO T32）。
+- 补充核对：3x-ui 启动 Xray 时没有设置 `XRAY_BUF_SPLICE`（其
+  `internal/xray/process.go` 直接用 `exec.CommandContext` 继承环境，
+  systemd 单元只设 `XRAY_VMESS_AEAD_FORCED=false`，Dockerfile 也未设置），
+  因此 3x-ui 同样受 splice 一次性入账影响，不存在更细的统计粒度。

@@ -25,17 +25,21 @@
 
 ## 当前状态（2026-11-06）
 
-- **当前源码：`0.2.33`（已实现，未打包、未发布）**（§2.53、D058）：面板启动
+- **当前源码：`0.2.33`（已发布 v0.2.33）**（§2.53、D058）：面板启动
   Xray 子进程时默认注入 `XRAY_BUF_SPLICE=disable`，修复 Linux 上 tunnel
   下载实时下行长期 0、结束后一次性爆发（如 17MB/s）的问题；显式设置
   `XRAY_BUF_SPLICE`/`xray.buf.splice` 时不覆盖。验证：`cargo test`
   **123/123**、clippy 零警告、fmt；前端无改动。**Linux 实际效果未验证**
   （Windows 不启用 splice），见 TODO T32。
-- **当前发布：GitHub `v0.2.32`**（tag `9e79339`，§2.52、D057）：原生绝对
-  速率快照；main CI `42214397270`、release `42214464190` 成功；资产
-  5,528,182 字节，digest `sha256:5414dff9...b224`；包内二进制
+- **当前发布：GitHub `v0.2.33`**（tag `d6238b7`，§2.53、D058）：
+  main CI `42219286821`、release `42219725879` 成功；资产 5,531,253 字节，
+  digest `sha256:2439a1f7...306c`；包内二进制 `ecaaec3f...8e49f`
+  （13,008,928 字节，静态 ELF 已 strip）、`LUMEN_VERSION=0.2.33`，
+  本机经代理下载校验通过。
+- 上一发布：`v0.2.32`（tag `9e79339`，§2.52、D057）：原生绝对速率快照；
+  资产 5,528,182 字节，digest `sha256:5414dff9...b224`；包内二进制
   `5971da08...eee0`、`LUMEN_VERSION=0.2.32`，本机下载校验通过。
-- 上一发布：`v0.2.31`（tag → `f3e0509`，§2.51、D056）：1 秒显示节拍。
+- 更早：`v0.2.31`（tag → `f3e0509`，§2.51、D056）：1 秒显示节拍。
 - 0.2.32（§2.52、D057）：`/ws` 的 `traffic` 帧改为**原生绝对速率快照**
   `{inbounds:{tag:{up,down}}, clients:{email:{up,down}}, intervalMs, ttlMs}`
   （字节/秒），移除 3x-ui 的 `traffics`/`clientTraffics`/
@@ -59,15 +63,16 @@
 ## 下一步（按用户任务二选一）
 
 ### A. 用户要求“打包/发布”
-1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.33`；新改动须先按
-   规则 bump），同步 `memory/CURRENT-STATUS.md`、`memory/DEVELOPMENT-LOG.md`。
+1. 确认 `Cargo.toml` / `Cargo.lock` 版本一致（当前 `0.2.33` 已发布；任何新
+   改动先 bump 到 `0.2.34`），同步 `memory/CURRENT-STATUS.md`、
+   `memory/DEVELOPMENT-LOG.md`。
 2. 本地自测：前端 `npm run build`、`cargo fmt --check`、`cargo test`、
    `cargo clippy`。
 3. 更新 `.github/workflows/release.yml` 的 `body`：标题固定 `## 更新内容`
    （不带版本号），只列本次更新条目；不写安装/更新说明，不启用
-   `generate_release_notes`（D046/D047）。本次条目应写明：修复 Linux 上
-   tunnel（dokodemo）下载实时下行长期为 0、结束后一次性爆发的问题；
-   通过关闭 Xray freedom splice 让流量按每次读写计入（可用环境变量覆盖）。
+   `generate_release_notes`（D046/D047）。v0.2.33 的条目（tunnel 下行、
+   关闭 freedom splice、可用环境变量覆盖）已随上一版发布，新版本必须换成
+   本次实际改动。
 4. 提交并推送 `main`；等 CI 通过后推送 tag `v${Cargo.toml version}`，
    由 `.github/workflows/release.yml` 构建 tar.gz 并创建 Release。
 5. 到 Releases 页面核对资产大小与 digest，更新文档。**本地不需要 musl 打包。**

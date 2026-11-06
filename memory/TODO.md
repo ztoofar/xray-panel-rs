@@ -32,7 +32,8 @@ _（暂无。T0 已于 2026-10-31 完成：0.2.6 已打包，见 `DEVELOPMENT-LO
 ## P1 — 重要
 
 ### T32. 真实 Linux 验证 0.2.33 关闭 splice 后的 tunnel 下行速度
-- 现状：0.2.33 让面板启动 Xray 时注入 `XRAY_BUF_SPLICE=disable`，修复
+- 现状：0.2.33 已发布（GitHub `v0.2.33`，tag → `d6238b7`），让面板启动
+  Xray 时注入 `XRAY_BUF_SPLICE=disable`，修复
   tunnel 下载实时下行长期为 0、连接结束时一次性爆发的问题。Windows 不启用
   splice，本地无法复现该现象，也无法验证修复；只验证了环境变量注入逻辑
   （单测 123/123、clippy、fmt）。
