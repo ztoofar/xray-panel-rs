@@ -8,9 +8,10 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| `Cargo.toml` 版本 | `0.2.32`（未打包、未发布；最近发布仍为 v0.2.31） |
-| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.31`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,503 字节**，asset digest `sha256:77d0b706...c908`；Release 页面只显示更新内容 |
+| `Cargo.toml` 版本 | `0.2.32`（已发布 v0.2.32） |
+| 最近发布 | GitHub `ztoofar/xray-panel-rs` Release **`v0.2.32`**：唯一资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,182 字节**，asset digest `sha256:5414dff9...b224`；Release 页面只显示更新内容 |
 | 当前源码 | `0.2.32`：实时速度改为原生绝对速率快照（字节/秒 + `intervalMs`/`ttlMs`），只在有 `/ws` 订阅者时计算；计费始终按 `traffic_poll_secs` 运行。详见 §2.52 / D057 |
+| 0.2.32 SHA256 | `5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`（tar.gz，本机下载复核与 GitHub asset digest 一致）；包内二进制 `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`（13,004,304 字节，`LUMEN_VERSION=0.2.32`） |
 | 上一版 | GitHub Release `v0.2.26`：tar 5,518,877 字节，asset digest `sha256:9c223ffa...ae2f` |
 | 0.2.27 SHA256 | `d02091227e04682c8c26328c924f03394d68318fd79b3cbdaa9cb96d5c65138b`（tar.gz，GitHub asset digest；本机下载被网络重置，未做本地解包复核） |
 | 0.2.26 SHA256 | `9c223ffae10e0c308c67078d90bef97dad3fb8ea02e07831114fd751c1baae2f`（tar.gz，GitHub asset digest） |
@@ -1337,8 +1338,8 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
 - 未验证：真实 Linux/musl 大面板的 1 秒采样 CPU/内存；>2000 客户端自动
   回退到轮询的实际效果。
 
-## 2.52 原生实时速率快照；无人查看不计算速度（2026-11-06，0.2.32）
-- 状态：已实现、本地验证；**未打包、未发布**（用户未要求）。
+## 2.52 原生实时速率快照；无人查看不计算速度（2026-11-06，0.2.32，已发布）
+- 状态：已实现、本地验证、GitHub 发布 `v0.2.32`。
 - 需求：用户要求重新设计入站/客户端速度显示，不参考 3x-ui；流量统计要
   准确；实时速度只在打开面板时显示，没打开面板不统计速度，但流量一直统计。
 - 改动：
@@ -1378,6 +1379,15 @@ fake e2e 13/13、无客户端入站 4/4、无头 Chrome UI+WS 10/10；抓取的 
     0.2.31 时该脚本曾 PASS。
   - WS 连不上、只能靠 REST 兜底时速度会显示 0（设计后果，见 KNOWN-ISSUES）。
 - 版本：0.2.31 → 0.2.32（`Cargo.toml` / `Cargo.lock`）。
+- 发布：提交 `9e79339`，tag `v0.2.32`；main CI run `42214397270` 成功，
+  release run `42214464190` 成功。资产
+  `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,182 字节**，asset digest
+  `sha256:5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`。
+  本机下载复核 sha256 与 digest 一致；包内 `SHA256SUMS` 与二进制
+  `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`
+  （13,004,304 字节，静态 ELF 已 strip，`LUMEN_VERSION=0.2.32`）匹配。
+  本次推送时本机代理 `192.168.1.251:10813` 一度返回 503/重置，已改直连
+  推送完成；代理恢复后复核 200。
 
 ## 3. 既有功能（历史记录，本次会话未逐项重测）
 

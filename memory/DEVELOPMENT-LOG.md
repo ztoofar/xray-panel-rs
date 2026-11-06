@@ -1477,3 +1477,22 @@
 - 未验证：真实 Linux/musl 部署与 >2000 客户端回退；`tunnel_real.py` 已改
   协议但本次未重跑；WS 不可用时 REST 兜底速度为 0 属设计后果。
 - 未打包、未发布、未创建 tag（用户未要求）。
+
+## 2026-11-06 — v0.2.32 发布
+
+- 用户要求发布新版本。提交 `9e79339`（19 个文件，+563/−483），tag
+  `v0.2.32`；main CI run `42214397270` 成功，release run `42214464190`
+  成功。
+- Release <https://github.com/ztoofar/xray-panel-rs/releases/tag/v0.2.32>
+  资产 `xray-panel-rs-linux-amd64-lumen.tar.gz` **5,528,182 字节**，asset
+  digest `sha256:5414dff97f9436207dfa4adf80fba910cdad3f1f6d401d1f2a10cf5dd7b1b224`。
+- 本机下载复核：sha256 与 digest 一致；包内 `SHA256SUMS` 与二进制
+  `5971da0886b59b24652b7ee880708eca26bf78cfcfcd9f4e5a2f5aa9f590eee0`
+  （13,004,304 字节，静态 ELF 已 strip）匹配；含 `LUMEN_VERSION=0.2.32`。
+- Release 说明只列本次更新内容（原生绝对速率、只在打开面板时计算速度、
+  计费始终运行、≤2000 客户端 1 秒刷新、`ttlMs` 过期与 REST 同源），
+  未写安装说明，未启用 `generate_release_notes`（D046/D047）。
+- 推送过程：本机代理 `192.168.1.251:10813` 先返回 503/TLS 重置，改用
+  `git -c http.proxy= -c https.proxy= push` 直连成功；稍后代理恢复
+  （HTTP/HTTPS 均 200），`git ls-remote` 正常。
+- 未验证：真实 Linux/musl 部署运行 0.2.32（见 T31）；本次未做现场部署。
