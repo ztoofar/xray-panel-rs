@@ -74,7 +74,11 @@ pub struct PanelLogFile {
 }
 
 fn parse_log_date(name: &str) -> Option<NaiveDate> {
-    let raw = name.strip_prefix(LOG_FILE_PREFIX)?.strip_suffix(".log")?;
+    parse_file_date(name, LOG_FILE_PREFIX)
+}
+
+fn parse_file_date(name: &str, prefix: &str) -> Option<NaiveDate> {
+    let raw = name.strip_prefix(prefix)?.strip_suffix(".log")?;
     NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok()
 }
 
@@ -106,7 +110,7 @@ pub fn list_log_files(dir: &Path) -> Vec<PanelLogFile> {
     files
 }
 
-fn prune_old_files(dir: &Path) {
+fn prune_old_files(dir: &Path, prefix: &str) {
     let cutoff = Utc::now().with_timezone(&china_offset()).date_naive()
         - chrono::Duration::days(RETENTION_DAYS);
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -114,7 +118,7 @@ fn prune_old_files(dir: &Path) {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(date) = parse_log_date(&name) {
+        if let Some(date) = parse_file_date(&name, prefix) {
             if date < cutoff {
                 let _ = std::fs::remove_file(entry.path());
             }
@@ -129,18 +133,26 @@ struct OpenLogFile {
 
 pub struct PanelFileLog {
     dir: PathBuf,
+    prefix: &'static str,
     state: Mutex<Option<OpenLogFile>>,
 }
 
 impl PanelFileLog {
     pub fn new(dir: PathBuf) -> Self {
+        Self::with_prefix(dir, LOG_FILE_PREFIX)
+    }
+
+    /// Same daily rotation and retention as the panel log, but with a distinct
+    /// file prefix (the memory sampler writes `memory-YYYY-MM-DD.log`).
+    pub fn with_prefix(dir: PathBuf, prefix: &'static str) -> Self {
         Self {
             dir,
+            prefix,
             state: Mutex::new(None),
         }
     }
 
-    fn write_line(&self, line: &str) {
+    pub fn write_line(&self, line: &str) {
         let date = Utc::now()
             .with_timezone(&china_offset())
             .format("%Y-%m-%d")
@@ -154,7 +166,7 @@ impl PanelFileLog {
             if std::fs::create_dir_all(&self.dir).is_err() {
                 return;
             }
-            let path = self.dir.join(format!("{LOG_FILE_PREFIX}{date}.log"));
+            let path = self.dir.join(format!("{}{date}.log", self.prefix));
             let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) else {
                 return;
             };
@@ -165,7 +177,7 @@ impl PanelFileLog {
         }
         drop(guard);
         if rotated {
-            prune_old_files(&self.dir);
+            prune_old_files(&self.dir, self.prefix);
         }
     }
 }

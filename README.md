@@ -120,6 +120,7 @@ GitHub Releases 下载 tar.gz，使用 GitHub 为资产计算的 SHA-256 digest 
 | `XRAY_API_ADDR` | `127.0.0.1:10085` | Xray StatsService gRPC 地址 |
 | `PANEL_XRAY_LOG` | 与 `PANEL_DB` 同目录的 `xray.log` | Xray stdout/stderr 日志 |
 | `PANEL_LOG_DIR` | 与 `PANEL_DB` 同目录的 `panel-logs/` | 面板日志按日文件目录（保留 14 天） |
+| `PANEL_MEMLOG_SECS` | `300` | 内存快照间隔（15–3600 秒）；写入 `panel-logs/memory-YYYY-MM-DD.log`，`0` 关闭。排查内存占用时改为 `60` |
 | `PANEL_USERNAME` | `admin` | 首次启动创建的管理员用户名 |
 | `PANEL_PASSWORD` | `admin` | 首次启动密码；之后以数据库为准 |
 | `PANEL_WORKERS` | `2` | Tokio 工作线程数 |

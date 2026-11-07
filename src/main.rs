@@ -8,6 +8,7 @@ mod db;
 mod error;
 mod geodata;
 mod jobs;
+mod memlog;
 mod notify;
 mod outbound_check;
 mod outbound_subs;
@@ -151,6 +152,8 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     jobs::spawn(state.clone());
     outbound_subs::spawn(state.clone());
     outbound_check::spawn(state.clone());
+    // Writes `panel-logs/memory-YYYY-MM-DD.log`; PANEL_MEMLOG_SECS=0 disables.
+    memlog::spawn(state.clone(), cfg.panel_log_dir.clone());
 
     let listener = tokio::net::TcpListener::bind(cfg.listen)
         .await

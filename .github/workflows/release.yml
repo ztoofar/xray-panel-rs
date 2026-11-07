@@ -79,6 +79,10 @@ jobs:
               `/usr/local/share/xray`，下载前先探测目录可写性，错误提示修复方式
             - 新增远端证书 SHA-256 查询：域名解析后固定 IP，经 `xray tls ping`
               获取证书链哈希（含私网目标拦截）
+            - 新增内存快照日志：默认每 5 分钟写
+              `panel-logs/memory-YYYY-MM-DD.log`，记录 RSS/匿名内存/高水位/
+              线程/FD/CPU/大匿名映射与面板容器计数；`PANEL_MEMLOG_SECS`
+              可调整间隔（15–3600 秒）或设为 `0` 关闭
             - 删除无后端的前端入口：赞助商、Fail2ban、订阅负载均衡、
               AmneziaWG 就绪、日历续期预览、2FA、备份迁移、未使用的通知 UI
             - 仓库清理：移除早期自研前端 frontend/ 与 memory/、docs/、
