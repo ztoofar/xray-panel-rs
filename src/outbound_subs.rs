@@ -14,7 +14,7 @@ use crate::{
         models::{now, OutboundSubscription, OutboundSubscriptionView},
         outbound_subs::NewSubscription,
     },
-    service,
+    memtrace, service,
     state::AppState,
     xray::subscription::{self, ParsedOutbound},
 };
@@ -637,9 +637,16 @@ pub fn spawn(state: AppState) {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
+            let mem_before = memtrace::rss_kb();
             if let Err(err) = refresh_due(&state).await {
                 tracing::warn!(error = %err, "outbound subscription job failed");
             }
+            memtrace::log_delta(
+                &state.mem_log,
+                "subscription_refresh",
+                mem_before,
+                memtrace::rss_kb(),
+            );
         }
     });
 }

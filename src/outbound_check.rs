@@ -11,7 +11,7 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{api::compat, api::outbound_test, db, notify, service, state::AppState};
+use crate::{api::compat, api::outbound_test, db, memtrace, notify, service, state::AppState};
 
 pub const ENABLED_KEY: &str = "outboundCheckEnabled";
 pub const TAGS_KEY: &str = "outboundCheckTags";
@@ -94,6 +94,7 @@ pub fn spawn(state: AppState) {
                     last_run = now;
                     let tags = selected_tags(&settings);
                     if !tags.is_empty() {
+                        let mem_before = memtrace::rss_kb();
                         match run(&state, &tags).await {
                             Ok(run) => {
                                 notify_changes(&state, &run, &mut previous, &mut last_notified)
@@ -103,6 +104,12 @@ pub fn spawn(state: AppState) {
                                 tracing::warn!(error = %err, "outbound connectivity check failed");
                             }
                         }
+                        memtrace::log_delta(
+                            &state.mem_log,
+                            "outbound_check",
+                            mem_before,
+                            memtrace::rss_kb(),
+                        );
                     }
                 }
             }

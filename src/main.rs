@@ -9,6 +9,7 @@ mod error;
 mod geodata;
 mod jobs;
 mod memlog;
+mod memtrace;
 mod notify;
 mod outbound_check;
 mod outbound_subs;
@@ -125,6 +126,10 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     // serialised frame (which grows with the number of active clients), so
     // keeping the ring small matters on low-memory panels.
     let (ws_events, _) = tokio::sync::broadcast::channel(2);
+    let mem_log = Arc::new(panel_log::PanelFileLog::with_prefix(
+        cfg.panel_log_dir.clone(),
+        memlog::LOG_PREFIX,
+    ));
     let state = AppState {
         db: db.clone(),
         cfg: Arc::new(cfg.clone()),
@@ -143,6 +148,7 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
         refresh_notify: Arc::new(Notify::new()),
         outbound_check: Arc::new(Mutex::new(None)),
         outbound_check_notify: Arc::new(Notify::new()),
+        mem_log: mem_log.clone(),
         base_path: Arc::new(RwLock::new(base_path)),
         started_at: now(),
     };
@@ -153,7 +159,7 @@ async fn run(cfg: Config, panel_logs: PanelLogBuffer) -> anyhow::Result<()> {
     outbound_subs::spawn(state.clone());
     outbound_check::spawn(state.clone());
     // Writes `panel-logs/memory-YYYY-MM-DD.log`; PANEL_MEMLOG_SECS=0 disables.
-    memlog::spawn(state.clone(), cfg.panel_log_dir.clone());
+    memlog::spawn(state.clone(), mem_log);
 
     let listener = tokio::net::TcpListener::bind(cfg.listen)
         .await
@@ -301,12 +307,19 @@ fn spawn_maintenance(state: AppState) {
         ticker.tick().await;
         loop {
             ticker.tick().await;
+            let mem_before = memtrace::rss_kb();
             match db::sessions::purge_expired(&state.db, now()).await {
                 Ok(0) => {}
                 Ok(removed) => tracing::debug!(removed, "purged expired sessions"),
                 Err(err) => tracing::warn!(error = %err, "purge sessions failed"),
             }
             release_memory(&state).await;
+            memtrace::log_delta(
+                &state.mem_log,
+                "maintenance",
+                mem_before,
+                memtrace::rss_kb(),
+            );
         }
     });
 }

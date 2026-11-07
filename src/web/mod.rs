@@ -1,5 +1,7 @@
+use std::borrow::Cow;
+
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::State,
     http::{header, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
@@ -97,7 +99,11 @@ pub async fn static_handler(State(state): State<AppState>, uri: Uri) -> Response
     }
 
     if let Some(content) = Assets::get(path) {
-        return serve(path, content.data.into_owned());
+        // Release builds embed the bytes statically; copying a 1.3 MB vendor
+        // bundle into a Vec per request was the largest single RSS step seen
+        // in the 0.2.40 memory probe. Keep the borrowed slice and only move
+        // the Vec when rust-embed had to read from disk (debug builds).
+        return serve(path, content.data);
     }
 
     let last = path.rsplit('/').next().unwrap_or(path);
@@ -158,8 +164,12 @@ fn serve_entry(name: &str, base: &str) -> Response {
     response
 }
 
-fn serve(path: &str, bytes: Vec<u8>) -> Response {
+fn serve(path: &str, data: Cow<'static, [u8]>) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let bytes: Bytes = match data {
+        Cow::Borrowed(slice) => Bytes::from_static(slice),
+        Cow::Owned(vec) => Bytes::from(vec),
+    };
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -173,4 +183,27 @@ fn serve(path: &str, bytes: Vec<u8>) -> Response {
     };
     response.headers_mut().insert(header::CACHE_CONTROL, cache);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn borrowed_assets_keep_their_bytes_without_a_copy() {
+        let response = serve("x.js", Cow::Borrowed(&b"hello"[..]));
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("body");
+        assert_eq!(&body[..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn owned_assets_are_moved_into_the_response() {
+        let response = serve("x.css", Cow::Owned(b"owned".to_vec()));
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .expect("body");
+        assert_eq!(&body[..], b"owned");
+    }
 }

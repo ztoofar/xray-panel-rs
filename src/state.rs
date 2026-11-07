@@ -11,7 +11,7 @@ use crate::{
     config::Config,
     db::Db,
     outbound_check::OutboundCheckRun,
-    panel_log::PanelLogBuffer,
+    panel_log::{PanelFileLog, PanelLogBuffer},
     xray::{LogBuffer, OnlineUser, StatsClient, XrayHandle},
 };
 
@@ -46,6 +46,10 @@ pub struct AppState {
     pub outbound_check: Arc<Mutex<Option<OutboundCheckRun>>>,
     // Wakes the outbound checker after its settings are saved.
     pub outbound_check_notify: Arc<Notify>,
+    // Shared `panel-logs/memory-YYYY-MM-DD.log` writer: the sampler appends
+    // one snapshot per interval, memtrace appends qualifying request/job
+    // deltas between them.
+    pub mem_log: Arc<PanelFileLog>,
     // Normalized panel URL prefix (`/` or `/secret/`). Read per request, so a
     // settings save takes effect without a restart.
     pub base_path: Arc<RwLock<String>>,

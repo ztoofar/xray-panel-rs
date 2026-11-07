@@ -69,22 +69,12 @@ jobs:
           body: |
             ## 更新内容
 
-            - 新增 Geodata 浏览/校验：浏览 geosite.dat / geoip.dat 的分类与
-              条目（分页），校验路由 token（ext:/ext-domain:/ext-site:/
-              ext-ip:、`!` 取反、`@attribute`）
-            - Geofile 默认存放目录改为 `/usr/local/share/xray`（不存在时创建），
-              优先使用 `XRAY_LOCATION_ASSET`
-            - 修复 systemd 部署下更新 Geofile 报
-              `Read-only file system (os error 30)`：服务单元放行并预先创建
-              `/usr/local/share/xray`，下载前先探测目录可写性，错误提示修复方式
-            - 新增远端证书 SHA-256 查询：域名解析后固定 IP，经 `xray tls ping`
-              获取证书链哈希（含私网目标拦截）
-            - 新增内存快照日志：默认每 5 分钟写
-              `panel-logs/memory-YYYY-MM-DD.log`，记录 RSS/匿名内存/高水位/
-              线程/FD/CPU/大匿名映射与面板容器计数；`PANEL_MEMLOG_SECS`
-              可调整间隔（15–3600 秒）或设为 `0` 关闭
-            - 删除无后端的前端入口：赞助商、Fail2ban、订阅负载均衡、
-              AmneziaWG 就绪、日历续期预览、2FA、备份迁移、未使用的通知 UI
-            - 仓库清理：移除早期自研前端 frontend/ 与 memory/、docs/、
-              PROGRESS.md、CLAUDE.md 等非源码文件，仓库只保留源代码与脚本
+            - 新增请求级内存归因探针：记录每个 HTTP 请求与 traffic tick、
+              billing、出站检测、订阅刷新、维护任务的 RSS 增量；内存快照行
+              追加 `req_top`/`bg_top` 聚合，单条请求行阈值由
+              `PANEL_MEMTRACE_KB` 控制（默认 128 KB，`0` 关闭）；后台任务
+              仅在增量 ≥512 KB 时单独写行，避免刷屏
+            - 修复静态资源每次请求被复制的问题：嵌入资源改为零拷贝响应
+              （`Bytes::from_static`）；现场 1.3 MB 的 vendor bundle 单次
+              请求 RSS 增量由 2,848 KB 降至 384 KB
 

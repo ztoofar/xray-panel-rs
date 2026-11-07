@@ -14,7 +14,7 @@ use crate::{
         client_traffic::{AttachmentSample, ClientSamples},
         models::{Client, Inbound},
     },
-    service,
+    memtrace, service,
     state::{AppState, SpeedSample, TrafficPoint, TrafficSpeeds},
     traffic::counter_delta,
     xray::{identity::stat_email, stats::FamilyStats},
@@ -160,6 +160,7 @@ pub fn spawn(state: AppState) {
             // Tick before sleeping so a freshly started panel knows who is
             // online without waiting a full interval first.
             let started = std::time::Instant::now();
+            let mem_before = memtrace::rss_kb();
             match tick(
                 &state,
                 secs,
@@ -190,6 +191,12 @@ pub fn spawn(state: AppState) {
                     *state.traffic_speeds.lock().await = TrafficSpeeds::default();
                 }
             }
+            memtrace::log_delta(
+                &state.mem_log,
+                "traffic_tick",
+                mem_before,
+                memtrace::rss_kb(),
+            );
             // Keep the display cadence when a tick ran slow (e.g. an
             // unreachable stats API): sleep only the remainder of the period.
             // A setting change wakes us early so a shorter interval applies
@@ -640,12 +647,19 @@ impl BillingSink {
 async fn run_billing_writer(state: AppState, sink: BillingSink) {
     loop {
         let sample = sink.next().await;
+        let mem_before = memtrace::rss_kb();
         if let Err(err) = apply_billing(&state, &sample).await {
             // The speed columns and the WS frame were committed before this
             // write; a failure here only delays accounting to the next
             // sample, which re-reads the raw counters and spans the gap.
             tracing::warn!(error = %err, "traffic billing failed");
         }
+        memtrace::log_delta(
+            &state.mem_log,
+            "billing_write",
+            mem_before,
+            memtrace::rss_kb(),
+        );
     }
 }
 

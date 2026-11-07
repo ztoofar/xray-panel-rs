@@ -23,7 +23,7 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{auth::require_auth, state::AppState, web};
+use crate::{auth::require_auth, memtrace, state::AppState, web};
 
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
@@ -405,7 +405,13 @@ pub fn router(state: AppState) -> Router {
     // service gives the guard a fresh routing pass on the stripped path.
     Router::new()
         .fallback_service(app)
-        .layer(middleware::from_fn_with_state(state, web::base_path::guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            web::base_path::guard,
+        ))
+        // Outermost: sees the original `/basePath/...` URI before the guard
+        // strips it, and measures the whole request (body allocation included).
+        .layer(middleware::from_fn_with_state(state, memtrace::middleware))
 }
 
 async fn health() -> Json<serde_json::Value> {

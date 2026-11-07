@@ -12,11 +12,12 @@
 //! sampler. Non-Linux builds still log the container counters with `rss_kb=-`,
 //! which keeps the code testable on the Windows dev machine.
 
-use std::{path::PathBuf, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use chrono::Utc;
 
 use crate::{
+    memtrace,
     panel_log::{format_china_time, PanelFileLog},
     state::AppState,
 };
@@ -34,7 +35,7 @@ const MAX_INTERVAL_SECS: u64 = 3600;
 #[cfg(any(target_os = "linux", test))]
 const BIG_ANON_BYTES: u64 = 1 << 20;
 
-pub fn spawn(state: AppState, dir: PathBuf) {
+pub fn spawn(state: AppState, log: Arc<PanelFileLog>) {
     let secs = std::env::var("PANEL_MEMLOG_SECS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
@@ -44,7 +45,6 @@ pub fn spawn(state: AppState, dir: PathBuf) {
     }
     let interval = Duration::from_secs(secs.clamp(MIN_INTERVAL_SECS, MAX_INTERVAL_SECS));
     tokio::spawn(async move {
-        let log = PanelFileLog::with_prefix(dir, LOG_PREFIX);
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -109,6 +109,12 @@ async fn snapshot(state: &AppState) -> String {
          limiter_hits={limiter_hits} outbound_results={outbound_results} \
          db_pages={db_pages} db_free={db_free_pages}"
     ));
+    // Drains the per-path request summary for this interval. `PANEL_MEMTRACE_KB=0`
+    // leaves it empty, keeping the snapshot line identical to 0.2.39.
+    if let Some(summary) = memtrace::summary_line() {
+        line.push(' ');
+        line.push_str(&summary);
+    }
     line
 }
 
