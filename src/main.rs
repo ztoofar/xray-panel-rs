@@ -1,6 +1,13 @@
 // tonic's generated client returns large Status errors; generated code is not ours to reshape.
 #![allow(clippy::result_large_err)]
 
+// The panel's reachable data set is small, but the 2-second billing/traffic
+// loop allocates heavily and musl mallocng never returns freed groups to the
+// OS (KNOWN-ISSUES H9). mimalloc purges freed pages instead of keeping the
+// high-water mark, so the idle footprint stays bounded. See DECISIONS D069.
+#[global_allocator]
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod api;
 mod auth;
 mod config;

@@ -69,12 +69,11 @@ jobs:
           body: |
             ## 更新内容
 
-            - 新增请求级内存归因探针：记录每个 HTTP 请求与 traffic tick、
-              billing、出站检测、订阅刷新、维护任务的 RSS 增量；内存快照行
-              追加 `req_top`/`bg_top` 聚合，单条请求行阈值由
-              `PANEL_MEMTRACE_KB` 控制（默认 128 KB，`0` 关闭）；后台任务
-              仅在增量 ≥512 KB 时单独写行，避免刷屏
-            - 修复静态资源每次请求被复制的问题：嵌入资源改为零拷贝响应
-              （`Bytes::from_static`）；现场 1.3 MB 的 vendor bundle 单次
-              请求 RSS 增量由 2,848 KB 降至 384 KB
+            - 将面板全局内存分配器从 musl mallocng 切换为 mimalloc，修复
+              长期运行时 RSS 高水位持续增长的问题：现场 24 小时 RSS
+              7,160 → 15,304 KB（+8.0 MiB，0.18 MiB/h；0.2.42 对照
+              9.62 MiB/h），33.5 小时稳定在约 11.7 MB，容器计数稳定，
+              无崩溃或自动重启
+            - 保持 `x86_64-unknown-linux-musl` 静态构建，二进制体积增加
+              约 108 KiB
 
