@@ -2,8 +2,10 @@
 //!
 //! The check reuses the same temporary-Xray SOCKS+HTTP probe as the outbound
 //! page's "real" mode, then notifies through the WeCom webhook configured in
-//! panel settings. Settings are read from `x3ui_settings` on every tick so a
-//! save takes effect without restarting the panel or Xray.
+//! panel settings. Settings are cached between ticks and reloaded when a save
+//! signals `outbound_check_notify`, so a save takes effect without restarting
+//! the panel or Xray and an idle loop does not decode the settings row every
+//! 10 seconds.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -79,20 +81,30 @@ pub fn spawn(state: AppState) {
         let mut last_run = db::models::now();
         let mut previous: HashMap<String, bool> = HashMap::new();
         let mut last_notified: HashMap<String, i64> = HashMap::new();
+        // Decoded once, kept until a save wakes the loop. A failed read stays
+        // `None` so the next 10s tick retries instead of caching an empty map.
+        let mut settings: Option<serde_json::Map<String, Value>> = None;
+        let no_settings = serde_json::Map::new();
         loop {
-            let settings = db::settings::ui_settings(&state.db)
-                .await
-                .unwrap_or_default();
-            if !settings_enabled(&settings) {
+            if settings.is_none() {
+                match db::settings::ui_settings(&state.db).await {
+                    Ok(loaded) => settings = Some(loaded),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "outbound check settings unavailable");
+                    }
+                }
+            }
+            let current = settings.as_ref().unwrap_or(&no_settings);
+            if !settings_enabled(current) {
                 last_run = 0;
                 previous.clear();
                 last_notified.clear();
             } else {
-                let interval = interval_minutes(&settings) * 60;
+                let interval = interval_minutes(current) * 60;
                 let now = db::models::now();
                 if now.saturating_sub(last_run) >= interval {
                     last_run = now;
-                    let tags = selected_tags(&settings);
+                    let tags = selected_tags(current);
                     if !tags.is_empty() {
                         let mem_before = memtrace::rss_kb();
                         match run(&state, &tags).await {
@@ -117,6 +129,7 @@ pub fn spawn(state: AppState) {
                 _ = tokio::time::sleep(TICK) => {}
                 _ = state.outbound_check_notify.notified() => {
                     last_run = 0;
+                    settings = None;
                 }
             }
         }

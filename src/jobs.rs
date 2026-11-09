@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone, Timelike};
@@ -11,7 +11,7 @@ use tokio::sync::{Mutex, Notify};
 use crate::{
     db::{
         self,
-        client_traffic::{AttachmentSample, ClientSamples},
+        client_traffic::{AttachmentSample, ClientSamples, LegacySample},
         models::{Client, Inbound},
     },
     memtrace, service,
@@ -33,6 +33,18 @@ const MAX_ONLINE_GRACE_SECS: i64 = 60;
 // itself can be tens of MB, so above this size the display falls back to the
 // configured poll instead of multiplying that load by five.
 const FAST_DISPLAY_MAX_CLIENTS: usize = 2_000;
+// The display path only needs the roster for identity mapping and client
+// metadata. Reloading three tables on every (as short as 2s) accounting tick
+// was a steady allocation source; a new client or inbound is visible within
+// this window instead.
+const ROSTER_REFRESH_SECS: u64 = 10;
+// Idle-but-connected clients only need an occasional `last_online` bump;
+// active clients already get the exact timestamp in apply_tick.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+// Quota/expiry/scheduled resets are time-based, so they can still run while no
+// counters move. Checking them every 30s avoids re-reading the roster and
+// settings on every idle accounting tick.
+const ENFORCE_INTERVAL: Duration = Duration::from_secs(30);
 
 pub fn spawn(state: AppState) {
     tokio::spawn(async move {
@@ -64,11 +76,27 @@ pub fn spawn(state: AppState) {
         // A coalescing single-slot queue keeps the extra memory to one sample.
         let billing = BillingSink::new();
         tokio::spawn(run_billing_writer(state.clone(), billing.clone()));
-        // Clients/inbounds/identity maps used by the display path. Reloaded on
-        // every billing tick (the old poll cadence) and whenever the settings
-        // wake us, but reused by the faster display ticks so a 1s speed sample
-        // does not run four unnecessary SELECTs each second.
+        // Clients/inbounds/identity maps used by the display path. Reused by
+        // the faster display ticks and refreshed at most every
+        // ROSTER_REFRESH_SECS on accounting ticks (or immediately when a
+        // settings save wakes us), so a 1s speed sample does not run four
+        // unnecessary SELECTs each second.
         let mut roster: Option<Roster> = None;
+        let mut roster_loaded_at: Option<Instant> = None;
+        // Settings used by the hot loop are cached instead of decoded every
+        // tick; `refresh_notify` drops these on a save and the next tick
+        // re-reads them.
+        let mut poll_secs: Option<u64> = None;
+        let mut restart_on_client_disable: Option<bool> = None;
+        // Some raw counter moved since the last billing sample. Accumulated
+        // across fast display ticks and consumed when the sample is handed to
+        // the writer, so an idle deployment can skip the transactional billing
+        // path entirely. Starts true: the first sample must reconcile counters
+        // that may already have advanced while the panel was down (a surviving
+        // Xray process or a missed startup window), and the old loop always
+        // billed the first sample.
+        let mut counters_since_bill = true;
+        let mut last_heartbeat_at: Option<Instant> = None;
         // The accounting writer keeps the configured poll cadence; the speed
         // path only exists while a panel page holds the WS open. A page that
         // renders speeds subscribes in `useWebSocket`, so the receiver count is
@@ -91,6 +119,9 @@ pub fn spawn(state: AppState) {
                 *state.traffic_speeds.lock().await = TrafficSpeeds::default();
                 generation = Some(current);
                 roster = None;
+                roster_loaded_at = None;
+                last_heartbeat_at = None;
+                counters_since_bill = false;
                 moved_since_bill.clear();
                 active_since_bill.clear();
                 last_bill_at = None;
@@ -115,6 +146,12 @@ pub fn spawn(state: AppState) {
                         stats_last.clear();
                         stats_baselined.clear();
                         roster = None;
+                        roster_loaded_at = None;
+                        last_heartbeat_at = None;
+                        // The stored baselines are now zero; bill the first
+                        // sample so any traffic that landed before it is
+                        // reconciled instead of waiting for the next movement.
+                        counters_since_bill = true;
                         moved_since_bill.clear();
                         active_since_bill.clear();
                         last_bill_at = None;
@@ -129,16 +166,39 @@ pub fn spawn(state: AppState) {
                     }
                 }
             }
-            let secs = poll_seconds(&state).await;
+            // Read the two hot-path settings once and keep them until a save
+            // wakes this loop (`refresh_notify`), instead of decoding the
+            // settings row on every 1-2s tick.
+            if poll_secs.is_none() || restart_on_client_disable.is_none() {
+                poll_secs = Some(poll_seconds(&state).await);
+                restart_on_client_disable = Some(
+                    db::settings::ui_settings(&state.db)
+                        .await
+                        .ok()
+                        .and_then(|settings| {
+                            settings
+                                .get("restartXrayOnClientDisable")
+                                .and_then(|value| value.as_bool())
+                        })
+                        .unwrap_or(true),
+                );
+            }
+            let secs = poll_secs.unwrap_or(5);
             let bill = last_bill_at
                 .map(|at| at.elapsed() >= Duration::from_secs(secs))
                 .unwrap_or(true);
-            // Reload the roster on accounting ticks (the old poll cadence) and
-            // whenever the settings wake the loop; reuse it for the faster
-            // display ticks.
-            if bill || roster.is_none() {
+            // Refresh the roster at most every ROSTER_REFRESH_SECS. The data
+            // only feeds the display/online mapping; billing re-reads the DB
+            // in apply_billing, so a short lag cannot mis-bill a changed row.
+            let roster_stale = roster_loaded_at
+                .map(|at| at.elapsed() >= Duration::from_secs(ROSTER_REFRESH_SECS))
+                .unwrap_or(true);
+            if roster.is_none() || (bill && roster_stale) {
                 match load_roster(&state).await {
-                    Ok(loaded) => roster = Some(loaded),
+                    Ok(loaded) => {
+                        roster = Some(loaded);
+                        roster_loaded_at = Some(Instant::now());
+                    }
                     Err(err) => {
                         tracing::warn!(error = %err, "traffic roster load failed");
                         *state.traffic_speeds.lock().await = TrafficSpeeds::default();
@@ -175,6 +235,9 @@ pub fn spawn(state: AppState) {
                     display_interval_ms: tick_secs.saturating_mul(1000),
                     moved_since_bill: &mut moved_since_bill,
                     active_since_bill: &mut active_since_bill,
+                    heartbeat_at: &mut last_heartbeat_at,
+                    counters_changed: &mut counters_since_bill,
+                    restart_on_client_disable: restart_on_client_disable.unwrap_or(true),
                 },
             )
             .await
@@ -207,6 +270,9 @@ pub fn spawn(state: AppState) {
                 _ = tokio::time::sleep(wait) => {}
                 _ = state.refresh_notify.notified() => {
                     roster = None;
+                    roster_loaded_at = None;
+                    poll_secs = None;
+                    restart_on_client_disable = None;
                 }
             }
         }
@@ -280,6 +346,14 @@ struct TrafficTick<'a> {
     display_interval_ms: u64,
     moved_since_bill: &'a mut HashSet<String>,
     active_since_bill: &'a mut HashSet<String>,
+    /// Last time idle-online clients were written to `last_online`; throttled
+    /// because active clients already get an exact timestamp while billing.
+    heartbeat_at: &'a mut Option<Instant>,
+    /// Set whenever any raw counter moved since the last billing sample.
+    counters_changed: &'a mut bool,
+    /// Cached `restartXrayOnClientDisable`, passed to the billing writer so it
+    /// no longer decodes the settings row on every sample.
+    restart_on_client_disable: bool,
 }
 
 async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow::Result<bool> {
@@ -294,6 +368,9 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         display_interval_ms,
         moved_since_bill,
         active_since_bill,
+        heartbeat_at,
+        counters_changed,
+        restart_on_client_disable,
     } = ctx;
     let now = db::models::now();
     let grace = online_grace_secs(poll_secs);
@@ -379,9 +456,15 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
                 .await;
             }
             if bill {
-                if let Err(err) =
-                    persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now)
-                        .await
+                if let Err(err) = persist_online_heartbeat(
+                    state,
+                    clients,
+                    &online_emails,
+                    &HashSet::new(),
+                    now,
+                    heartbeat_at,
+                )
+                .await
                 {
                     tracing::warn!(error = %err, "online heartbeat persist failed");
                 }
@@ -426,8 +509,15 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
             .await;
         }
         if bill {
-            if let Err(err) =
-                persist_online_heartbeat(state, clients, &online_emails, &HashSet::new(), now).await
+            if let Err(err) = persist_online_heartbeat(
+                state,
+                clients,
+                &online_emails,
+                &HashSet::new(),
+                now,
+                heartbeat_at,
+            )
+            .await
             {
                 tracing::warn!(error = %err, "online heartbeat persist failed");
             }
@@ -466,6 +556,11 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
         email_by_identity,
         client_emails,
     );
+    // One flag for the whole polling window: any family (including outbound,
+    // which has no live display) moving bytes means the writer may have
+    // something to bill. Kept set across fast display ticks until a sample is
+    // actually handed to the writer.
+    *counters_changed |= display.changed;
 
     for client in clients {
         let display_up = display.client_up.get(&client.email).copied().unwrap_or(0);
@@ -583,6 +678,8 @@ async fn tick(state: &AppState, poll_secs: u64, ctx: TrafficTick<'_>) -> anyhow:
             outbound_down,
             moved_emails: std::mem::take(moved_since_bill),
             online_emails,
+            counters_changed: std::mem::take(counters_changed),
+            restart_on_client_disable,
         })
         .await;
     active_since_bill.clear();
@@ -605,6 +702,13 @@ struct BillingSample {
     outbound_down: HashMap<String, i64>,
     moved_emails: HashSet<String>,
     online_emails: HashSet<String>,
+    /// Some counter moved since the previous sample. When false and the
+    /// enforcement cadence is not due, the writer can record history and
+    /// skip the transactional billing path entirely.
+    counters_changed: bool,
+    /// Settings value cached by the tick loop; the writer no longer decodes
+    /// `x3ui_settings` for every sample.
+    restart_on_client_disable: bool,
 }
 
 /// Single-slot coalescing queue between the display tick and the billing
@@ -625,8 +729,18 @@ impl BillingSink {
         }
     }
 
-    async fn push(&self, sample: BillingSample) {
-        *self.pending.lock().await = Some(sample);
+    async fn push(&self, mut sample: BillingSample) {
+        let mut pending = self.pending.lock().await;
+        if let Some(previous) = pending.as_ref() {
+            // The newer raw counters subsume the older sample, but its "some
+            // counter moved" flag must survive: the writer never applied that
+            // movement, and the newer sample only describes what changed after
+            // it. Without this OR an idle sample could replace a dirty one and
+            // the writer would skip the bytes the dirty sample carried.
+            sample.counters_changed |= previous.counters_changed;
+        }
+        *pending = Some(sample);
+        drop(pending);
         self.notify.notify_one();
     }
 
@@ -645,14 +759,42 @@ impl BillingSink {
 }
 
 async fn run_billing_writer(state: AppState, sink: BillingSink) {
+    // Enforcement is time-based (quota, expiry, scheduled resets) and must
+    // keep working while no traffic moves, but it does not need the poll
+    // cadence: once per ENFORCE_INTERVAL is enough. A counter change always
+    // forces a pass so quota decisions stay tied to the bytes that just
+    // arrived.
+    // Monotonic clock: a wall-clock jump must not stall the enforcement pass.
+    let mut last_enforce_at: Option<Instant> = None;
+    // A failed write must not wait for new traffic: the next sample is forced
+    // through the billing path so the cumulative counters span the gap.
+    let mut retry_billing = false;
+    // Heartbeat throttle for idle-online clients. Kept on the writer because
+    // the successful sample path persists through apply_billing.
+    let mut heartbeat_at: Option<Instant> = None;
     loop {
         let sample = sink.next().await;
+        let traffic_dirty = sample.counters_changed || retry_billing;
+        let enforce = traffic_dirty
+            || last_enforce_at
+                .map(|at| at.elapsed() >= ENFORCE_INTERVAL)
+                .unwrap_or(true);
         let mem_before = memtrace::rss_kb();
-        if let Err(err) = apply_billing(&state, &sample).await {
-            // The speed columns and the WS frame were committed before this
-            // write; a failure here only delays accounting to the next
-            // sample, which re-reads the raw counters and spans the gap.
-            tracing::warn!(error = %err, "traffic billing failed");
+        match apply_billing(&state, &sample, traffic_dirty, enforce, &mut heartbeat_at).await {
+            Ok(()) => {
+                retry_billing = false;
+                if enforce {
+                    last_enforce_at = Some(Instant::now());
+                }
+            }
+            Err(err) => {
+                retry_billing = true;
+                // The speed columns and the WS frame were committed before
+                // this write; a failure here only delays accounting to the
+                // next sample, which re-reads the raw counters and spans the
+                // gap.
+                tracing::warn!(error = %err, "traffic billing failed");
+            }
         }
         memtrace::log_delta(
             &state.mem_log,
@@ -663,7 +805,13 @@ async fn run_billing_writer(state: AppState, sink: BillingSink) {
     }
 }
 
-async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Result<()> {
+async fn apply_billing(
+    state: &AppState,
+    sample: &BillingSample,
+    traffic_dirty: bool,
+    enforce: bool,
+    heartbeat_at: &mut Option<Instant>,
+) -> anyhow::Result<()> {
     // Counters from a process that is already gone would bill that process's
     // whole lifetime against the fresh zeroed baselines: drop the sample, the
     // next one belongs to the new process.
@@ -672,93 +820,91 @@ async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Resu
         return Ok(());
     }
     let now = sample.now;
+    // Idle fast path: no counter moved since the previous sample and the
+    // enforcement cadence is not due. Keep the traffic chart fed, but skip the
+    // roster reads and the transactional billing pass entirely.
+    if !traffic_dirty && !enforce {
+        record_history(state, now).await?;
+        return Ok(());
+    }
     // Rows are re-read here (cheap indexed WAL reads) so the writer charges
     // against current state; the display tick never waits for this.
     let clients = db::clients::list_all(&state.db).await?;
     let associations = db::client_inbounds::all(&state.db).await?;
     let inbounds = db::inbounds::list(&state.db).await?;
-    let restart_on_client_disable = db::settings::ui_settings(&state.db)
-        .await
-        .ok()
-        .and_then(|settings| {
-            settings
-                .get("restartXrayOnClientDisable")
-                .and_then(|value| value.as_bool())
-        })
-        .unwrap_or(true);
+    // Cached by the tick loop. The value only changes when a settings save
+    // wakes the loop, which reloads it with the roster.
+    let restart_on_client_disable = sample.restart_on_client_disable;
 
-    // Split every client's counters per attachment. The old code summed all
-    // attachments into one baseline, so a single reset attachment corrupted
-    // the deltas of the others. Samples are applied in one transaction that
-    // also advances the per-attachment baselines.
-    // MASQUE rejects `:` in emails, so its clients are metered under the bare
-    // panel email. Knowing which inbounds those are lets a client attached to
-    // both MASQUE and a normal inbound bill both counters instead of silently
-    // dropping the MASQUE half with the legacy fallback below.
-    let masque_inbounds: HashSet<i64> = inbounds
-        .iter()
-        .filter(|inbound| inbound.protocol == "masque")
-        .map(|inbound| inbound.id)
-        .collect();
-    let mut plans: Vec<ClientSamples> = Vec::with_capacity(clients.len());
-    let mut legacy_deltas: HashMap<i64, (i64, i64)> = HashMap::new();
     let mut moved: HashSet<String> = HashSet::new();
-    for client in &clients {
-        let ids = associations
-            .get(&client.id)
-            .cloned()
-            .unwrap_or_else(|| vec![client.inbound_id]);
-        let client_attachment_samples =
-            client_samples(&client.email, &ids, &masque_inbounds, &sample.user_stats);
-        if !client_attachment_samples.is_empty() {
-            plans.push(ClientSamples {
-                client_id: client.id,
-                samples: client_attachment_samples,
-            });
-            continue;
-        }
+    let mut legacy_samples: Vec<LegacySample> = Vec::new();
+    let applied = if traffic_dirty {
+        // Split every client's counters per attachment. The old code summed
+        // all attachments into one baseline, so a single reset attachment
+        // corrupted the deltas of the others. Samples are applied in one
+        // transaction that also advances the per-attachment baselines.
+        // MASQUE rejects `:` in emails, so its clients are metered under the
+        // bare panel email. Knowing which inbounds those are lets a client
+        // attached to both MASQUE and a normal inbound bill both counters
+        // instead of silently dropping the MASQUE half with the legacy
+        // fallback below.
+        let masque_inbounds: HashSet<i64> = inbounds
+            .iter()
+            .filter(|inbound| inbound.protocol == "masque")
+            .map(|inbound| inbound.id)
+            .collect();
+        let mut plans: Vec<ClientSamples> = Vec::with_capacity(clients.len());
+        for client in &clients {
+            let ids = associations
+                .get(&client.id)
+                .cloned()
+                .unwrap_or_else(|| vec![client.inbound_id]);
+            let client_attachment_samples =
+                client_samples(&client.email, &ids, &masque_inbounds, &sample.user_stats);
+            if !client_attachment_samples.is_empty() {
+                plans.push(ClientSamples {
+                    client_id: client.id,
+                    samples: client_attachment_samples,
+                });
+                continue;
+            }
 
-        // Configs written outside the panel may meter the bare email. Keep
-        // that path on the legacy aggregate columns.
-        if let Some(&(up, down)) = sample.user_stats.get(&client.email) {
-            let (delta_up, current_up) =
-                counter_delta(up, client.last_up).unwrap_or((0, client.last_up));
-            let (delta_down, current_down) =
-                counter_delta(down, client.last_down).unwrap_or((0, client.last_down));
-            if delta_up > 0
-                || delta_down > 0
-                || current_up != client.last_up
-                || current_down != client.last_down
-            {
-                let last_online = if delta_up > 0 || delta_down > 0 {
-                    now
-                } else {
-                    client.last_online
-                };
-                db::clients::add_traffic(
-                    &state.db,
-                    client.id,
-                    delta_up,
-                    delta_down,
-                    current_up,
-                    current_down,
-                    last_online,
-                )
-                .await?;
-                legacy_deltas.insert(client.id, (delta_up, delta_down));
+            // Configs written outside the panel may meter the bare email.
+            // Keep that path on the legacy aggregate columns.
+            if let Some(&(up, down)) = sample.user_stats.get(&client.email) {
+                let (delta_up, current_up) =
+                    counter_delta(up, client.last_up).unwrap_or((0, client.last_up));
+                let (delta_down, current_down) =
+                    counter_delta(down, client.last_down).unwrap_or((0, client.last_down));
+                if delta_up > 0
+                    || delta_down > 0
+                    || current_up != client.last_up
+                    || current_down != client.last_down
+                {
+                    let last_online = if delta_up > 0 || delta_down > 0 {
+                        now
+                    } else {
+                        client.last_online
+                    };
+                    legacy_samples.push(LegacySample {
+                        client_id: client.id,
+                        delta_up,
+                        delta_down,
+                        last_up: current_up,
+                        last_down: current_down,
+                        last_online,
+                    });
+                }
             }
         }
-    }
-
-    let applied = db::client_traffic::apply_tick(&state.db, &plans, now).await?;
+        db::client_traffic::apply_tick(&state.db, &plans, &legacy_samples, now).await?
+    } else {
+        HashMap::new()
+    };
 
     let mut need_restart = false;
     for client in &clients {
-        let (delta_up, delta_down) = applied
-            .get(&client.id)
-            .or_else(|| legacy_deltas.get(&client.id))
-            .copied()
-            .unwrap_or((0, 0));
+        let (delta_up, delta_down) = applied.get(&client.id).copied().unwrap_or((0, 0));
         if delta_up > 0 || delta_down > 0 {
             moved.insert(client.email.clone());
         }
@@ -838,9 +984,19 @@ async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Resu
     // Clients that moved bytes by the display engine's account count as seen
     // too: their billing write may still be pending or may have failed.
     moved.extend(sample.moved_emails.iter().cloned());
-    persist_online_heartbeat(state, &clients, &sample.online_emails, &moved, now).await?;
+    persist_online_heartbeat(
+        state,
+        &clients,
+        &sample.online_emails,
+        &moved,
+        now,
+        heartbeat_at,
+    )
+    .await?;
 
-    update_outbound_traffic(state, &sample.outbound_up, &sample.outbound_down).await?;
+    if traffic_dirty {
+        update_outbound_traffic(state, &sample.outbound_up, &sample.outbound_down).await?;
+    }
 
     if need_restart {
         if let Err(err) = service::apply(state).await {
@@ -848,6 +1004,13 @@ async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Resu
         }
     }
 
+    record_history(state, now).await?;
+    Ok(())
+}
+
+// Keep the dashboard traffic chart current even on samples the billing writer
+// only passes through (idle fast path). Aggregating with SUM keeps this cheap.
+async fn record_history(state: &AppState, now: i64) -> anyhow::Result<()> {
     let (sum_up, sum_down): (i64, i64) =
         sqlx::query_as("SELECT COALESCE(SUM(up), 0), COALESCE(SUM(down), 0) FROM inbounds")
             .fetch_one(&state.db)
@@ -862,7 +1025,6 @@ async fn apply_billing(state: &AppState, sample: &BillingSample) -> anyhow::Resu
     while history.len() > MAX_HISTORY {
         history.pop_front();
     }
-
     Ok(())
 }
 
@@ -892,6 +1054,8 @@ struct DisplayDeltas {
     inbound_down: HashMap<String, i64>,
     client_up: HashMap<String, i64>,
     client_down: HashMap<String, i64>,
+    /// Any counter (including outbound, which has no live display) moved.
+    changed: bool,
 }
 
 // Advance the in-memory delta baseline and produce this poll's display
@@ -946,6 +1110,11 @@ fn display_deltas(
                 continue;
             }
             let value = stat.value - last;
+            if value > 0 {
+                // Count any family and any direction: outbound counters are
+                // billed even though they have no live speed display.
+                out.changed = true;
+            }
             match kind {
                 "inbound" => {
                     if value > 0 {
@@ -1148,14 +1317,20 @@ fn parse_user_stats<'a>(
 
 // Idle-but-connected clients never write traffic, so persist their heartbeat
 // separately; active clients already wrote `now` in apply_tick. One batched
-// UPDATE per tick, like 3x-ui's BumpClientsLastOnline.
+// UPDATE at most every HEARTBEAT_INTERVAL, like 3x-ui's
+// BumpClientsLastOnline but throttled so an idle deployment does not pay a
+// write on every accounting tick.
 async fn persist_online_heartbeat(
     state: &AppState,
     clients: &[Client],
     online_emails: &HashSet<String>,
     moved_emails: &HashSet<String>,
     now: i64,
+    heartbeat_at: &mut Option<Instant>,
 ) -> anyhow::Result<()> {
+    if heartbeat_at.is_some_and(|at| at.elapsed() < HEARTBEAT_INTERVAL) {
+        return Ok(());
+    }
     let touch_ids: Vec<i64> = clients
         .iter()
         .filter(|client| {
@@ -1163,7 +1338,14 @@ async fn persist_online_heartbeat(
         })
         .map(|client| client.id)
         .collect();
+    if touch_ids.is_empty() {
+        // Nothing to persist: leave the timestamp untouched so the next tick
+        // with an idle-online client writes immediately instead of waiting a
+        // full interval.
+        return Ok(());
+    }
     db::clients::touch_last_online(&state.db, &touch_ids, now).await?;
+    *heartbeat_at = Some(Instant::now());
     Ok(())
 }
 
@@ -1823,6 +2005,7 @@ mod tests {
         );
         // Counters may already hold unattributable traffic: no deltas.
         assert!(display.inbound_up.is_empty());
+        assert!(!display.changed);
         assert!(baselined.contains(&FAMILY_INBOUND));
         assert_eq!(stats_last.len(), 1);
 
@@ -1839,6 +2022,58 @@ mod tests {
             &client_emails,
         );
         assert_eq!(display.inbound_up.get("in-a"), Some(&60));
+        assert!(display.changed);
+    }
+
+    #[test]
+    fn outbound_only_traffic_still_marks_the_billing_window_dirty() {
+        let mut stats_last = HashMap::new();
+        let mut baselined = HashSet::new();
+        let (email_by_identity, client_emails) = empty_maps();
+        // Outbounds have no live speed display, but their counters still drive
+        // the stored outbound totals. A poll where only an outbound moved must
+        // reach the billing writer.
+        let families = vec![family(
+            crate::xray::stats::FAMILY_OUTBOUND,
+            vec![("outbound>>>direct>>>traffic>>>uplink", 100)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert!(!display.changed);
+
+        let families = vec![family(
+            crate::xray::stats::FAMILY_OUTBOUND,
+            vec![("outbound>>>direct>>>traffic>>>uplink", 140)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert!(display.changed);
+        assert!(display.inbound_up.is_empty());
+        assert!(display.client_up.is_empty());
+
+        // No movement: the idle fast path stays enabled.
+        let families = vec![family(
+            crate::xray::stats::FAMILY_OUTBOUND,
+            vec![("outbound>>>direct>>>traffic>>>uplink", 140)],
+        )];
+        let display = display_deltas(
+            &families,
+            &mut stats_last,
+            &mut baselined,
+            &email_by_identity,
+            &client_emails,
+        );
+        assert!(!display.changed);
     }
 
     #[test]
@@ -2082,18 +2317,28 @@ mod tests {
             outbound_down: HashMap::new(),
             moved_emails: HashSet::new(),
             online_emails: HashSet::new(),
+            counters_changed: true,
+            restart_on_client_disable: true,
         }
     }
 
     #[tokio::test]
     async fn billing_slot_keeps_only_the_newest_sample() {
         let sink = BillingSink::new();
-        sink.push(billing_sample(1)).await;
-        sink.push(billing_sample(2)).await;
+        let mut dirty = billing_sample(1);
+        dirty.counters_changed = true;
+        let mut idle = billing_sample(2);
+        idle.counters_changed = false;
+        sink.push(dirty).await;
+        sink.push(idle).await;
         // The writer was still busy applying an earlier round: the stale raw
         // sample is replaced, not queued. Raw counters subsume older ones,
         // so coalescing bills nothing twice and drops nothing.
-        assert_eq!(sink.next().await.now, 2);
+        let sample = sink.next().await;
+        assert_eq!(sample.now, 2);
+        // The newer sample saw no movement, but the replaced one did: the
+        // writer must still enter the billing path for the bytes it carried.
+        assert!(sample.counters_changed);
     }
 
     #[tokio::test]

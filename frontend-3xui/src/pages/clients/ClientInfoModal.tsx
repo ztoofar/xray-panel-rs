@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Modal, Tag } from 'antd';
+import { Button, Modal, Select, Tag } from 'antd';
 
 import { HttpUtil, IntlUtil, SizeFormatter } from '@/utils';
 import { formatInboundLabel } from '@/lib/inbounds/label';
@@ -45,6 +45,17 @@ interface LocationEntry {
   error?: string;
 }
 
+interface MonthlyTrafficEntry {
+  month: string;
+  up: number;
+  down: number;
+}
+
+interface MonthlyTrafficPayload {
+  currentMonth: string;
+  months: MonthlyTrafficEntry[];
+}
+
 // Mirrors the simplified create form: email, inbounds, traffic, expiry, UUID,
 // status, plus the record timestamps.
 export default function ClientInfoModal({
@@ -61,6 +72,11 @@ export default function ClientInfoModal({
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, number>>({});
   const [onlineIps, setOnlineIps] = useState<string[]>([]);
   const [locations, setLocations] = useState<Record<string, LocationEntry>>({});
+  const [monthlyMonths, setMonthlyMonths] = useState<MonthlyTrafficEntry[]>([]);
+  const [currentMonth, setCurrentMonth] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError, setMonthlyError] = useState('');
 
   useEffect(() => {
     if (!open || !isOnline || !client?.email) {
@@ -164,6 +180,42 @@ export default function ClientInfoModal({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !client?.email) {
+      setMonthlyMonths([]);
+      setCurrentMonth('');
+      setSelectedMonth('');
+      setMonthlyError('');
+      return;
+    }
+    let cancelled = false;
+    setMonthlyLoading(true);
+    setMonthlyError('');
+    (async () => {
+      const msg = await HttpUtil.post<MonthlyTrafficPayload>(
+        '/panel/api/clients/trafficMonthly',
+        { email: client.email },
+        { silent: true },
+      );
+      if (cancelled) return;
+      setMonthlyLoading(false);
+      if (!msg?.success || !msg.obj || !Array.isArray(msg.obj.months)) {
+        setMonthlyMonths([]);
+        setSelectedMonth('');
+        setMonthlyError(msg?.msg || t('somethingWentWrong'));
+        return;
+      }
+      const months = msg.obj.months;
+      const fallback = months[0]?.month || '';
+      setMonthlyMonths(months);
+      setCurrentMonth(msg.obj.currentMonth || fallback);
+      setSelectedMonth(msg.obj.currentMonth || fallback);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client?.email, t]);
+
   const traffic = client?.traffic;
   const used = (traffic?.up || 0) + (traffic?.down || 0);
   const totalBytes = client?.totalGB || 0;
@@ -174,6 +226,16 @@ export default function ClientInfoModal({
     : expiryTime < 0
       ? `${t('pages.clients.delayedStart')}: ${Math.round(expiryTime / -86400000)}d`
       : IntlUtil.formatDate(expiryTime, datepicker);
+  const selectedMonthly = monthlyMonths.find((entry) => entry.month === selectedMonth);
+  const monthUp = selectedMonthly?.up || 0;
+  const monthDown = selectedMonthly?.down || 0;
+  const monthOptions = monthlyMonths.map((entry) => ({
+    value: entry.month,
+    label:
+      entry.month === currentMonth
+        ? `${entry.month} (${t('pages.clients.trafficCurrentMonth')})`
+        : entry.month,
+  }));
 
   return (
     <Modal
@@ -300,16 +362,38 @@ export default function ClientInfoModal({
               </td>
             </tr>
             <tr>
-              <td>{t('pages.inbounds.traffic')}</td>
               <td>
-                <Tag>
-                  ↑ {SizeFormatter.sizeFormat(traffic?.up || 0)} / ↓{' '}
-                  {SizeFormatter.sizeFormat(traffic?.down || 0)}
-                </Tag>
-                <span className="hint">
-                  {SizeFormatter.sizeFormat(used)} /{' '}
-                  {totalBytes > 0 ? SizeFormatter.sizeFormat(totalBytes) : '∞'}
-                </span>
+                {!selectedMonth || selectedMonth === currentMonth
+                  ? t('pages.clients.trafficThisMonth')
+                  : t('pages.clients.trafficHistory')}
+              </td>
+              <td>
+                {monthlyLoading ? (
+                  <span className="hint">{t('loading')}</span>
+                ) : monthlyError ? (
+                  <span className="hint ip-location-error">{monthlyError}</span>
+                ) : (
+                  <>
+                    <div className="monthly-traffic-line">
+                      <Select
+                        size="small"
+                        value={selectedMonth || undefined}
+                        options={monthOptions}
+                        onChange={setSelectedMonth}
+                        aria-label={t('pages.clients.trafficHistory')}
+                        style={{ minWidth: 118 }}
+                      />
+                      <Tag>
+                        ↑ {SizeFormatter.sizeFormat(monthUp)} / ↓{' '}
+                        {SizeFormatter.sizeFormat(monthDown)}
+                      </Tag>
+                    </div>
+                    <span className="hint">
+                      {t('pages.clients.trafficTotal')} {SizeFormatter.sizeFormat(used)} /{' '}
+                      {totalBytes > 0 ? SizeFormatter.sizeFormat(totalBytes) : '∞'}
+                    </span>
+                  </>
+                )}
               </td>
             </tr>
             <tr>

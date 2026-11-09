@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "xray-panel-rs"
-version = "0.2.43"
+version = "0.2.45"
 dependencies = [
  "anyhow",
  "argon2",

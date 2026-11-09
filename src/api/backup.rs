@@ -17,8 +17,9 @@ use crate::{
 };
 
 const REQUIRED_TABLES: [&str; 4] = ["users", "settings", "inbounds", "clients"];
-const COPY_DELETE_ORDER: [&str; 9] = [
+const COPY_DELETE_ORDER: [&str; 10] = [
     "client_inbound_traffic",
+    "client_traffic_monthly",
     "outbound_subscriptions",
     "outbound_traffics",
     "sessions",
@@ -28,13 +29,14 @@ const COPY_DELETE_ORDER: [&str; 9] = [
     "users",
     "settings",
 ];
-const COPY_INSERT_ORDER: [&str; 9] = [
+const COPY_INSERT_ORDER: [&str; 10] = [
     "users",
     "settings",
     "api_tokens",
     "inbounds",
     "clients",
     "client_inbound_traffic",
+    "client_traffic_monthly",
     "outbound_subscriptions",
     "sessions",
     "outbound_traffics",
@@ -127,6 +129,11 @@ async fn restore_multipart(state: &AppState, mut multipart: Multipart) -> AppRes
     state.online_last_seen.lock().await.clear();
     state.active_inbound_last_seen.lock().await.clear();
     state.active_inbounds.lock().await.clear();
+    // The restored database may carry different settings (poll interval,
+    // restart-on-disable, outbound checks). Both background loops cache them
+    // between ticks, so drop the caches now instead of on the next restart.
+    state.refresh_notify.notify_one();
+    state.outbound_check_notify.notify_one();
     let apply_error = service::apply(state).await.err().map(|err| err.to_string());
     Ok(json!({
         "ok": true,
@@ -195,6 +202,13 @@ async fn restore_into(state: &AppState, path: &Path, tables: &HashSet<String>) -
         // of leaving baselines that may refer to a different dataset.
         if !tables.contains("client_inbound_traffic") {
             sqlx::query("DELETE FROM main.\"client_inbound_traffic\"")
+                .execute(&mut *connection)
+                .await?;
+        }
+        // Pre-0.2.45 backups have no monthly buckets; keeping the current rows
+        // could attach them to client ids that the restore replaced.
+        if !tables.contains("client_traffic_monthly") {
+            sqlx::query("DELETE FROM main.\"client_traffic_monthly\"")
                 .execute(&mut *connection)
                 .await?;
         }

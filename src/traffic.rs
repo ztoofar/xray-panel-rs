@@ -2,6 +2,20 @@
 // layer. Xray reports cumulative counters; the panel stores the last value it
 // saw and bills the difference.
 
+use chrono::{DateTime, FixedOffset, Utc};
+
+/// Calendar month key (`YYYY-MM`) for the per-client monthly buckets. UTC+8
+/// matches the panel logs and the deployment's wall clock; the storage layer
+/// keeps the key as text so month rollover needs no scheduler.
+pub fn month_key(ts: i64) -> String {
+    let offset = FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid");
+    DateTime::from_timestamp(ts, 0)
+        .unwrap_or_else(Utc::now)
+        .with_timezone(&offset)
+        .format("%Y-%m")
+        .to_string()
+}
+
 /// Interpret one cumulative counter sample against the stored baseline.
 ///
 /// Returns `(new traffic, new baseline)`:
@@ -49,5 +63,13 @@ mod tests {
         // Exactly zero after a reset is a valid sample: bill nothing, move the
         // baseline down so the next growth is measured from zero.
         assert_eq!(counter_delta(Some(0), 100), Some((0, 0)));
+    }
+
+    #[test]
+    fn month_key_rolls_over_at_china_midnight() {
+        assert_eq!(month_key(0), "1970-01");
+        // 2026-11-30 23:59:59 and 2026-12-01 00:00:00 UTC+8.
+        assert_eq!(month_key(1_796_054_399), "2026-11");
+        assert_eq!(month_key(1_796_054_400), "2026-12");
     }
 }

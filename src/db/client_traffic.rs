@@ -21,6 +21,29 @@ pub struct ClientSamples {
     pub samples: Vec<AttachmentSample>,
 }
 
+/// One client metered under its bare email instead of per-inbound stats.
+///
+/// The caller has already compared the raw counter with the stored aggregate
+/// baseline (configs written outside the panel use this fallback), so the tick
+/// transaction can apply it together with the attachment plans.
+#[derive(Debug, Clone, Copy)]
+pub struct LegacySample {
+    pub client_id: i64,
+    pub delta_up: i64,
+    pub delta_down: i64,
+    pub last_up: i64,
+    pub last_down: i64,
+    pub last_online: i64,
+}
+
+/// One month bucket for the client-details history selector.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MonthlyTraffic {
+    pub month: String,
+    pub up: i64,
+    pub down: i64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct Baseline {
     last_up: i64,
@@ -33,20 +56,24 @@ struct Baseline {
 /// [`counter_delta`], the baseline advanced, and the summed deltas added to
 /// `clients.up/down`. Because both halves commit together, a crash can never
 /// add traffic without recording the matching baseline (which would bill the
-/// same bytes twice on the next tick).
+/// same bytes twice on the next tick). The same transaction adds the client's
+/// delta to its `YYYY-MM` bucket, so monthly history cannot drift from the
+/// cumulative total when a later write fails.
 ///
 /// Returns the deltas actually applied per client; clients whose counters did
 /// not move are absent.
 pub async fn apply_tick(
     db: &SqlitePool,
     clients: &[ClientSamples],
+    legacy: &[LegacySample],
     ts: i64,
 ) -> Result<HashMap<i64, (i64, i64)>, sqlx::Error> {
     let mut applied = HashMap::new();
-    if clients.is_empty() {
+    if clients.is_empty() && legacy.is_empty() {
         return Ok(applied);
     }
 
+    let month = crate::traffic::month_key(ts);
     let mut tx = db.begin().await?;
     let rows: Vec<(i64, i64, i64, i64)> = sqlx::query_as(
         "SELECT client_id, inbound_id, last_up, last_down FROM client_inbound_traffic",
@@ -109,12 +136,85 @@ pub async fn apply_tick(
             .bind(plan.client_id)
             .execute(&mut *tx)
             .await?;
+            upsert_monthly(&mut tx, plan.client_id, &month, total_up, total_down, ts).await?;
             applied.insert(plan.client_id, (total_up, total_down));
+        }
+    }
+
+    for sample in legacy {
+        // A counter reset can move the baseline without adding bytes; that
+        // still has to be stored or the next tick would re-bill the counter.
+        sqlx::query(
+            "UPDATE clients SET up = up + ?, down = down + ?, last_up = ?,
+             last_down = ?, last_online = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(sample.delta_up)
+        .bind(sample.delta_down)
+        .bind(sample.last_up)
+        .bind(sample.last_down)
+        .bind(sample.last_online)
+        .bind(ts)
+        .bind(sample.client_id)
+        .execute(&mut *tx)
+        .await?;
+        if sample.delta_up > 0 || sample.delta_down > 0 {
+            upsert_monthly(
+                &mut tx,
+                sample.client_id,
+                &month,
+                sample.delta_up,
+                sample.delta_down,
+                ts,
+            )
+            .await?;
+            applied.insert(sample.client_id, (sample.delta_up, sample.delta_down));
         }
     }
 
     tx.commit().await?;
     Ok(applied)
+}
+
+async fn upsert_monthly(
+    tx: &mut Transaction<'_, Sqlite>,
+    client_id: i64,
+    month: &str,
+    up: i64,
+    down: i64,
+    ts: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO client_traffic_monthly (client_id, month, up, down, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(client_id, month) DO UPDATE SET
+           up = client_traffic_monthly.up + excluded.up,
+           down = client_traffic_monthly.down + excluded.down,
+           updated_at = excluded.updated_at",
+    )
+    .bind(client_id)
+    .bind(month)
+    .bind(up)
+    .bind(down)
+    .bind(ts)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Month buckets for one client, newest first. The cap is well beyond the
+/// panel's useful history and keeps a corrupt/imported row set from producing
+/// an unbounded response.
+pub async fn monthly_for_client(
+    db: &SqlitePool,
+    client_id: i64,
+) -> Result<Vec<MonthlyTraffic>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT month, up, down FROM client_traffic_monthly
+         WHERE client_id = ? ORDER BY month DESC LIMIT 120",
+    )
+    .bind(client_id)
+    .fetch_all(db)
+    .await
 }
 
 async fn upsert_baseline(
@@ -231,12 +331,23 @@ mod tests {
         .unwrap()
     }
 
+    async fn monthly(pool: &SqlitePool) -> Vec<(String, i64, i64)> {
+        sqlx::query_as(
+            "SELECT month, up, down FROM client_traffic_monthly
+             WHERE client_id = 1 ORDER BY month DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn accumulates_each_attachment_independently() {
         let pool = setup().await;
         let applied = apply_tick(
             &pool,
             &plan(&[(1, Some(100), Some(200)), (2, Some(50), Some(10))]),
+            &[],
             1_000,
         )
         .await
@@ -249,6 +360,7 @@ mod tests {
         let applied = apply_tick(
             &pool,
             &plan(&[(1, Some(0), Some(0)), (2, Some(70), Some(40))]),
+            &[],
             1_005,
         )
         .await
@@ -261,13 +373,13 @@ mod tests {
     #[tokio::test]
     async fn missing_direction_preserves_its_baseline() {
         let pool = setup().await;
-        apply_tick(&pool, &plan(&[(1, Some(100), Some(200))]), 1_000)
+        apply_tick(&pool, &plan(&[(1, Some(100), Some(200))]), &[], 1_000)
             .await
             .unwrap();
 
         // Xray omitted the uplink stat: the download delta is still billed and
         // the uplink baseline must stay at 100 instead of falling to zero.
-        let applied = apply_tick(&pool, &plan(&[(1, None, Some(260))]), 1_005)
+        let applied = apply_tick(&pool, &plan(&[(1, None, Some(260))]), &[], 1_005)
             .await
             .unwrap();
         assert_eq!(applied.get(&1), Some(&(0, 60)));
@@ -275,7 +387,7 @@ mod tests {
 
         // Mirror case: the downlink stat is missing, so last_down must stay
         // at 260 while the uplink delta is billed normally.
-        let applied = apply_tick(&pool, &plan(&[(1, Some(140), None)]), 1_010)
+        let applied = apply_tick(&pool, &plan(&[(1, Some(140), None)]), &[], 1_010)
             .await
             .unwrap();
         assert_eq!(applied.get(&1), Some(&(40, 0)));
@@ -290,6 +402,7 @@ mod tests {
         let applied = apply_tick(
             &pool,
             &plan(&[(1, Some(100), Some(100)), (999, Some(5), Some(5))]),
+            &[],
             1_000,
         )
         .await;
@@ -303,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn reset_all_baselines_keeps_accumulated_totals() {
         let pool = setup().await;
-        apply_tick(&pool, &plan(&[(1, Some(100), Some(100))]), 1_000)
+        apply_tick(&pool, &plan(&[(1, Some(100), Some(100))]), &[], 1_000)
             .await
             .unwrap();
 
@@ -325,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn resetting_totals_keeps_baselines_and_bills_only_new_bytes() {
         let pool = setup().await;
-        apply_tick(&pool, &plan(&[(1, Some(500), Some(600))]), 1_000)
+        apply_tick(&pool, &plan(&[(1, Some(500), Some(600))]), &[], 1_000)
             .await
             .unwrap();
 
@@ -340,10 +453,78 @@ mod tests {
                 .unwrap();
         assert!(last_reset > 0);
 
-        let applied = apply_tick(&pool, &plan(&[(1, Some(560), Some(650))]), 1_005)
+        let applied = apply_tick(&pool, &plan(&[(1, Some(560), Some(650))]), &[], 1_005)
             .await
             .unwrap();
         assert_eq!(applied.get(&1), Some(&(60, 50)));
         assert_eq!(totals(&pool).await, (60, 50));
+    }
+
+    #[tokio::test]
+    async fn monthly_buckets_accumulate_per_month_and_survive_resets() {
+        let pool = setup().await;
+        // 2026-11-30 23:59:59 and 2026-12-01 00:00:00 UTC+8.
+        let november = 1_796_054_399;
+        let december = 1_796_054_400;
+        apply_tick(&pool, &plan(&[(1, Some(100), Some(200))]), &[], november)
+            .await
+            .unwrap();
+        apply_tick(&pool, &plan(&[(1, Some(150), Some(260))]), &[], november)
+            .await
+            .unwrap();
+        apply_tick(&pool, &plan(&[(1, Some(200), Some(300))]), &[], december)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            monthly(&pool).await,
+            vec![
+                ("2026-12".to_string(), 50, 40),
+                ("2026-11".to_string(), 150, 260),
+            ]
+        );
+
+        // Quota resets clear the cumulative counters, not the month history.
+        crate::db::clients::reset_traffic(&pool, 1).await.unwrap();
+        assert_eq!(totals(&pool).await, (0, 0));
+        assert_eq!(
+            monthly(&pool).await,
+            vec![
+                ("2026-12".to_string(), 50, 40),
+                ("2026-11".to_string(), 150, 260),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_deltas_are_billed_and_bucketed_atomically() {
+        let pool = setup().await;
+        let legacy = [LegacySample {
+            client_id: 1,
+            delta_up: 7,
+            delta_down: 9,
+            last_up: 7,
+            last_down: 9,
+            last_online: 1_000,
+        }];
+        let applied = apply_tick(&pool, &[], &legacy, 1_000).await.unwrap();
+        assert_eq!(applied.get(&1), Some(&(7, 9)));
+        assert_eq!(totals(&pool).await, (7, 9));
+        assert_eq!(monthly(&pool).await, vec![("1970-01".to_string(), 7, 9)]);
+
+        // A failing attachment plan must roll the legacy half back too; the
+        // caller can then retry the same sample without double-billing.
+        let bad_plan = plan(&[(999, Some(5), Some(5))]);
+        let legacy = [LegacySample {
+            client_id: 1,
+            delta_up: 3,
+            delta_down: 4,
+            last_up: 10,
+            last_down: 13,
+            last_online: 1_005,
+        }];
+        assert!(apply_tick(&pool, &bad_plan, &legacy, 1_005).await.is_err());
+        assert_eq!(totals(&pool).await, (7, 9));
+        assert_eq!(monthly(&pool).await, vec![("1970-01".to_string(), 7, 9)]);
     }
 }

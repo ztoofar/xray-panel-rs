@@ -396,6 +396,10 @@ pub async fn setting_update(State(state): State<AppState>, req: Request) -> AppR
     }
     let serialized = serde_json::to_string(&Value::Object(object)).unwrap_or_else(|_| "{}".into());
     db::settings::set(&state.db, "x3ui_settings", &serialized).await?;
+    // The traffic loop caches the poll interval and enforcement flags between
+    // ticks; wake it so a save applies immediately instead of after the next
+    // natural refresh.
+    state.refresh_notify.notify_one();
     tracing::info!(
         outbound_check = outbound_check_changed,
         "panel settings saved"
@@ -1760,6 +1764,49 @@ pub async fn clients_last_online(State(state): State<AppState>) -> AppResult<Jso
         }
     }
     Ok(ok(Value::Object(map)))
+}
+
+/// One client's traffic by month for the details modal. The current month is
+/// always present (zero-filled when no byte moved yet) so the UI can select it
+/// as the default without a second request.
+pub async fn clients_traffic_monthly(
+    State(state): State<AppState>,
+    req: Request,
+) -> AppResult<Json<Value>> {
+    let params = read_params(req).await?;
+    let email = params.get("email").map(String::as_str).unwrap_or("").trim();
+    if email.is_empty() {
+        return Ok(fail("缺少客户端邮箱"));
+    }
+    let Some(client) = db::clients::find_by_email(&state.db, email).await? else {
+        return Ok(fail("客户端不存在"));
+    };
+    let current_month = crate::traffic::month_key(now());
+    let mut months = db::client_traffic::monthly_for_client(&state.db, client.id).await?;
+    if !months.iter().any(|entry| entry.month == current_month) {
+        months.insert(
+            0,
+            db::client_traffic::MonthlyTraffic {
+                month: current_month.clone(),
+                up: 0,
+                down: 0,
+            },
+        );
+    }
+    let months: Vec<Value> = months
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "month": entry.month,
+                "up": entry.up,
+                "down": entry.down,
+            })
+        })
+        .collect();
+    Ok(ok(json!({
+        "currentMonth": current_month,
+        "months": months,
+    })))
 }
 
 pub async fn clients_groups(State(state): State<AppState>) -> AppResult<Json<Value>> {

@@ -33,6 +33,18 @@
   margin-left: 6px;
 }
 
+.monthly-traffic-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.monthly-traffic-line .hint {
+  margin-left: 0;
+}
+
 .ip-list {
   display: flex;
   flex-direction: column;

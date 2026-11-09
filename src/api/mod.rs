@@ -322,6 +322,10 @@ pub fn router(state: AppState) -> Router {
             "/panel/api/clients/lastOnline",
             post(compat::clients_last_online),
         )
+        .route(
+            "/panel/api/clients/trafficMonthly",
+            post(compat::clients_traffic_monthly),
+        )
         .route("/panel/api/clients/groups", get(compat::clients_groups))
         .route("/panel/api/hosts/list", get(compat::hosts_list))
         .route(
